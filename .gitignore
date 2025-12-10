@@ -1,0 +1,5 @@
+/target
+src/.*.swp
+src/components/.*.swp
+src/components/button/.*.swp
+src/elements/.*.swp

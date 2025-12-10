@@ -1,0 +1,21 @@
+[package]
+name = "chk"
+version = "0.0.1"
+authors = ["Ella Mae <ellaammae@email.com>"]
+edition = "2021"
+description = "The guided, locked-down layer of Pelican UI for consistent, reliable RAMP interfaces."
+license = "BSD-3-Clause"
+repository = "https://github.com/ramp-stack/chk"
+readme = "README.md"
+documentation = "https://docs.rs/chk"
+
+[lib]
+name = "chk"
+path = "src/lib.rs"
+
+[dependencies]
+serde = "1.0.219"
+pelican_ui = {path="../pelican"} #"2.0.6"
+chrono = "0.4.42"
+roost_ui = "2.0.6"
+downcast-rs = "2.0.1"
