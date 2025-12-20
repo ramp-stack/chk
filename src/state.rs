@@ -1,27 +1,38 @@
+use crate::{AvatarIconStyle, AvatarContent};
 
-#[derive(Clone, Debug, Default)]    
-pub struct BitcoinAmount {
-    pub btc: String,
-    pub usd: String,
+#[derive(Clone, Debug, Default)]
+pub struct CurrentProject {
+    pub inner: Project
 }
 
-impl BitcoinAmount {
-    pub fn usd(&self) -> Option<f32> {
-        self.usd.trim_start_matches('$').replace(',', "").parse::<f32>().ok()
+#[derive(Clone, Debug)]
+pub struct AllProjects {
+    pub inner: Vec<Project>
+}
+
+impl Default for AllProjects {
+    fn default() -> Self {
+        AllProjects {
+            inner: vec![Project::default()]
+        }
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Transaction {
-    pub address: String,
-    pub amount: BitcoinAmount,
-    pub is_priority: bool,
-    pub fee: String,
-    pub total: String,
-    pub is_received: bool,
+#[derive(Clone, Debug)]
+pub struct Project {
+    pub avatar: AvatarContent,
+    pub name: String,
+    pub date: String, 
+    pub id: String,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct NewTransaction {
-    pub inner: Transaction
+impl Default for Project {
+    fn default() -> Self {
+        Project {
+            avatar: AvatarContent::icon("home", AvatarIconStyle::Brand),
+            name: "Orange".to_string(),
+            date: "11/23/2025".to_string(), 
+            id: "projectid200".to_string(),
+        }
+    }
 }

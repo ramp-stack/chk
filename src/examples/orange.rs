@@ -1,7 +1,5 @@
 use chk::*;
 
-use crate::state::NewTransaction;
-
 pub struct Orange;
 
 impl Application for Orange { // needs to be a fixed vector of 6 with minimum 1
@@ -37,26 +35,50 @@ impl Application for Orange { // needs to be a fixed vector of 6 with minimum 1
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct BitcoinHome; 
 impl BitcoinHome {
     fn build() -> RootPage {
         RootPage::new("Wallet", 
             vec![
                 Display::currency(12.56, "0.00001234 BTC"),
-                Display::list(vec![
-                    ListItem::new("Bitcoin Received", "0.00001234 BTC", Some("$12.45"), "txid0"),
-                    ListItem::new("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid1"),
-                    ListItem::new("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid2"),
-                    ListItem::new("Bitcoin Received", "0.00001234 BTC", Some("$12.45"), "txid3"),
-                    ListItem::new("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid4"),
+                Display::list(None, vec![
+                    ListItem::plain("Bitcoin Received", "0.00001234 BTC", Some("$12.45"), "txid0"),
+                    ListItem::plain("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid1"),
+                    ListItem::plain("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid2"),
+                    ListItem::plain("Bitcoin Received", "0.00001234 BTC", Some("$12.45"), "txid3"),
+                    ListItem::plain("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid4"),
                 ], Some(ViewTransaction::build()), None)
             ], 
             None,
             RootBumper::new("Receive", Receive::build()),
-            Some(RootBumper::new("Send", Send::build()))
+            Some(RootBumper::new("Send", Send::build())),
         )
     }
+
+    // fn on_event(&self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {vec![event]}
 }
+
+// pub struct BitcoinHome; 
+// impl BitcoinHome {
+//     fn build() -> RootPage {
+//         RootPage::new("Wallet", 
+//             vec![
+//                 Display::currency(12.56, "0.00001234 BTC"),
+//                 Display::list(None, vec![
+//                     ListItem::plain("Bitcoin Received", "0.00001234 BTC", Some("$12.45"), "txid0"),
+//                     ListItem::plain("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid1"),
+//                     ListItem::plain("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid2"),
+//                     ListItem::plain("Bitcoin Received", "0.00001234 BTC", Some("$12.45"), "txid3"),
+//                     ListItem::plain("Sent Received", "0.00001234 BTC", Some("$12.45"), "txid4"),
+//                 ], Some(ViewTransaction::build()), None)
+//             ], 
+//             None,
+//             RootBumper::new("Receive", Receive::build()),
+//             Some(RootBumper::new("Send", Send::build())),
+//         )
+//     }
+// }
 
 pub struct Receive;
 impl Receive {
@@ -64,7 +86,7 @@ impl Receive {
         let address = "staesuh8438iy92i984did48i";
         Flow::new(vec![Box::new(|_state: &mut State| PageType::display("Receive bitcoin", 
             vec![Display::qr_code(address, "Scan to receive bitcoin.")], 
-            Bumper::custom("Share", Action::share(address)), Offset::Center
+            None, Bumper::custom("Share", Action::share(address)), Offset::Center
         ))])
     }
 }
@@ -83,7 +105,7 @@ impl ViewTransaction {
                     TableItem::new("Transaction Fee", &tx.fee),
                     TableItem::new( "Transaction Total", &tx.total),
                 ])
-            ], Bumper::Done, Offset::Start)
+            ], None, Bumper::Done, Offset::Start)
         })])
     }
 }
@@ -127,6 +149,34 @@ impl Send {
         let success = |_state: &mut State| PageType::success("Bitcoin sent", "bitcoin", "You sent $10.00");
 
         let on_submit = |ctx: &mut Context| println!("Broadcasting transaction... {:?}", ctx.state().get::<NewTransaction>());
-        Flow::new_form(vec![Box::new(address), Box::new(amount), Box::new(speed)], Some(Box::new(review)), Box::new(success), on_submit)
+        Flow::form(vec![Box::new(address), Box::new(amount), Box::new(speed)], Some(Box::new(review)), Box::new(success), on_submit)
     }
+}
+
+
+#[derive(Clone, Debug, Default)]    
+pub struct BitcoinAmount {
+    pub btc: String,
+    pub usd: String,
+}
+
+impl BitcoinAmount {
+    pub fn usd(&self) -> Option<f32> {
+        self.usd.trim_start_matches('$').replace(',', "").parse::<f32>().ok()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Transaction {
+    pub address: String,
+    pub amount: BitcoinAmount,
+    pub is_priority: bool,
+    pub fee: String,
+    pub total: String,
+    pub is_received: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct NewTransaction {
+    pub inner: Transaction
 }
