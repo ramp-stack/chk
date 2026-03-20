@@ -15,6 +15,7 @@ use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::MessageGroups;
 pub use pelican_ui::components::{Profile, Message};
 use std::fmt::Debug;
+use pelican_ui::utils::ValidationFn;
 
 use crate::FlowWrapper;
 use crate::flow::{Flow, State};
@@ -62,7 +63,7 @@ pub enum PageType {
     Root {title: String, items: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), bumper_b: Option<(String, Flow)>},
     Display{title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Flow)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
     Input{title: String, item: Input, header: Option<(Icons, Flow)>, bumper: Bumper, flow_len: usize, next: Option<NavFn>},
-    Form{title: String, item: Input, flow_len: usize, next: Option<NavFn>, on_submit: Option<Box<dyn FormSubmit>>},
+    Form{title: String, item: Input, flow_len: usize, next: Option<NavFn>, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>},
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize},
     Messaging{messages: Vec<Message>, profiles: Vec<Profile>, flow_len: usize},
@@ -81,8 +82,8 @@ impl PageType {
         PageType::Input { title: title.to_string(), item, header, bumper, flow_len: 1, next: None }
     }
 
-    pub fn form(title: &str, item: Input, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
-        PageType::Form { title: title.to_string(), item, flow_len: 1, next: None, on_submit }
+    pub fn form(title: &str, item: Input, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
+        PageType::Form { title: title.to_string(), validate, item, flow_len: 1, next: None, on_submit }
     }
 
     pub fn review(title: &str, getter: Box<dyn ReviewItemGetter>, on_submit: Box<dyn FormSubmit>) -> Self {
@@ -134,7 +135,7 @@ impl PageType {
             PageType::Root{title, items, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), items.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone())),
             PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(StackPage::display(ctx, theme, title.to_string(), items.to_vec(), *offset, header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(StackPage::input(ctx, theme, title.to_string(), item.clone(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
-            PageType::Form{title, item, next, flow_len, on_submit} => Box::new(FormPage::new(theme, title.to_string(), item.clone(), next.clone(), *flow_len, on_submit.clone())),
+            PageType::Form{title, item, next, flow_len, validate, on_submit} => Box::new(FormPage::new(theme, title.to_string(), item.clone(), next.clone(), *flow_len, validate.clone(), on_submit.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
             PageType::Messaging{messages, profiles, flow_len} => Box::new(MessagesPage::new(ctx, theme, messages.clone(), profiles.clone(), *flow_len))
@@ -246,29 +247,11 @@ pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>
 impl OnEvent for FormPage {}
 impl AppPage for FormPage {}
 impl FormPage {
-    pub fn new(theme: &Theme, title: String, item: Input, next: Option<NavFn>, _flow_len: usize, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
-        use pelican_ui::components::TextInput;
-
+    pub fn new(theme: &Theme, title: String, item: Input, next: Option<NavFn>, _flow_len: usize, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
         let header = Header::stack(theme, &title, None);
         let bumper = PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
-
         let content = item.build(theme).unwrap_or_default();
-
-        let page = PelicanPage::new(
-            header, 
-            Content::new(Offset::Start, content, Box::new(|children| {
-                let mut result = true;
-                children.iter().for_each(|c|
-                    // TODO: Add rest of catches here. Allow for custom closure.
-                    if let Some(input) = (*c).as_any().downcast_ref::<TextInput>() {
-                        result = !input.value().is_empty();
-                    }
-                );
-
-                result
-            })), 
-            Some(bumper)
-        );
+        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validate), Some(bumper));
 
         FormPage(Stack::default(), page, theme.clone(), next.clone(), on_submit.clone())
     }
@@ -296,15 +279,8 @@ impl AppPage for ReviewPage {}
 impl ReviewPage {
     pub fn new(theme: &Theme, title: String, item_getter: Box<dyn ReviewItemGetter>, next: Option<NavFn>, _flow_len: usize, on_submit: Box<dyn FormSubmit>) -> Self {
         let header = Header::stack(theme, &title, None);
-
         let bumper = PelicanBumper::stack(theme, None, Box::new(|_ctx: &mut Context, _theme: &Theme| {}), None);
-
-        let page = PelicanPage::new(
-            header, 
-            Content::new(Offset::Start, Vec::new(), Box::new(|_| true)), 
-            Some(bumper)
-        );
-
+        let page = PelicanPage::new(header, Content::new(Offset::Start, Vec::new(), Box::new(|_| true)), Some(bumper));
         ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone())
     }
 
@@ -332,12 +308,7 @@ impl SuccessPage {
     pub fn new(theme: &Theme, title: String, getter: Box<dyn SuccessGetter>, flow_len: usize) -> Self {
         let header = Header::stack_end(theme, &title);
         let bumper = Some(PelicanBumper::stack_end(theme, Some(flow_len)));
-        let page = PelicanPage::new(
-            header, 
-            Content::new(Offset::Center, vec![], Box::new(|_| true)), 
-            bumper
-        );
-
+        let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_| true)), bumper);
         SuccessPage(Stack::default(), page, getter, theme.clone())
     }
 
@@ -369,12 +340,7 @@ impl MessagesPage {
 
         let bumper = Some(PelicanBumper::input(theme, "Message...", |_ctx: &mut Context, val: &mut String| {println!("Create Message From: {:?}", val)}));
         let messages = MessageGroups::new(theme, messages, profiles, false);
-
-        let page = PelicanPage::new(
-            header, 
-            Content::new(Offset::End, drawables![messages], Box::new(|_| true)), 
-            bumper
-        );
+        let page = PelicanPage::new(header, Content::new(Offset::End, drawables![messages], Box::new(|_| true)), bumper);
 
         MessagesPage(Stack::default(), page)
     }
@@ -387,23 +353,16 @@ impl AppPage for GroupMessageInfoPage {}
 impl GroupMessageInfoPage {
     pub fn new(theme: &Theme, profiles: Vec<Profile>) -> Self {
         let header = Header::stack(theme, "Group info", None);
-        let profiles = ListItemGroup::new(profiles.into_iter().map(|p| {
-            ListItem::new(theme, Some(p.avatar()),
-                ListItemInfoLeft::new(&p.name, Some("did::48anxiSatoETwhiLaceolduxWMoadoletaTawhoraldCCOdalotwevalouhEwBKONLAatHOHX"), None, None), 
-                None, None, Some(Icons::Forward), Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    let page: Box<dyn AppPage> = Box::new(ProfilePage::new(theme, p.clone()));
-                    let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
-                    ctx.send(Request::event(NavigationEvent::push(flow)));
-                })
-            )
-        }).collect());
+        let profiles = ListItemGroup::new(profiles.into_iter().map(|p| ListItem::new(theme, Some(p.avatar()),
+            ListItemInfoLeft::new(&p.name, Some("did::48anxiSatoETwhiLaceolduxWMoadoletaTawhoraldCCOdalotwevalouhEwBKONLAatHOHX"), None, None), 
+            None, None, Some(Icons::Forward), Box::new(move |ctx: &mut Context, theme: &Theme| {
+                let page: Box<dyn AppPage> = Box::new(ProfilePage::new(theme, p.clone()));
+                let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
+                ctx.send(Request::event(NavigationEvent::push(flow)));
+            })
+        )).collect());
 
-        let page = PelicanPage::new(
-            header, 
-            Content::new(Offset::Start, drawables![profiles], Box::new(|_| true)), 
-            None
-        );
-
+        let page = PelicanPage::new(header, Content::new(Offset::Start, drawables![profiles], Box::new(|_| true)), None);
         GroupMessageInfoPage(Stack::default(), page)
     }
 }

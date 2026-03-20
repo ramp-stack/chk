@@ -1,4 +1,4 @@
-use pelican_ui::{drawables, colors, Context, Callback};
+use pelican_ui::{drawables, colors, Context, Callback, Request, Hardware};
 use pelican_ui::drawable::Drawable;
 use pelican_ui::canvas::{Align, RgbaImage, ShapeType, Image};
 use pelican_ui::theme::{Theme, Icons};
@@ -8,7 +8,7 @@ use pelican_ui::components::{TextInput, RadioSelector, Icon, DataItem, QRCode, N
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::components::button::SecondaryButton;
+use pelican_ui::components::button::{SecondaryButton, QuickActions};
 use pelican_ui::components::SearchBar;
 
 use std::sync::Arc;
@@ -17,13 +17,13 @@ use crate::flow::{Flow, State};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    Text {label: String, actions: Option<Vec<Action>>, show_label: bool, preset: Option<String>},
+    Text {label: String, actions: Option<Vec<(String, Icons, Action)>>, show_label: bool, preset: Option<String>},
     Currency {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Date {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
-    Search {items: Vec<ListItem>}
+    Search {items: Vec<ListItem>},
 }
 
 impl Input {
@@ -43,7 +43,7 @@ impl Input {
         Input::Enumerator {items}
     }
 
-    pub fn text(label: &str, show_label: bool, preset: Option<String>, actions: Option<Vec<Action>>) -> Self {
+    pub fn text(label: &str, show_label: bool, preset: Option<String>, actions: Option<Vec<(String, Icons, Action)>>) -> Self {
         Input::Text {label: label.to_string(), show_label, preset, actions}
     }
 
@@ -57,7 +57,15 @@ impl Input {
 
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
-            Input::Text {show_label, label, preset, ..} => drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)],
+            Input::Text {show_label, label, preset, actions} => {
+                let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
+                actions.as_ref().map(|a| items.push(Box::new(QuickActions::new(theme, a.into_iter().map(|(label, icon, action)| {
+                    let action: Box<dyn Callback> = action.get();
+                    (label.to_string(), *icon, action)
+                }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>()))));
+
+                items
+            },
             Input::Enumerator {items} => drawables![RadioSelector::new(theme, 0, items.iter().map(|item| item.get()).collect::<Vec<_>>())],
             Input::Currency {instructions} => drawables![NumericalInput::numerical(theme, instructions)],
             Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
@@ -151,8 +159,8 @@ impl Display {
             Display::Icon {icon} => drawables![Icon::new(theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0)],
             Display::Image {image, size} => drawables![Image{shape: ShapeType::Rectangle(0.0, *size, 0.0), image: image.clone(), color: None}],
             Display::Text {text, size, style, align} if !text.is_empty() => drawables![ExpandableText::new(theme, text, *size, *style, *align, None)],
-            Display::Review {label, data, instructions} => drawables![DataItem::text(theme, label, data, instructions, Some(Vec::<(String, Option<String>, Box<dyn Callback>)>::new()))],
-            Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), Some(Vec::<(String, Option<String>, Box<dyn Callback>)>::new()))],
+            Display::Review {label, data, instructions} => drawables![DataItem::text(theme, label, data, instructions, Some(Vec::<(String, Icons, Box<dyn Callback>)>::new()))],
+            Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), Some(Vec::<(String, Icons, Box<dyn Callback>)>::new()))],
             Display::Currency {amount, instructions} => drawables![NumericalInput::display(theme, *amount, instructions)],
             Display::List {items, instructions, ..} if items.is_empty() => drawables![ExpandableText::new(theme, instructions.as_ref()?, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
             Display::List {label, items, ..} => drawables![ListItemSection::new(theme, label.clone(), items.iter_mut().map(|item| item.build(theme)).collect::<Vec<_>>())],
@@ -226,6 +234,8 @@ pub enum Action {
     Custom {action: Box<dyn Callback>},
     None,
     Flow {flow: Flow},
+    Paste,
+    Copy {data: String}
     // Navigate {flow: Flow},
 }
 
@@ -246,8 +256,20 @@ impl Action {
         Action::Share {data: data.to_string()}
     }
 
+    pub fn copy(data: &str) -> Self {
+        Action::Copy {data: data.to_string()}
+    }
+
     pub fn select_image() -> Self {
         Action::SelectImage
+    }
+
+    pub fn scan_qr() -> Self {
+        // Action::Flow {
+        //     flow: Flow::new()
+        // }
+
+        Action::None
     }
 
     pub fn custom(action: impl Callback + 'static) -> Self {
@@ -281,6 +303,15 @@ impl Action {
             Action::Flow {flow} => {
                 let mut flow = flow.clone();
                 Box::new(move |ctx: &mut Context, _: &Theme| {flow.build(ctx);})
+            }
+
+            Action::Paste => {
+                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.send(Request::Hardware(Hardware::GetClipboard))})
+            }
+
+            Action::Copy {data} => {
+                let data = data.to_string();
+                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.send(Request::Hardware(Hardware::SetClipboard(data.to_string())))})
             }
 
             // Action::Navigate {flow} => flow.clone().build(),

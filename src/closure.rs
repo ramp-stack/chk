@@ -32,11 +32,11 @@ impl std::fmt::Debug for dyn FnMutClone {
     }
 }
 
-pub trait ValidityFn: FnMut(&mut Context) -> bool + 'static {
+pub trait ValidityFn: FnMut(String) -> Result<String, String> + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn>;
 }
 
-impl<F> ValidityFn for F where F: FnMut(&mut Context) -> bool + Clone + 'static {
+impl<F> ValidityFn for F where F: FnMut(String) -> Result<String, String> + Clone + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn> {
         Box::new(self.clone())
     }

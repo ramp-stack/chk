@@ -1,6 +1,6 @@
 #![doc(html_logo_url = "https://raw.githubusercontent.com/ramp-stack/chk/main/logo.png")]
 
-pub use pelican_ui::{Context, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
+pub use pelican_ui::{Context, utils::Timestamp, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 

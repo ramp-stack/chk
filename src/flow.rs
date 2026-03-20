@@ -1,17 +1,18 @@
 use pelican_ui::{Callback, Context, Request};
 use pelican_ui::navigation::{NavigationEvent, Flow as PelicanFlow, FlowContainer, AppPage};
-use pelican_ui::theme::Theme;
-use pelican_ui::drawable::{Component, SizedTree};
+use pelican_ui::theme::{Theme, Icons};
+use pelican_ui::drawable::{Drawable, Component, SizedTree};
 use pelican_ui::layout::Stack;
 use pelican_ui::event::OnEvent;
 use ramp::prism;
 use pelican_ui::event::{Event, TickEvent};
 use pelican_ui::components::avatar::AvatarContent;
 use pelican_ui::components::list_item::ListItem as PelicanListItem;
+use pelican_ui::utils::ValidationFn;
 
-use crate::items::{EnumItem, Input, ListItem};
+use crate::items::{EnumItem, Input, ListItem, Action};
 use crate::page::{PageType, FormPage, ReviewPage, SuccessPage};
-use crate::closure::{FormSubmit, FormClosure, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter};
+use crate::closure::{FormSubmit, FormClosure, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, ValidityFn};
 use crate::page::Screen;
 
 use std::rc::Rc;
@@ -66,8 +67,8 @@ impl Review {
 
 #[derive(Debug, Clone)]
 pub enum FormItem {
-    Text(String, Box<dyn FormClosure>),
-    Number(String, NumberVariant, Box<dyn FormClosure>),
+    Text(String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
+    Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
     Search(String, Vec<ListItem>)
 }
@@ -75,13 +76,13 @@ pub enum FormItem {
 pub struct FormStorage(pub HashMap<String, String>);
 
 impl FormItem {
-    pub fn text(text: &str) -> Self {
+    pub fn text(text: &str, actions: Option<Vec<(String, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
-        FormItem::Text(text.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}))
+        FormItem::Text(text.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
     }
 
-    pub fn number(title: &str, number: NumberVariant) -> Self {
-        FormItem::Number(title.to_string(), number, Box::new(|_, _| println!("Nothing doing")))
+    pub fn number(title: &str, number: NumberVariant, valid: impl ValidityFn + 'static) -> Self {
+        FormItem::Number(title.to_string(), number, Box::new(valid))
     }
 
     pub fn enumerator(label: &str, items: Vec<(&str, &str)>) -> Self {
@@ -105,11 +106,46 @@ impl FormItem {
             FormItem::Enum(title, ..) => title.to_string()
         }
     }
+
+    fn validation(&self) -> Box<dyn ValidationFn> {
+        match self {
+            FormItem::Text(_, _, _, validation) => {
+                use pelican_ui::components::TextInput;
+
+                let validation = validation.clone();
+                Box::new(move |children: &mut Vec<Box<dyn Drawable>>| {
+                    if let Some(input) = children[0].as_any_mut().downcast_mut::<TextInput>() {
+                        let result = (validation.clone())(input.value());
+                        input.error(result.clone().map(|_| {}));
+                        result.is_ok()
+                    } else {
+                        true
+                    }
+                })
+            },
+            FormItem::Number(_, _, validation) => {
+                use pelican_ui::components::NumericalInput;
+                
+                let validation = validation.clone();
+                Box::new(move |children: &mut Vec<Box<dyn Drawable>>| {
+                    if let Some(input) = children[0].as_any_mut().downcast_mut::<NumericalInput>() {
+                        let result = (validation.clone())(input.value());
+                        input.error(result.clone());
+                        result.is_ok()
+                    } else {
+                        true
+                    }
+                })
+            },
+            _ => Box::new(|_: &mut Vec<Box<dyn Drawable>>| true),
+        }
+    }
+
     fn build(&self) -> Input {
         match self {
-            FormItem::Text(title, _) => {
+            FormItem::Text(title, _, actions, _) => {
                 let title = title.clone();
-                Input::text(&title, false, None, None)
+                Input::text(&title, false, None, actions.clone())
             },
             FormItem::Number(_, variant, _) => {
                 match variant {
@@ -128,6 +164,18 @@ impl FormItem {
     }
 }
 
+// Box::new(|children| {
+//     let mut result = true;
+    // children.iter().for_each(|c|
+    //     // TODO: Add rest of catches here. Allow for custom closure.
+    //     if let Some(input) = (*c).as_any().downcast_ref::<TextInput>() {
+    //         result = !input.value().is_empty() && input.validate();
+    //     }
+    // );
+
+//     result
+// })
+
 #[derive(Debug, Clone, Default)]
 pub struct Flow(Vec<Box<dyn ScreenBuilder>>);
 impl Flow{
@@ -142,7 +190,7 @@ impl Flow{
         let mut submit = form.review.is_none().then(|| form.on_submit.clone());
         form.inputs.into_iter().rev().map(|input| {
             let submit = submit.take();
-            let page = Box::new(move |_: &Theme| PageType::form(&input.title(), input.build(), submit.clone())) as Box<dyn PageBuilder>;
+            let page = Box::new(move |_: &Theme| PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
             Screen::new_builder(&theme, page)
         }).collect::<Vec<Box<dyn ScreenBuilder>>>().into_iter().rev().for_each(|s| pages.push(s));
 

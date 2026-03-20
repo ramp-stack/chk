@@ -15,8 +15,8 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = "1.0.219"
-pelican_ui = {version="2.1.3"}
-ramp = {package="ramp2", version="0.1.4"}
+pelican_ui = {path="../pelican_ui"}
+ramp = {package="ramp2", path="../ramp"}
 chrono = "0.4.42"
 downcast-rs = "2.0.1"
 dyn-clone = "1.0.20"
