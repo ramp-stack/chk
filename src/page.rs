@@ -190,8 +190,9 @@ impl StackPage {
 
     #[allow(clippy::too_many_arguments)]
     pub fn input(ctx: &mut Context, theme: &Theme, title: String, item: Input, header: Option<(Icons, Flow)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
+        let offset = item.offset();
         let item = item.build(theme).into_iter().flatten().collect();
-        StackPage::new(ctx, theme, title, item, Offset::Start, header, bumper, next, flow_len)
+        StackPage::new(ctx, theme, title, item, offset, header, bumper, next, flow_len)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -243,37 +244,40 @@ impl Bumper {
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Option<Box<dyn FormSubmit>>);
+pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Option<Box<dyn FormSubmit>>, #[skip] bool);
 impl OnEvent for FormPage {}
 impl AppPage for FormPage {}
 impl FormPage {
     pub fn new(theme: &Theme, title: String, item: Input, next: Option<NavFn>, _flow_len: usize, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
         let header = Header::stack(theme, &title, None);
-        let bumper = PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
         let content = item.build(theme).unwrap_or_default();
+        let bumper = PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
         let page = PelicanPage::new(header, Content::new(Offset::Start, content, validate), Some(bumper));
 
-        FormPage(Stack::default(), page, theme.clone(), next.clone(), on_submit.clone())
+        FormPage(Stack::default(), page, theme.clone(), next.clone(), on_submit.clone(), false)
     }
 
     pub fn on_change(&mut self, new: Vec<State>) {
-        let theme = &self.2;
-        let submit = self.4.clone();
-        let closure: Box<dyn Callback> = match self.3.clone(){
-            Some(nav) => Box::new(move |ctx: &mut Context, theme: &Theme| {
-                if let Some(mut on_submit) = submit.clone() {(on_submit)(ctx, &new);}
-                (nav.borrow_mut())(ctx, theme);
-            }),
-            None => Box::new(move |ctx: &mut Context, _theme: &Theme| {
-                if let Some(mut on_submit) = submit.clone() {(on_submit)(ctx, &new);}
-            }),
-        };
-        self.1.bumper = Some(PelicanBumper::stack(theme, None, closure, None));
+        if !self.5 {
+            self.5 = true;
+            let theme = &self.2;
+            let submit = self.4.clone();
+            let closure: Box<dyn Callback> = match self.3.clone(){
+                Some(nav) => Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    if let Some(mut on_submit) = submit.clone() {(on_submit)(ctx, &new);}
+                    (nav.borrow_mut())(ctx, theme);
+                }),
+                None => Box::new(move |ctx: &mut Context, _theme: &Theme| {
+                    if let Some(mut on_submit) = submit.clone() {(on_submit)(ctx, &new);}
+                }),
+            };
+            self.1.bumper = Some(PelicanBumper::stack(theme, None, closure, None));
+        }
     }
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct ReviewPage(Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>);
+pub struct ReviewPage(Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] bool);
 impl OnEvent for ReviewPage {}
 impl AppPage for ReviewPage {}
 impl ReviewPage {
@@ -281,27 +285,34 @@ impl ReviewPage {
         let header = Header::stack(theme, &title, None);
         let bumper = PelicanBumper::stack(theme, None, Box::new(|_ctx: &mut Context, _theme: &Theme| {}), None);
         let page = PelicanPage::new(header, Content::new(Offset::Start, Vec::new(), Box::new(|_| true)), Some(bumper));
-        ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone())
+        ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone(), false)
     }
 
     pub fn on_change(&mut self, new: Vec<State>) {
-        let theme = &self.3;
-        let items = (self.2)(&new);
-        let content = items.into_iter().filter_map(|mut i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        self.1.content = Content::new(Offset::Start, content, Box::new(|_| true));
+        if !self.6 {
+            self.6 = true;
+            let theme = &self.3;
+            let items = (self.2)(&new);
+            let content = items.into_iter().filter_map(|mut i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
+            self.1.content = Content::new(Offset::Start, content, Box::new(|_| true));
+        }
 
         let mut on_submit = self.5.clone();
-        self.1.bumper = Some(PelicanBumper::stack(theme, None, self.4.clone().map(|n| {
-            Box::new(move |ctx: &mut Context, theme: &crate::Theme| {
-                (on_submit)(ctx, &new);
-                (n.borrow_mut())(ctx, theme);
-            }) as Box<dyn Callback>
-        }).unwrap_or(Box::new(|_ctx: &mut Context, _theme: &crate::Theme| {})), None));
+        *self.1.bumper.as_mut().unwrap().on_click()[0] = {
+            let mut on_click = self.4.clone().map(|n| {
+                Box::new(move |ctx: &mut Context, theme: &crate::Theme| {
+                    (on_submit)(ctx, &new);
+                    (n.borrow_mut())(ctx, theme);
+                }) as Box<dyn Callback>
+            }).unwrap_or(Box::new(|_ctx: &mut Context, _theme: &crate::Theme| {}));
+            let theme = self.3.clone();
+            Box::new(move |ctx: &mut Context| (on_click)(ctx, &theme))
+        }
     }
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme);
+pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme, #[skip] bool);
 impl OnEvent for SuccessPage {}
 impl AppPage for SuccessPage {}
 impl SuccessPage {
@@ -309,18 +320,21 @@ impl SuccessPage {
         let header = Header::stack_end(theme, &title);
         let bumper = Some(PelicanBumper::stack_end(theme, Some(flow_len)));
         let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_| true)), bumper);
-        SuccessPage(Stack::default(), page, getter, theme.clone())
+        SuccessPage(Stack::default(), page, getter, theme.clone(), false)
     }
 
     pub fn on_change(&mut self, new: Vec<State>) {
-        use pelican_ui::colors;
-        use pelican_ui::components::Icon;
-        let theme = self.3.clone();
-        let (icon, description) = (self.2)(new);
-        self.1.content = Content::new(Offset::Center, drawables![
-            Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0),
-            ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
-        ], Box::new(|_| true));
+        if !self.4 {
+            self.4 = true;
+            use pelican_ui::colors;
+            use pelican_ui::components::Icon;
+            let theme = self.3.clone();
+            let (icon, description) = (self.2)(new);
+            self.1.content = Content::new(Offset::Center, drawables![
+                Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0),
+                ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
+            ], Box::new(|_| true));
+        }
     }
 }
 
@@ -388,6 +402,28 @@ impl ProfilePage {
         ProfilePage(Stack::default(), page)
     }
 }
+
+// #[derive(Debug, Component, Clone)]
+// pub struct ScanQRCodePage(Stack, PelicanPage);
+// impl OnEvent for ScanQRCodePage {}
+// impl AppPage for ScanQRCodePage {}
+// impl ScanQRCodePage {
+//     pub fn new(theme: &Theme) -> Self {
+//         let header = Header::stack(theme, "Scan QR code", None);
+
+//         let page = PelicanPage::new(
+//             header, 
+//             Content::new(Offset::Center, drawables![
+//                 QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, val: String| {
+//                     ctx.send(Request::event(NavigationEvent::Pop));
+//                 })),
+//             ], Box::new(|_| true)), 
+//             None
+//         );
+
+//         ScanQRCodePage(Stack::default(), page)
+//     }
+// }
 
 
 // let img = Listener::new(ctx, theme, img, |ctx: &mut Context, theme: &Theme, img: &mut Image, state: StateTest| {

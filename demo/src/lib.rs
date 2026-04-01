@@ -46,7 +46,7 @@ impl BitcoinHome {
 
         Root::new("Wallet",
             vec![
-                Display::currency(12.50, "0.00001234 BTC"),
+                Display::currency(12.50, "0.00001234 bitcoin"),
                 Display::list(None, items, None),
             ], //Some(Flow::new(vec![Screen::new_builder(builder, TaskDetails)])))],
             None, ("Receive".into(), Flow::new(receive)), Some(("Send".into(), Flow::from_form(send))),

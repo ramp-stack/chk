@@ -1,6 +1,6 @@
 [package]
 name = "chk"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Ella Mae <ellaammae@email.com>"]
 edition = "2024"
 description = "The guided, locked-down layer of Pelican UI for consistent, reliable RAMP interfaces."
@@ -15,8 +15,8 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = "1.0.219"
-pelican_ui = {path="../pelican_ui"}
-ramp = {package="ramp2", path="../ramp"}
+pelican_ui = {version="2.2.0"}
+ramp = {package="ramp2", version="0.1.6"}
 chrono = "0.4.42"
 downcast-rs = "2.0.1"
 dyn-clone = "1.0.20"

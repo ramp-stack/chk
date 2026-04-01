@@ -70,7 +70,7 @@ pub enum FormItem {
     Text(String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
-    Search(String, Vec<ListItem>)
+    Search(String, Vec<ListItem>),
 }
 
 pub struct FormStorage(pub HashMap<String, String>);
@@ -159,7 +159,7 @@ impl FormItem {
             },
             FormItem::Search(_, items) => {
                 Input::search(items.clone())
-            }
+            },
         }
     }
 }
@@ -215,6 +215,8 @@ impl Flow{
         // pages.push(Screen::new_builder(builder, Success(form.success())));
         Flow(pages)
     }
+
+
     
     pub(crate) fn build(&mut self, ctx: &mut Context) -> Box<dyn Callback> {
         let mut new: Vec<Box<dyn AppPage>> = vec![];
@@ -255,6 +257,7 @@ pub enum State {
     Number(String),
     Avatar(AvatarContent),
     Search(Vec<PelicanListItem>),
+    ScanCode(Option<String>),
 }
 
 #[derive(Debug, Component, Clone)]
@@ -299,7 +302,6 @@ impl FlowWrapper {
 impl FlowContainer for FlowWrapper {
     fn flow(&mut self) -> &mut PelicanFlow {&mut self.1}
 }
-
 
 #[derive(Clone, Debug)]
 pub enum NumberVariant {

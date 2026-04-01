@@ -1,15 +1,17 @@
-use pelican_ui::{drawables, colors, Context, Callback, Request, Hardware};
+use pelican_ui::{drawables, colors, Context, Callback, Request, Hardware, IS_MOBILE};
 use pelican_ui::drawable::Drawable;
 use pelican_ui::canvas::{Align, RgbaImage, ShapeType, Image};
 use pelican_ui::theme::{Theme, Icons};
+use pelican_ui::layout::Offset;
 use pelican_ui::utils::{TitleSubtitle};
 use pelican_ui::components::list_item::{ListItemSection, ListItemInfoLeft, ListItem as PelicanListItem};
-use pelican_ui::components::{TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
+use pelican_ui::components::{QRCodeScannedEvent, QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{SecondaryButton, QuickActions};
-use pelican_ui::components::SearchBar;
+use pelican_ui::components::{SearchBar, Keypad};
+use pelican_ui::navigation::NavigationEvent;
 
 use std::sync::Arc;
 
@@ -24,6 +26,7 @@ pub enum Input {
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
     Search {items: Vec<ListItem>},
+    QRCodeScanner,
 }
 
 impl Input {
@@ -55,24 +58,49 @@ impl Input {
         Input::Search {items}
     }
 
+    pub fn qr_code_scanner() -> Self {
+        Input::QRCodeScanner
+    }
+
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text {show_label, label, preset, actions} => {
                 let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
-                actions.as_ref().map(|a| items.push(Box::new(QuickActions::new(theme, a.into_iter().map(|(label, icon, action)| {
-                    let action: Box<dyn Callback> = action.get();
-                    (label.to_string(), *icon, action)
-                }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>()))));
+                if let Some(a) = actions.as_ref() {
+                    items.push(Box::new(QuickActions::new(theme, a.iter().map(|(label, icon, action)| {
+                        let action: Box<dyn Callback> = action.get();
+                        (label.to_string(), *icon, action)
+                    }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>())));
+                }
 
                 items
             },
             Input::Enumerator {items} => drawables![RadioSelector::new(theme, 0, items.iter().map(|item| item.get()).collect::<Vec<_>>())],
-            Input::Currency {instructions} => drawables![NumericalInput::numerical(theme, instructions)],
+            Input::Currency {instructions} => {
+                let mut drawables = drawables![NumericalInput::numerical(theme, instructions)];
+                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                drawables
+            },
             Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
             Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
             Input::Avatar {content, flair, action} => drawables![Avatar::new(theme, content.clone(), *flair, flair.is_some(), AvatarSize::Xxl, action.as_ref().map(|a| a.get()))],
-            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|item| item.build(theme)).collect::<Vec<_>>())]
+            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|item| item.build(theme)).collect::<Vec<_>>())],
+            Input::QRCodeScanner => drawables![QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, d: String| {ctx.send(Request::event(NavigationEvent::Pop)); ctx.send(Request::event(QRCodeScannedEvent(d)));}))]
         })
+    }
+
+
+    pub fn offset(&self) -> Offset {
+        match self {
+            Input::Text {..} |
+            Input::Enumerator {..} |
+            Input::Currency {..} |
+            Input::Date {..} |
+            Input::Time {..} |
+            Input::Avatar {..} |
+            Input::Search {..} => Offset::Start,
+            Input::QRCodeScanner => Offset::Center
+        }
     }
 
     #[allow(clippy::borrowed_box)]
@@ -87,6 +115,8 @@ impl Input {
             state.push(State::Avatar(avatar.content.clone()))
         } else if let Some(searchbar) = child.downcast_ref::<SearchBar>() {
             state.push(State::Search(searchbar.results()))
+        } else if let Some(scanner) = child.downcast_ref::<QRCodeScanner>() {
+            state.push(State::ScanCode(scanner.found()))
         }
     }
 }
@@ -235,7 +265,7 @@ pub enum Action {
     None,
     Flow {flow: Flow},
     Paste,
-    Copy {data: String}
+    Copy {data: String},
     // Navigate {flow: Flow},
 }
 
@@ -243,9 +273,14 @@ impl PartialEq for Action {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Action::Share { data: a }, Action::Share { data: b }) => a == b,
-            (Action::Flow {..}, Action::Flow {..}) => true,
             (Action::SelectImage, Action::SelectImage) => true,
             (Action::None, Action::None) => true,
+            (Action::Paste, Action::Paste) => true,
+            (Action::Copy { data: a }, Action::Copy { data: b }) => a == b,
+
+            (Action::Custom { .. }, Action::Custom { .. }) => false,
+            (Action::Flow { .. }, Action::Flow { .. }) => false,
+
             _ => false,
         }
     }
@@ -264,12 +299,12 @@ impl Action {
         Action::SelectImage
     }
 
-    pub fn scan_qr() -> Self {
-        // Action::Flow {
-        //     flow: Flow::new()
-        // }
-
-        Action::None
+    pub fn scan_qr(theme: &Theme) -> Self {
+        Action::Flow {
+            flow: Flow::new(vec![crate::Screen::new_builder(theme, Box::new(move |_: &Theme| {
+                crate::PageType::input("Scan QR code", Input::qr_code_scanner(), None, crate::Bumper::None)
+            }))]),
+        }
     }
 
     pub fn custom(action: impl Callback + 'static) -> Self {
@@ -287,8 +322,8 @@ impl Action {
     pub fn get(&self) -> Box<dyn Callback> {
         match self {
             Action::Share {data} => {
-                let share_data = data.clone();
-                Box::new(move |_ctx: &mut Context, _: &Theme| println!("Sharing data {:?}", share_data.clone()))
+                let data = data.clone();
+                Box::new(move |ctx: &mut Context, _: &Theme| ctx.send(Request::Hardware(Hardware::Share(data.clone()))))
             }
 
             Action::SelectImage => {
@@ -302,7 +337,7 @@ impl Action {
 
             Action::Flow {flow} => {
                 let mut flow = flow.clone();
-                Box::new(move |ctx: &mut Context, _: &Theme| {flow.build(ctx);})
+                Box::new(move |ctx: &mut Context, theme: &Theme| {flow.build(ctx)(ctx, theme);})
             }
 
             Action::Paste => {
@@ -316,7 +351,7 @@ impl Action {
 
             // Action::Navigate {flow} => flow.clone().build(),
 
-            _ => Box::new(move |_ctx: &mut Context, _: &Theme| println!("Doing nothing here..."))
+            _ => Box::new(move |_ctx: &mut Context, _: &Theme| {})
         }
     }
 }
