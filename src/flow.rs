@@ -164,22 +164,11 @@ impl FormItem {
     }
 }
 
-// Box::new(|children| {
-//     let mut result = true;
-    // children.iter().for_each(|c|
-    //     // TODO: Add rest of catches here. Allow for custom closure.
-    //     if let Some(input) = (*c).as_any().downcast_ref::<TextInput>() {
-    //         result = !input.value().is_empty() && input.validate();
-    //     }
-    // );
-
-//     result
-// })
-
 #[derive(Debug, Clone, Default)]
 pub struct Flow(Vec<Box<dyn ScreenBuilder>>);
 impl Flow{
-    pub fn new(pages: Vec<Box<dyn ScreenBuilder>>) -> Self {
+    pub fn new(theme: &Theme, pages: Vec<Box<dyn PageBuilder>>) -> Self {
+        let pages = pages.into_iter().map(|p| Screen::new_builder(theme, p)).collect::<Vec<_>>();
         Flow(pages)
     }
 
@@ -190,12 +179,12 @@ impl Flow{
         let mut submit = form.review.is_none().then(|| form.on_submit.clone());
         form.inputs.into_iter().rev().map(|input| {
             let submit = submit.take();
-            let page = Box::new(move |_: &Theme| PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
+            let page = Box::new(move || PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
             Screen::new_builder(&theme, page)
         }).collect::<Vec<Box<dyn ScreenBuilder>>>().into_iter().rev().for_each(|s| pages.push(s));
 
         if let Some(review) = form.review {
-            let review = Box::new(move |_: &Theme| {
+            let review = Box::new(move || {
                 let review = review.clone();
                 PageType::review(&review.title, review.getter, form.on_submit.clone())
             }) as Box<dyn PageBuilder>;
@@ -204,15 +193,13 @@ impl Flow{
         }
 
         if let Some(success) = form.success {
-            let success = Box::new(move |_: &Theme| {
+            let success = Box::new(move || {
                 let success = success.clone();
                 PageType::success(&success.title, success.getter)
             }) as Box<dyn PageBuilder>;
             pages.push(Screen::new_builder(&theme, success));
         }
 
-        // if let Some(r) = form.review() {pages.push(Screen::new_builder(builder, Review(r)));}
-        // pages.push(Screen::new_builder(builder, Success(form.success())));
         Flow(pages)
     }
 

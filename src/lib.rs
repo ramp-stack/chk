@@ -1,6 +1,7 @@
 #![doc(html_logo_url = "https://raw.githubusercontent.com/ramp-stack/chk/main/logo.png")]
 
 pub use pelican_ui::{Context, utils::Timestamp, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
+pub use ramp::prism::IS_MOBILE;
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 
@@ -15,12 +16,12 @@ pub use page::*;
 
 pub struct RootInfo(pub PelicanRootInfo);
 impl RootInfo {
-    pub fn icon(ctx: &mut Context, theme: &Theme, icon: Icons, label: &str, page: PageType) -> RootInfo {
-        RootInfo(PelicanRootInfo::icon(icon, label, page.build(ctx, theme)))
+    pub fn icon(ctx: &mut Context, theme: &Theme, icon: Icons, label: &str, page: Root) -> RootInfo {
+        RootInfo(PelicanRootInfo::icon(icon, label, page.0.build(ctx, theme)))
     }
 
-    pub fn avatar(ctx: &mut Context, theme: &Theme, avatar: AvatarContent, label: &str, page: PageType) -> RootInfo {
-        RootInfo(PelicanRootInfo::avatar(avatar, label, page.build(ctx, theme)))
+    pub fn avatar(ctx: &mut Context, theme: &Theme, avatar: AvatarContent, label: &str, page: Root) -> RootInfo {
+        RootInfo(PelicanRootInfo::avatar(avatar, label, page.0.build(ctx, theme)))
     }
 }
 

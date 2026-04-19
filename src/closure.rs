@@ -93,11 +93,11 @@ impl std::fmt::Debug for NavFn {
     }
 }
 
-pub trait PageBuilder: FnMut(&Theme) -> PageType + 'static {
+pub trait PageBuilder: FnMut() -> PageType + 'static {
     fn clone_box(&self) -> Box<dyn PageBuilder>;
 }
 
-impl<F> PageBuilder for F where F: FnMut(&Theme) -> PageType + Clone + 'static {
+impl<F> PageBuilder for F where F: FnMut() -> PageType + Clone + 'static {
     fn clone_box(&self) -> Box<dyn PageBuilder> {
         Box::new(self.clone())
     }

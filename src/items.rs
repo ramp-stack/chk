@@ -125,8 +125,8 @@ impl Input {
 pub enum Display {
     Text {text: String, size: TextSize, style: TextStyle, align: Align},
     Icon {icon: Icons},
-    Image {image: Arc<RgbaImage>, size: (f32, f32)},
-    Review {label: String, data: String, instructions: String},
+    Image {image: String, size: (f32, f32)},
+    Cta {label: String, data: Option<String>, instructions: String, actions: Vec<(String, Icons, Action)>},
     Table {label: String, items: Vec<TableItem>},
     Currency {amount: f32, instructions: String},
     List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
@@ -145,19 +145,19 @@ impl Display {
     }
 
     pub fn label(text: &str) -> Self {
-        Display::Text {text: text.to_string(), size: TextSize::H5, style: TextStyle::Heading, align: Align::Left}
+        Display::Text {text: text.to_string(), size: TextSize::H5, style: TextStyle::Heading, align: Align::Center}
     }
 
     pub fn icon(icon: Icons) -> Self {
         Display::Icon {icon}
     }
 
-    pub fn image(image: Arc<RgbaImage>, size: (f32, f32)) -> Self {
-        Display::Image {image, size}
+    pub fn image(image: &str, size: (f32, f32)) -> Self {
+        Display::Image {image: image.to_string(), size}
     }
 
-    pub fn review(label: &str, data: &str, instructions: &str) -> Self {
-        Display::Review {label: label.to_string(), data: data.to_string(), instructions: instructions.to_string()}
+    pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<(String, Icons, Action)>) -> Self {
+        Display::Cta {label: label.to_string(), data: data.map(|s| s.to_string()), instructions: instructions.to_string(), actions}
     }
 
     pub fn table(label: &str, items: Vec<TableItem>) -> Self {
@@ -187,9 +187,14 @@ impl Display {
     pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Display::Icon {icon} => drawables![Icon::new(theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0)],
-            Display::Image {image, size} => drawables![Image{shape: ShapeType::Rectangle(0.0, *size, 0.0), image: image.clone(), color: None}],
+            Display::Image {image, size} => drawables![Image{shape: ShapeType::Rectangle(0.0, *size, 0.0), image: theme.brand().images.get(&image.to_string()).unwrap().clone(), color: None}],
             Display::Text {text, size, style, align} if !text.is_empty() => drawables![ExpandableText::new(theme, text, *size, *style, *align, None)],
-            Display::Review {label, data, instructions} => drawables![DataItem::text(theme, label, data, instructions, Some(Vec::<(String, Icons, Box<dyn Callback>)>::new()))],
+            Display::Cta {label, data, instructions, actions} => drawables![DataItem::text(theme, label, data.as_deref(), instructions, 
+                Some(actions.iter().map(|(label, icon, action)| {
+                    let action: Box<dyn Callback> = action.get();
+                    (label.to_string(), *icon, action)
+                }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>()),
+            )],
             Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), Some(Vec::<(String, Icons, Box<dyn Callback>)>::new()))],
             Display::Currency {amount, instructions} => drawables![NumericalInput::display(theme, *amount, instructions)],
             Display::List {items, instructions, ..} if items.is_empty() => drawables![ExpandableText::new(theme, instructions.as_ref()?, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
@@ -301,9 +306,9 @@ impl Action {
 
     pub fn scan_qr(theme: &Theme) -> Self {
         Action::Flow {
-            flow: Flow::new(vec![crate::Screen::new_builder(theme, Box::new(move |_: &Theme| {
+            flow: Flow::new(theme, vec![Box::new(move || {
                 crate::PageType::input("Scan QR code", Input::qr_code_scanner(), None, crate::Bumper::None)
-            }))]),
+            })]),
         }
     }
 
