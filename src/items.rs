@@ -1,4 +1,4 @@
-use pelican_ui::{drawables, colors, Context, Callback, Request, Hardware, IS_MOBILE};
+use pelican_ui::{drawables, colors, Context, Callback, Request, IS_MOBILE};
 use pelican_ui::drawable::Drawable;
 use pelican_ui::canvas::{Align, RgbaImage, ShapeType, Image};
 use pelican_ui::theme::{Theme, Icons};
@@ -10,12 +10,14 @@ use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{SecondaryButton, QuickActions};
-use pelican_ui::components::{SearchBar, Keypad};
+use pelican_ui::components::{SearchBar, Keypad, TextInputEvent};
 use pelican_ui::navigation::NavigationEvent;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use air::names::Name;
 
 use crate::flow::{Flow, State};
+use crate::ListItemGetter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
@@ -25,7 +27,7 @@ pub enum Input {
     Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
-    Search {items: Vec<ListItem>},
+    Search {items: Vec<(ListItem, Name)>},
     QRCodeScanner,
 }
 
@@ -54,7 +56,7 @@ impl Input {
         Input::Avatar {content, flair, action}
     }
 
-    pub fn search(items: Vec<ListItem>) -> Self {
+    pub fn search(items: Vec<(ListItem, Name)>) -> Self {
         Input::Search {items}
     }
 
@@ -84,8 +86,8 @@ impl Input {
             Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
             Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
             Input::Avatar {content, flair, action} => drawables![Avatar::new(theme, content.clone(), *flair, flair.is_some(), AvatarSize::Xxl, action.as_ref().map(|a| a.get()))],
-            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|item| item.build(theme)).collect::<Vec<_>>())],
-            Input::QRCodeScanner => drawables![QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, d: String| {ctx.send(Request::event(NavigationEvent::Pop)); ctx.send(Request::event(QRCodeScannedEvent(d)));}))]
+            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|(item, id)| (item.build(theme), id.clone())).collect::<Vec<_>>())],
+            Input::QRCodeScanner => drawables![QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, d: String| {ctx.emit(NavigationEvent::Pop); ctx.emit(QRCodeScannedEvent(d));}))]
         })
     }
 
@@ -129,7 +131,7 @@ pub enum Display {
     Cta {label: String, data: Option<String>, instructions: String, actions: Vec<(String, Icons, Action)>},
     Table {label: String, items: Vec<TableItem>},
     Currency {amount: f32, instructions: String},
-    List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
+    List {label: Option<String>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
     Avatar {content: AvatarContent},
     Actions {actions: Vec<ActionItem>}
@@ -168,8 +170,9 @@ impl Display {
         Display::QRCode {data: data.to_string(), instructions: instructions.to_string()}
     }
 
-    pub fn list(label: Option<&str>, items: Vec<ListItem>, instructions: Option<&str>) -> Self {
-        Display::List{label: label.map(|i| i.to_string()), items, instructions: instructions.map(|i| i.to_string())}
+    pub fn list(label: Option<&str>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<&str>) -> Self {
+        // let item_getter: Arc<Box<dyn ListItemGetter>> = Arc::new(Box::new(|ctx: &mut Context| vec![]));
+        Display::List{label: label.map(|i| i.to_string()), item_getter, instructions: instructions.map(|i| i.to_string())}
     }
 
     pub fn currency(amount: f32, instructions: &str) -> Self {
@@ -197,8 +200,13 @@ impl Display {
             )],
             Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), Some(Vec::<(String, Icons, Box<dyn Callback>)>::new()))],
             Display::Currency {amount, instructions} => drawables![NumericalInput::display(theme, *amount, instructions)],
-            Display::List {items, instructions, ..} if items.is_empty() => drawables![ExpandableText::new(theme, instructions.as_ref()?, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
-            Display::List {label, items, ..} => drawables![ListItemSection::new(theme, label.clone(), items.iter_mut().map(|item| item.build(theme)).collect::<Vec<_>>())],
+            Display::List {label, item_getter, instructions, ..} => {
+                let item_getter = item_getter.clone();
+                let theme = theme.clone();
+                drawables![ListItemSection::new(&theme.clone(), label.clone(), instructions.clone(), move |ctx: &mut Context| {
+                    (item_getter)(ctx).iter_mut().map(|item| item.build(&theme.clone())).collect::<Vec<_>>()
+                })]
+            },
             Display::QRCode {data, instructions} => drawables![QRCode::new(theme, data), ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
             Display::Avatar {content} => drawables![Avatar::new(theme, content.clone(), None, false, AvatarSize::Xxl, None)],
             Display::Actions {actions} => actions.iter_mut().map(|ActionItem(a, l, i)| Box::new(SecondaryButton::medium(theme, *i, l, None, a.get())) as Box<dyn Drawable>).collect::<Vec<_>>(),
@@ -306,9 +314,7 @@ impl Action {
 
     pub fn scan_qr(theme: &Theme) -> Self {
         Action::Flow {
-            flow: Flow::new(theme, vec![Box::new(move || {
-                crate::PageType::input("Scan QR code", Input::qr_code_scanner(), None, crate::Bumper::None)
-            })]),
+            flow: Flow::new(theme, vec![Box::new(move || crate::PageType::scan_qr())]),
         }
     }
 
@@ -328,7 +334,7 @@ impl Action {
         match self {
             Action::Share {data} => {
                 let data = data.clone();
-                Box::new(move |ctx: &mut Context, _: &Theme| ctx.send(Request::Hardware(Hardware::Share(data.clone()))))
+                Box::new(move |ctx: &mut Context, _: &Theme| ctx.share_social(data.clone()))
             }
 
             Action::SelectImage => {
@@ -346,12 +352,12 @@ impl Action {
             }
 
             Action::Paste => {
-                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.send(Request::Hardware(Hardware::GetClipboard))})
+                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.emit(TextInputEvent::Set(ctx.get_clipboard().unwrap_or_default()));})
             }
 
             Action::Copy {data} => {
                 let data = data.to_string();
-                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.send(Request::Hardware(Hardware::SetClipboard(data.to_string())))})
+                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.set_clipboard(data.to_string())})
             }
 
             // Action::Navigate {flow} => flow.clone().build(),

@@ -6,14 +6,17 @@ use pelican_ui::layout::Stack;
 use pelican_ui::event::OnEvent;
 use ramp::prism;
 use pelican_ui::event::{Event, TickEvent};
-use pelican_ui::components::avatar::AvatarContent;
+use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::list_item::ListItem as PelicanListItem;
+use pelican_ui::components::SearchBar;
 use pelican_ui::utils::ValidationFn;
 
 use crate::items::{EnumItem, Input, ListItem, Action};
 use crate::page::{PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, FormClosure, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, ValidityFn};
 use crate::page::Screen;
+
+use air::names::Name;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -70,7 +73,8 @@ pub enum FormItem {
     Text(String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
-    Search(String, Vec<ListItem>),
+    Search(String, Vec<(ListItem, Name)>),
+    Avatar(String)
 }
 
 pub struct FormStorage(pub HashMap<String, String>);
@@ -92,8 +96,12 @@ impl FormItem {
         FormItem::Enum(label.to_string(), items)
     }
 
-    pub fn search(title: &str, items: Vec<ListItem>) -> Self {
+    pub fn search(title: &str, items: Vec<(ListItem, Name)>) -> Self {
         FormItem::Search(title.to_string(), items)
+    }
+
+    pub fn avatar(title: &str) -> Self {
+        FormItem::Avatar(title.to_string())
     }
 }
 
@@ -103,6 +111,7 @@ impl FormItem {
             FormItem::Search(title, ..) |
             FormItem::Text(title, ..) |
             FormItem::Number(title, ..) |
+            FormItem::Avatar(title, ..) |
             FormItem::Enum(title, ..) => title.to_string()
         }
     }
@@ -137,6 +146,9 @@ impl FormItem {
                     }
                 })
             },
+            FormItem::Search(_, _) => Box::new(|children: &mut Vec<Box<dyn Drawable>>| {
+                if let Some(searchbar) = children[0].as_any_mut().downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
+            }),
             _ => Box::new(|_: &mut Vec<Box<dyn Drawable>>| true),
         }
     }
@@ -160,6 +172,7 @@ impl FormItem {
             FormItem::Search(_, items) => {
                 Input::search(items.clone())
             },
+            FormItem::Avatar(_) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
         }
     }
 }
@@ -178,7 +191,10 @@ impl Flow{
 
         let mut submit = form.review.is_none().then(|| form.on_submit.clone());
         form.inputs.into_iter().rev().map(|input| {
-            let submit = submit.take();
+            let submit = submit.take().map(|mut os| Box::new(move |ctx: &mut Context, state: &Vec<State>| {
+                ctx.emit(NavigationEvent::Reset);
+                (os)(ctx, &state);
+            }) as Box<dyn FormSubmit>);
             let page = Box::new(move || PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
             Screen::new_builder(&theme, page)
         }).collect::<Vec<Box<dyn ScreenBuilder>>>().into_iter().rev().for_each(|s| pages.push(s));
@@ -221,7 +237,7 @@ impl Flow{
             new.push(Box::new(page));
             next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {
                 // if let Some(cb) = callback.clone() { (cb.clone())(ctx) } // on_submit
-                ctx.send(Request::event(NavigationEvent::Next));
+                ctx.emit(NavigationEvent::Next);
             }))));
         });
 
@@ -232,18 +248,18 @@ impl Flow{
 
         Box::new(move |ctx: &mut Context, _: &Theme| {
             let flow = FlowWrapper::new(PelicanFlow::new(new.clone()));
-            ctx.send(Request::event(NavigationEvent::push(flow))); // this needs to push the flow
+            ctx.emit(NavigationEvent::push(flow));
         })
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum State {
     Text(String),
     Enumerator(usize),
     Number(String),
     Avatar(AvatarContent),
-    Search(Vec<PelicanListItem>),
+    Search(Vec<Name>),
     ScanCode(Option<String>),
 }
 

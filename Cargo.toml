@@ -22,3 +22,5 @@ downcast-rs = "2.0.1"
 dyn-clone = "1.0.20"
 anyanymap = "1.0.2"
 include_dir = "0.7.4"
+air = {path = "../air"}
+rand = "0.8"

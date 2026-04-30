@@ -1,6 +1,6 @@
 #![doc(html_logo_url = "https://raw.githubusercontent.com/ramp-stack/chk/main/logo.png")]
 
-pub use pelican_ui::{Context, utils::Timestamp, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
+pub use pelican_ui::{Context, Assets, utils::Timestamp, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
 pub use ramp::prism::IS_MOBILE;
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
@@ -33,11 +33,11 @@ pub enum ChkTheme {
 }
 
 impl ChkTheme {
-    pub fn to_pelican(self, assets: &include_dir::Dir<'static>) -> Theme {
+    pub fn to_pelican(self, assets: Assets) -> Theme {
         match self {
-            ChkTheme::Dark(c) => Theme::dark(assets, c),
-            ChkTheme::Light(c) => Theme::light(assets, c),
-            ChkTheme::Auto(c) => Theme::from(assets, c)
+            ChkTheme::Dark(c) => Theme::dark(&assets.0, c),
+            ChkTheme::Light(c) => Theme::light(&assets.0, c),
+            ChkTheme::Auto(c) => Theme::from(&assets.0, c)
         }
     }
 }
@@ -54,6 +54,7 @@ pub trait App {
 pub mod __private {
     pub use ramp;
     pub use ramp::prism;
+    pub use prism::Assets;
     pub use pelican_ui::theme::Theme;
     pub use pelican_ui::Context;
     pub use pelican_ui::event::Event;
@@ -65,20 +66,23 @@ pub mod __private {
     pub use std::cell::RefCell;
 }
 
+// example
+// chk::run! {[ChatRoom]; |_ctx: &mut Context| Orange }
+
 #[macro_export]
 macro_rules! run {
-    ($app:expr) => {
+    ([$($c:ty),* $(,)?]; $app:expr) => {
         // TODO: Update state with application support directory files.
 
         use $crate::__private::*;
-        ramp::run!(move |ctx: &mut Context, assets: Assets| {
+        ramp::run!([$($c),*]; move |ctx: &mut Context, assets: Assets| {
             let app: Rc<RefCell<dyn App>> = Rc::new(RefCell::new(($app)(ctx)));
-            let theme: Theme = app.borrow().theme().to_pelican(assets.all());
+            let theme: Theme = app.borrow().theme().to_pelican(assets);
             let roots: Vec<RootInfo> = app.borrow().roots(ctx, &theme);
             let roots = roots.into_iter().map(|root| root.0).collect::<Vec<PelicanRootInfo>>();
             let app = Rc::clone(&app);
             let on_event = Box::new(move |d: &mut Box<dyn Drawable>, ctx: &mut Context, event: Box<dyn Event>| app.borrow_mut().on_event(ctx, event));
-            Interface::new(&theme, roots, on_event)
+            Interface::new(ctx, &theme, roots, on_event)
         });
     }
 }

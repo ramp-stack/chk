@@ -1,7 +1,7 @@
 #![allow(clippy::type_complexity)]
 use pelican_ui::{Context, theme::{Icons}};
 use crate::page::{Screen, PageType};
-use crate::{FormStorage, Display};
+use crate::{ListItem, FormStorage, Display};
 use crate::flow::State;
 use pelican_ui::theme::Theme;
 
@@ -271,5 +271,23 @@ impl Clone for Box<dyn FormSubmit> {
 impl std::fmt::Debug for dyn FormSubmit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "FormSubmit Closure")
+    }
+}
+
+pub trait ListItemGetter:
+    Fn(&mut Context) -> Vec<ListItem> + Send + Sync + 'static
+{
+}
+
+impl<T> ListItemGetter for T
+where
+    T: Fn(&mut Context) -> Vec<ListItem> + Send + Sync + 'static
+{
+}
+
+
+impl std::fmt::Debug for dyn ListItemGetter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ListItemGetter Closure")
     }
 }

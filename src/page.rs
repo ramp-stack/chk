@@ -13,14 +13,18 @@ use pelican_ui::navigation::{AppPage, Flow as PelicanFlow};
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::MessageGroups;
-pub use pelican_ui::components::{Profile, Message};
 use std::fmt::Debug;
 use pelican_ui::utils::ValidationFn;
 
 use crate::FlowWrapper;
 use crate::flow::{Flow, State};
 use crate::items::{Action, Input, Display};
+use crate::page::messages::{Profile, MessagesPage, ProfilePage};
 use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter};
+
+use air::names::Id;
+
+pub mod messages;
 
 pub struct Root(pub PageType);
 impl Root {
@@ -73,7 +77,7 @@ pub enum PageType {
     Form{title: String, item: Input, flow_len: usize, next: Option<NavFn>, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>},
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize},
-    Messaging{messages: Vec<Message>, profiles: Vec<Profile>, flow_len: usize},
+    Messaging{room_id: Id, flow_len: usize},
     Profile{profile: Profile},
 }
 
@@ -102,8 +106,12 @@ impl PageType {
         PageType::Success { title: title.to_string(), getter, flow_len: 1 }
     }
 
-    pub fn messaging(messages: Vec<Message>, profiles: Vec<Profile>) -> Self {
-        PageType::Messaging{ messages, profiles, flow_len: 1 }
+    pub fn messaging(room_id: Id) -> Self {
+        PageType::Messaging{ room_id, flow_len: 1 }
+    }
+
+    pub fn scan_qr() -> Self {
+        PageType::input("Scan QR code", Input::qr_code_scanner(), None, crate::Bumper::None)
     }
 
     pub fn profile(profile: Profile) -> Self {
@@ -152,7 +160,7 @@ impl PageType {
             PageType::Form{title, item, next, flow_len, validate, on_submit} => Box::new(FormPage::new(theme, title.to_string(), item.clone(), next.clone(), *flow_len, validate.clone(), on_submit.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
-            PageType::Messaging{messages, profiles, flow_len} => Box::new(MessagesPage::new(ctx, theme, messages.clone(), profiles.clone(), *flow_len)),
+            PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, room_id.clone(), *flow_len)),
             PageType::Profile{profile} => Box::new(ProfilePage::new(theme, profile.clone()))
         }
     }
@@ -166,7 +174,6 @@ impl RootPage {
     pub fn new(theme: &Theme, title: String, mut input: Vec<Input>, mut display: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), mut bumper_b: Option<(String, Flow)>) -> Self {
         let length = input.len() + display.len();
         let offset = match display.first() {
-            Some(Display::List {items, ..}) if items.is_empty() => Offset::Center,
             Some(Display::List {..}) => Offset::Start,
             _ if length <= 1 => Offset::Center,
             _ => Offset::Start,
@@ -262,7 +269,7 @@ impl Bumper {
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Option<Box<dyn FormSubmit>>, #[skip] bool);
+pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Option<Box<dyn FormSubmit>>, #[skip] Vec<State>);
 impl OnEvent for FormPage {}
 impl AppPage for FormPage {}
 impl FormPage {
@@ -272,12 +279,12 @@ impl FormPage {
         let bumper = PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
         let page = PelicanPage::new(header, Content::new(Offset::Start, content, validate), Some(bumper));
 
-        FormPage(Stack::default(), page, theme.clone(), next.clone(), on_submit.clone(), false)
+        FormPage(Stack::default(), page, theme.clone(), next.clone(), on_submit.clone(), vec![])
     }
 
     pub fn on_change(&mut self, new: Vec<State>) {
-        if !self.5 {
-            self.5 = true;
+        if new != self.5 {
+            self.5 = new.clone();
             let theme = &self.2;
             let submit = self.4.clone();
             let closure: Box<dyn Callback> = match self.3.clone(){
@@ -353,71 +360,6 @@ impl SuccessPage {
                 ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
             ], Box::new(|_| true));
         }
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct MessagesPage(Stack, PelicanPage);
-impl OnEvent for MessagesPage {}
-impl AppPage for MessagesPage {}
-impl MessagesPage {
-    pub fn new(_ctx: &mut Context, theme: &Theme, messages: Vec<Message>, profiles: Vec<Profile>, flow_len: usize) -> Self {
-        let profiles: Vec<Profile> = profiles.into_iter().filter(|p| *p != Profile::me()).collect();
-        let taken_profiles: Vec<Profile> = profiles.clone();
-        let is_group = profiles.len() > 1;
-        let header = Header::messaging(theme, profiles.clone(), flow_len, Box::new(FlowWrapper::new(PelicanFlow::new(vec![match is_group {
-            true => Box::new(GroupMessageInfoPage::new(theme, taken_profiles.clone())),
-            false => Box::new(ProfilePage::new(theme, taken_profiles[0].clone())),
-        }]))));
-
-        let bumper = Some(PelicanBumper::input(theme, "Message...", |_ctx: &mut Context, val: &mut String| {println!("Create Message From: {:?}", val)}));
-        let messages = MessageGroups::new(theme, messages, profiles, false);
-        let page = PelicanPage::new(header, Content::new(Offset::End, drawables![messages], Box::new(|_| true)), bumper);
-
-        MessagesPage(Stack::default(), page)
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct GroupMessageInfoPage(Stack, PelicanPage);
-impl OnEvent for GroupMessageInfoPage {}
-impl AppPage for GroupMessageInfoPage {}
-impl GroupMessageInfoPage {
-    pub fn new(theme: &Theme, profiles: Vec<Profile>) -> Self {
-        let header = Header::stack(theme, "Group info", None);
-        let profiles = ListItemGroup::new(profiles.into_iter().map(|p| ListItem::new(theme, Some(p.avatar()),
-            ListItemInfoLeft::new(&p.name, Some("did::48anxiSatoETwhiLaceolduxWMoadoletaTawhoraldCCOdalotwevalouhEwBKONLAatHOHX"), None, None), 
-            None, None, Some(Icons::Forward), Box::new(move |ctx: &mut Context, theme: &Theme| {
-                let page: Box<dyn AppPage> = Box::new(ProfilePage::new(theme, p.clone()));
-                let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
-                ctx.send(Request::event(NavigationEvent::push(flow)));
-            })
-        )).collect());
-
-        let page = PelicanPage::new(header, Content::new(Offset::Start, drawables![profiles], Box::new(|_| true)), None);
-        GroupMessageInfoPage(Stack::default(), page)
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct ProfilePage(Stack, PelicanPage);
-impl OnEvent for ProfilePage {}
-impl AppPage for ProfilePage {}
-impl ProfilePage {
-    pub fn new(theme: &Theme, profile: Profile) -> Self {
-        let header = Header::stack(theme, &profile.name, None);
-
-        let page = PelicanPage::new(
-            header, 
-            Content::new(Offset::Start, drawables![
-                Avatar::new(theme, profile.avatar(), None, false, AvatarSize::Xxl, None),
-                TextInput::default(theme),
-                TextInput::default(theme)
-            ], Box::new(|_| true)), 
-            None
-        );
-
-        ProfilePage(Stack::default(), page)
     }
 }
 
