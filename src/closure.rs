@@ -2,7 +2,7 @@
 use pelican_ui::{Context, theme::{Icons}};
 use crate::page::{Screen, PageType};
 use crate::{ListItem, FormStorage, Display};
-use crate::flow::State;
+use crate::flow::{State, Flow};
 use pelican_ui::theme::Theme;
 
 use std::rc::Rc;
@@ -32,11 +32,11 @@ impl std::fmt::Debug for dyn FnMutClone {
     }
 }
 
-pub trait ValidityFn: FnMut(String) -> Result<String, String> + 'static {
+pub trait ValidityFn: FnMut(&mut Context, String) -> Result<String, String> + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn>;
 }
 
-impl<F> ValidityFn for F where F: FnMut(String) -> Result<String, String> + Clone + 'static {
+impl<F> ValidityFn for F where F: FnMut(&mut Context, String) -> Result<String, String> + Clone + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn> {
         Box::new(self.clone())
     }
@@ -250,13 +250,13 @@ impl std::fmt::Debug for dyn SuccessGetter {
 }
 
 
-pub trait FormSubmit: FnMut(&mut Context, &Vec<State>) + 'static {
+pub trait FormSubmit: FnMut(&mut Context, &Vec<State>) -> Option<Box<dyn PageBuilder>> + 'static {
     fn clone_box(&self) -> Box<dyn FormSubmit>;
 }
 
 impl PartialEq for dyn FormSubmit{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> FormSubmit for F where F: FnMut(&mut Context, &Vec<State>) + Clone + 'static {
+impl<F> FormSubmit for F where F: FnMut(&mut Context, &Vec<State>) -> Option<Box<dyn PageBuilder>> + Clone + 'static {
     fn clone_box(&self) -> Box<dyn FormSubmit> {
         Box::new(self.clone())
     }
@@ -289,5 +289,30 @@ where
 impl std::fmt::Debug for dyn ListItemGetter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ListItemGetter Closure")
+    }
+}
+
+
+pub trait FlowBuilder: FnMut(&mut Context, &Theme) -> Flow + 'static {
+    fn clone_box(&self) -> Box<dyn FlowBuilder>;
+}
+
+impl PartialEq for dyn FlowBuilder{fn eq(&self, _: &Self) -> bool {true}}
+
+impl<F> FlowBuilder for F where F: FnMut(&mut Context, &Theme) -> Flow + Clone + 'static {
+    fn clone_box(&self) -> Box<dyn FlowBuilder> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn FlowBuilder> {
+    fn clone(&self) -> Self {
+        self.as_ref().clone_box()
+    }
+}
+
+impl std::fmt::Debug for dyn FlowBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Flow Builder Closure")
     }
 }

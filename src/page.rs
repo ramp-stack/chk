@@ -17,10 +17,10 @@ use std::fmt::Debug;
 use pelican_ui::utils::ValidationFn;
 
 use crate::FlowWrapper;
-use crate::flow::{Flow, State};
+use crate::flow::{Flow, State, FormItem};
 use crate::items::{Action, Input, Display};
 use crate::page::messages::{Profile, MessagesPage, ProfilePage};
-use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter};
+use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
 use air::names::Id;
 
@@ -28,16 +28,12 @@ pub mod messages;
 
 pub struct Root(pub PageType);
 impl Root {
-    pub fn input(title: &str, items: Vec<Input>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), bumper_b: Option<(String, Flow)>) -> Self {
-        Root(PageType::root(title, items, vec![], header, bumper_a, bumper_b))
-    }
-
-    pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), bumper_b: Option<(String, Flow)>) -> Self {
+    pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
         Root(PageType::root(title, vec![], items, header, bumper_a, bumper_b))
     }
 
-    pub fn both(title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), bumper_b: Option<(String, Flow)>) -> Self {
-        Root(PageType::root(title, input, display, header, bumper_a, bumper_b))
+    pub fn custom(page: PageType) -> Self {
+        Root(page)
     }
 }
 
@@ -71,10 +67,13 @@ impl Screen {
 
 #[derive(Clone, Debug)]
 pub enum PageType {
-    Root {title: String, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), bumper_b: Option<(String, Flow)>},
-    Display{title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Flow)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
-    Input{title: String, item: Input, header: Option<(Icons, Flow)>, bumper: Bumper, flow_len: usize, next: Option<NavFn>},
+    Root {title: String, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>},
+    Both{title: String, display: Vec<Display>, inputs: Vec<Input>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
+    EditAndDisplay {title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>, flow_len: usize},
+    Display{title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
+    Input{title: String, item: Input, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, flow_len: usize, next: Option<NavFn>},
     Form{title: String, item: Input, flow_len: usize, next: Option<NavFn>, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>},
+    Edit{title: String, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>, flow_len: usize},
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize},
     Messaging{room_id: Id, flow_len: usize},
@@ -82,20 +81,32 @@ pub enum PageType {
 }
 
 impl PageType {
-    pub fn root(title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), bumper_b: Option<(String, Flow)>) -> Self {
+    pub fn root(title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
         PageType::Root { title: title.to_string(), input, display, header, bumper_a, bumper_b }
     }
 
-    pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Flow)>, bumper: Bumper, offset: Offset) -> Self {
+    pub fn display_and_input(title: &str, inputs: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper) -> Self {
+        PageType::Both{title: title.to_string(), display, inputs, header, bumper, flow_len: 1, next: None }
+    }
+
+    pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, offset: Offset) -> Self {
         PageType::Display { title: title.to_string(), items, header, bumper, offset, flow_len: 1, next: None }
     }
 
-    pub fn input(title: &str, item: Input, header: Option<(Icons, Flow)>, bumper: Bumper) -> Self {
+    pub fn input(title: &str, item: Input, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper) -> Self {
         PageType::Input { title: title.to_string(), item, header, bumper, flow_len: 1, next: None }
     }
 
     pub fn form(title: &str, item: Input, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
         PageType::Form { title: title.to_string(), validate, item, flow_len: 1, next: None, on_submit }
+    }
+
+    pub fn edit(title: &str, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
+        PageType::Edit { title: title.to_string(), input, display, validations, on_save, flow_len: 1}
+    }
+
+    pub fn edit_and_display(title: &str, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        PageType::EditAndDisplay { title: title.to_string(), items, display, on_save, flow_len: 1}
     }
 
     pub fn review(title: &str, getter: Box<dyn ReviewItemGetter>, on_submit: Box<dyn FormSubmit>) -> Self {
@@ -110,8 +121,8 @@ impl PageType {
         PageType::Messaging{ room_id, flow_len: 1 }
     }
 
-    pub fn scan_qr() -> Self {
-        PageType::input("Scan QR code", Input::qr_code_scanner(), None, crate::Bumper::None)
+    pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
+        PageType::input("Scan QR code", Input::qr_code_scanner(instructions, alt), None, crate::Bumper::None)
     }
 
     pub fn profile(profile: Profile) -> Self {
@@ -123,10 +134,13 @@ impl PageType {
             PageType::Root{..} |
             PageType::Messaging{..} |
             PageType::Profile{..} |
+            PageType::Edit{..} |
+            PageType::EditAndDisplay {..} |
             PageType::Success{..} => None,
             PageType::Display{next, ..} |
             PageType::Input{next, ..} |
             PageType::Form{next, ..} |
+            PageType::Both{next, ..} |
             PageType::Review{next, ..} => Some(next),
         }
     }
@@ -136,16 +150,20 @@ impl PageType {
             PageType::Profile{..} |
             PageType::Messaging{..} |
             PageType::Root{..} => None,
+            PageType::Edit{flow_len, ..} |
             PageType::Display{flow_len, ..} |
             PageType::Input{flow_len, ..} |
             PageType::Form{flow_len, ..} |
             PageType::Success{flow_len, ..} |
+            PageType::Both{flow_len, ..} |
+            PageType::EditAndDisplay{flow_len, ..} |
             PageType::Review{flow_len, ..} => Some(flow_len)
         }
     }
 
     pub fn on_submit(&mut self) -> Option<&mut Box<dyn FormSubmit>> {
         match self {
+            PageType::Edit{on_save, ..} => Some(on_save),
             PageType::Form{on_submit, ..} => on_submit.as_mut(),
             PageType::Review{on_submit, ..} => Some(on_submit),
             _ => None
@@ -154,14 +172,35 @@ impl PageType {
 
     pub fn build(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
-            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone())),
+            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), Some(bumper_a.clone()), bumper_b.clone())),
+            PageType::Both{title, inputs, display, header, bumper, next, flow_len} => Box::new(StackPage::both(ctx, theme, title.to_string(), display.to_vec(), inputs.to_vec(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(StackPage::display(ctx, theme, title.to_string(), items.to_vec(), *offset, header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(StackPage::input(ctx, theme, title.to_string(), item.clone(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Form{title, item, next, flow_len, validate, on_submit} => Box::new(FormPage::new(theme, title.to_string(), item.clone(), next.clone(), *flow_len, validate.clone(), on_submit.clone())),
+            PageType::Edit{title, input, display, validations, on_save, flow_len} => Box::new(EditPage::new(theme, title.to_string(), input.clone(), display.clone(), validations.clone(), on_save.clone())),
+            PageType::EditAndDisplay{title, items, display, on_save, flow_len} => Box::new(EditPage::edit_and_display(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
             PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, room_id.clone(), *flow_len)),
             PageType::Profile{profile} => Box::new(ProfilePage::new(theme, profile.clone()))
+        }
+    }
+
+    pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
+        match self {
+            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), Some(bumper_a.clone()), bumper_b.clone())),
+            PageType::Both{title, inputs, display, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), inputs.to_vec(), display.to_vec(), header.clone(), None, None)),
+            PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), vec![], items.to_vec(), header.clone(), None, None)),
+            PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), vec![item.clone()], vec![], header.clone(), None, None)),
+
+            PageType::Edit{..} |
+            PageType::Form{..} |
+            PageType::Review{..} |
+            PageType::Success{..} |
+            PageType::Messaging{..} |
+            PageType::Profile{..} => panic!("Not an accepted root type"),
+
+            PageType::EditAndDisplay{title, items, display, on_save, flow_len} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
         }
     }
 }
@@ -171,7 +210,7 @@ pub struct RootPage(Stack, PelicanPage);
 impl OnEvent for RootPage {}
 impl AppPage for RootPage {}
 impl RootPage {
-    pub fn new(theme: &Theme, title: String, mut input: Vec<Input>, mut display: Vec<Display>, header: Option<(Icons, Flow)>, bumper_a: (String, Flow), mut bumper_b: Option<(String, Flow)>) -> Self {
+    pub fn new(theme: &Theme, title: String, mut input: Vec<Input>, mut display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, mut bumper_a: Option<(String, Box<dyn FlowBuilder>)>, mut bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
         let length = input.len() + display.len();
         let offset = match display.first() {
             Some(Display::List {..}) => Offset::Start,
@@ -181,7 +220,7 @@ impl RootPage {
         
         let header_icon = header.map(|(s, flow)| {
             let mut flow = flow.clone();
-            (s, Box::new(move |ctx: &mut Context, theme: &Theme| (flow.build(ctx))(ctx, theme)) as Box<dyn Callback>) 
+            (s, Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>) 
         });
 
         let header = Header::home(theme, &title, header_icon);
@@ -190,14 +229,16 @@ impl RootPage {
 
         let second = bumper_b.as_mut().map(|(t, flow)| {
             let mut flow = flow.clone();
-            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| (flow.build(ctx))(ctx, theme)) as Box<dyn Callback>)
+            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
         });
 
-        let (title, mut flow) = bumper_a.clone();
-        let first = (title.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| (flow.build(ctx))(ctx, theme)) as Box<dyn Callback>);
-        let bumper = PelicanBumper::home(theme, first, second);
+        let first = bumper_a.as_mut().map(|(t, flow)| {
+            let mut flow = flow.clone();
+            (title.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
+        });
 
-        let page = PelicanPage::new(header, Content::new(offset, content, Box::new(|_| true)), Some(bumper));
+        let bumper = PelicanBumper::home(theme, first, second);
+        let page = PelicanPage::new(header, Content::new(offset, content, Box::new(|_, _| true)), Some(bumper));
         RootPage(Stack::default(), page)
     }
 }
@@ -208,21 +249,28 @@ impl OnEvent for StackPage {}
 impl AppPage for StackPage {}
 impl StackPage {
     #[allow(clippy::too_many_arguments)]
-    pub fn display(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Flow)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
+    pub fn display(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
         let items = items.into_iter().filter_map(|mut di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
         StackPage::new(ctx, theme, title, items, offset, header, bumper, next, flow_len)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn input(ctx: &mut Context, theme: &Theme, title: String, item: Input, header: Option<(Icons, Flow)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
+    pub fn input(ctx: &mut Context, theme: &Theme, title: String, item: Input, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
         let offset = item.offset();
         let item = item.build(theme).into_iter().flatten().collect();
         StackPage::new(ctx, theme, title, item, offset, header, bumper, next, flow_len)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Box<dyn Drawable>>, offset: Offset, header: Option<(Icons, Flow)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let icon = header.map(|(i, mut f)| (i, f.build(ctx)));
+    pub fn both(ctx: &mut Context, theme: &Theme, title: String, display: Vec<Display>, inputs: Vec<Input>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
+        let mut items = inputs.into_iter().filter_map(|mut di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
+        display.into_iter().for_each(|mut di| if let Some(i) = di.build(theme) {items.extend(i)});
+        StackPage::new(ctx, theme, title, items, Offset::Start, header, bumper, next, flow_len)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Box<dyn Drawable>>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
+        let icon = header.map(|(i, mut f)| (i, (f)(ctx, theme).build(ctx)));
         let (header, bumper) = match bumper {
             Bumper::Custom {label, action, secondary} => {
                 let on_click = action.clone();
@@ -245,7 +293,7 @@ impl StackPage {
             Bumper::None => (Header::stack(theme, &title, icon), None),
         };
 
-        let page = PelicanPage::new(header, Content::new(offset, items, Box::new(|_| true)), bumper);
+        let page = PelicanPage::new(header, Content::new(offset, items, Box::new(|_, _| true)), bumper);
         StackPage(Stack::default(), page)
     }
 }
@@ -302,6 +350,86 @@ impl FormPage {
 }
 
 #[derive(Debug, Component, Clone)]
+pub struct EditPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Box<dyn FormSubmit>, #[skip] Vec<State>);
+impl OnEvent for EditPage {}
+impl AppPage for EditPage {}
+impl EditPage {
+    pub fn new(theme: &Theme, title: String, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
+        let header = Header::stack(theme, &title, None);
+        let mut content = input.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<_>>();
+        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
+
+        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
+            validations.clone().into_iter().enumerate().any(|(i, mut validation)| {
+                let child = vec![&mut *children[i]];
+                !(validation)(ctx, child)
+            })
+        }) as Box<dyn ValidationFn>;
+        
+        let bumper = PelicanBumper::stack(theme, Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None);
+        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
+
+        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![])
+    }
+
+    pub fn edit_and_display(theme: &Theme, title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        let header = Header::stack(theme, &title, None);
+        let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
+        let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
+        let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
+        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
+
+        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
+            let mut result = true;
+            validations.clone().into_iter().enumerate().for_each(|(i, mut validation)| {
+                let child = vec![&mut *children[i]];
+                let error = (validation)(ctx, child);
+                if !error {result = error;}
+            });
+            result
+        }) as Box<dyn ValidationFn>;
+        
+        let bumper = PelicanBumper::stack(theme, Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None);
+        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
+
+        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![])
+    }
+
+    pub fn root(theme: &Theme, title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        let header = Header::home(theme, &title, None);
+        let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
+        let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
+        let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
+        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
+
+        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
+            let mut result = true;
+            validations.clone().into_iter().enumerate().for_each(|(i, mut validation)| {
+                let child = vec![&mut *children[i]];
+                let error = (validation)(ctx, child);
+                if !error {result = error;}
+            });
+            result
+        }) as Box<dyn ValidationFn>;
+        
+        let bumper = PelicanBumper::home(theme, ("Save".to_string(), Box::new(|_: &mut Context, _: &Theme| {})), None);
+        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
+
+        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![])
+    }
+
+    pub fn on_change(&mut self, new: Vec<State>) {
+        if new != self.4 {
+            self.4 = new.clone();
+            let theme = &self.2;
+            let mut on_save = self.3.clone();
+            let closure = Box::new(move |ctx: &mut Context, _theme: &Theme| {(on_save)(ctx, &new);});
+            self.1.bumper = Some(PelicanBumper::stack(theme, Some("Save"), closure, None));
+        }
+    }
+}
+
+#[derive(Debug, Component, Clone)]
 pub struct ReviewPage(Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] bool);
 impl OnEvent for ReviewPage {}
 impl AppPage for ReviewPage {}
@@ -309,7 +437,7 @@ impl ReviewPage {
     pub fn new(theme: &Theme, title: String, item_getter: Box<dyn ReviewItemGetter>, next: Option<NavFn>, _flow_len: usize, on_submit: Box<dyn FormSubmit>) -> Self {
         let header = Header::stack(theme, &title, None);
         let bumper = PelicanBumper::stack(theme, None, Box::new(|_ctx: &mut Context, _theme: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, Vec::new(), Box::new(|_| true)), Some(bumper));
+        let page = PelicanPage::new(header, Content::new(Offset::Start, Vec::new(), Box::new(|_, _| true)), Some(bumper));
         ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone(), false)
     }
 
@@ -319,7 +447,7 @@ impl ReviewPage {
             let theme = &self.3;
             let items = (self.2)(&new);
             let content = items.into_iter().filter_map(|mut i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-            self.1.content = Content::new(Offset::Start, content, Box::new(|_| true));
+            self.1.content = Content::new(Offset::Start, content, Box::new(|_, _| true));
         }
 
         let mut on_submit = self.5.clone();
@@ -344,7 +472,7 @@ impl SuccessPage {
     pub fn new(theme: &Theme, title: String, getter: Box<dyn SuccessGetter>, flow_len: usize) -> Self {
         let header = Header::stack_end(theme, &title);
         let bumper = Some(PelicanBumper::stack_end(theme, Some(flow_len)));
-        let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_| true)), bumper);
+        let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_, _| true)), bumper);
         SuccessPage(Stack::default(), page, getter, theme.clone(), false)
     }
 
@@ -358,7 +486,7 @@ impl SuccessPage {
             self.1.content = Content::new(Offset::Center, drawables![
                 Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0),
                 ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
-            ], Box::new(|_| true));
+            ], Box::new(|_, _| true));
         }
     }
 }

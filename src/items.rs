@@ -28,7 +28,7 @@ pub enum Input {
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
     Search {items: Vec<(ListItem, Name)>},
-    QRCodeScanner,
+    QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
 }
 
 impl Input {
@@ -60,8 +60,8 @@ impl Input {
         Input::Search {items}
     }
 
-    pub fn qr_code_scanner() -> Self {
-        Input::QRCodeScanner
+    pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
+        Input::QRCodeScanner {instructions: instructions.to_string(), alt}
     }
 
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
@@ -69,10 +69,12 @@ impl Input {
             Input::Text {show_label, label, preset, actions} => {
                 let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
                 if let Some(a) = actions.as_ref() {
-                    items.push(Box::new(QuickActions::new(theme, a.iter().map(|(label, icon, action)| {
-                        let action: Box<dyn Callback> = action.get();
-                        (label.to_string(), *icon, action)
-                    }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>())));
+                    if !a.is_empty() {
+                        items.push(Box::new(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, icon, action)| {
+                            let action: Box<dyn Callback> = action.get();
+                            (label.to_string(), *icon, action)
+                        }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>())));
+                    }
                 }
 
                 items
@@ -87,10 +89,19 @@ impl Input {
             Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
             Input::Avatar {content, flair, action} => drawables![Avatar::new(theme, content.clone(), *flair, flair.is_some(), AvatarSize::Xxl, action.as_ref().map(|a| a.get()))],
             Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|(item, id)| (item.build(theme), id.clone())).collect::<Vec<_>>())],
-            Input::QRCodeScanner => drawables![QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, d: String| {ctx.emit(NavigationEvent::Pop); ctx.emit(QRCodeScannedEvent(d));}))]
+            Input::QRCodeScanner {instructions, alt} => {
+                let mut items = drawables![
+                    QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, d: String| {})),
+                    ExpandableText::new(theme, &instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)
+                ];
+                if let Some((label, icon, action)) = alt.as_ref() {
+                    items.push(Box::new(ExpandableText::new(theme, "or", TextSize::Md, TextStyle::Secondary, Align::Center, None)));
+                    items.push(Box::new(QuickActions::new(theme, Offset::Center, vec![(label.to_string(), *icon, action.get())])));
+                }
+                items
+            }
         })
     }
-
 
     pub fn offset(&self) -> Offset {
         match self {
@@ -101,7 +112,7 @@ impl Input {
             Input::Time {..} |
             Input::Avatar {..} |
             Input::Search {..} => Offset::Start,
-            Input::QRCodeScanner => Offset::Center
+            Input::QRCodeScanner {..} => Offset::Center
         }
     }
 
@@ -133,7 +144,7 @@ pub enum Display {
     Currency {amount: f32, instructions: String},
     List {label: Option<String>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
-    Avatar {content: AvatarContent},
+    Avatar {content: AvatarContent, allow_edit: bool},
     Actions {actions: Vec<ActionItem>}
 }
 
@@ -179,8 +190,8 @@ impl Display {
         Display::Currency {amount, instructions: instructions.to_string()}
     }
 
-    pub fn avatar(content: AvatarContent) -> Self {
-        Display::Avatar {content}
+    pub fn avatar(content: AvatarContent, allow_edit: bool) -> Self {
+        Display::Avatar {content, allow_edit}
     }
 
     pub fn actions(actions: Vec<ActionItem>) -> Self {
@@ -208,7 +219,7 @@ impl Display {
                 })]
             },
             Display::QRCode {data, instructions} => drawables![QRCode::new(theme, data), ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
-            Display::Avatar {content} => drawables![Avatar::new(theme, content.clone(), None, false, AvatarSize::Xxl, None)],
+            Display::Avatar {content, allow_edit} => drawables![Avatar::new(theme, content.clone(), allow_edit.then_some((Icons::Edit, AvatarIconStyle::Secondary)), *allow_edit, AvatarSize::Xxl, None)],
             Display::Actions {actions} => actions.iter_mut().map(|ActionItem(a, l, i)| Box::new(SecondaryButton::medium(theme, *i, l, None, a.get())) as Box<dyn Drawable>).collect::<Vec<_>>(),
             _ => return None
         })
@@ -312,9 +323,10 @@ impl Action {
         Action::SelectImage
     }
 
-    pub fn scan_qr(theme: &Theme) -> Self {
+    pub fn scan_qr(theme: &Theme, instructions: &str) -> Self {
+        let instructions = instructions.to_string();
         Action::Flow {
-            flow: Flow::new(theme, vec![Box::new(move || crate::PageType::scan_qr())]),
+            flow: Flow::new(theme, vec![Box::new(move || crate::PageType::scan_qr(&instructions.clone(), None))]),
         }
     }
 

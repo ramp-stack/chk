@@ -17,11 +17,11 @@ pub use page::*;
 pub struct RootInfo(pub PelicanRootInfo);
 impl RootInfo {
     pub fn icon(ctx: &mut Context, theme: &Theme, icon: Icons, label: &str, page: Root) -> RootInfo {
-        RootInfo(PelicanRootInfo::icon(icon, label, page.0.build(ctx, theme)))
+        RootInfo(PelicanRootInfo::icon(icon, label, page.0.build_root(ctx, theme)))
     }
 
     pub fn avatar(ctx: &mut Context, theme: &Theme, avatar: AvatarContent, label: &str, page: Root) -> RootInfo {
-        RootInfo(PelicanRootInfo::avatar(avatar, label, page.0.build(ctx, theme)))
+        RootInfo(PelicanRootInfo::avatar(avatar, label, page.0.build_root(ctx, theme)))
     }
 }
 
@@ -72,16 +72,17 @@ pub mod __private {
 #[macro_export]
 macro_rules! run {
     ([$($c:ty),* $(,)?]; $app:expr) => {
-        // TODO: Update state with application support directory files.
-
         use $crate::__private::*;
+
         ramp::run!([$($c),*]; move |ctx: &mut Context, assets: Assets| {
             let app: Rc<RefCell<dyn App>> = Rc::new(RefCell::new(($app)(ctx)));
             let theme: Theme = app.borrow().theme().to_pelican(assets);
             let roots: Vec<RootInfo> = app.borrow().roots(ctx, &theme);
             let roots = roots.into_iter().map(|root| root.0).collect::<Vec<PelicanRootInfo>>();
             let app = Rc::clone(&app);
-            let on_event = Box::new(move |d: &mut Box<dyn Drawable>, ctx: &mut Context, event: Box<dyn Event>| app.borrow_mut().on_event(ctx, event));
+            let on_event = Box::new(move |d: &mut Box<dyn Drawable>, ctx: &mut Context, event: Box<dyn Event>| {
+                app.borrow_mut().on_event(ctx, event)
+            });
             Interface::new(ctx, &theme, roots, on_event)
         });
     }

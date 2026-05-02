@@ -11,8 +11,8 @@ use pelican_ui::components::list_item::ListItem as PelicanListItem;
 use pelican_ui::components::SearchBar;
 use pelican_ui::utils::ValidationFn;
 
-use crate::items::{EnumItem, Input, ListItem, Action};
-use crate::page::{PageType, FormPage, ReviewPage, SuccessPage};
+use crate::items::{EnumItem, Input, ListItem, Action, Display};
+use crate::page::{EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, FormClosure, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, ValidityFn};
 use crate::page::Screen;
 
@@ -24,22 +24,41 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
-pub struct Form {
-    theme: Theme,
-    inputs: Vec<FormItem>,
-    review: Option<Review>,
-    success: Option<Success>,
-    on_submit: Box<dyn FormSubmit>, 
+pub enum Form {
+    Flow {
+        theme: Theme,
+        inputs: Vec<FormItem>,
+        review: Option<Review>,
+        success: Option<Success>,
+        on_submit: Box<dyn FormSubmit>, 
+    }, 
+    Page {
+        theme: Theme,
+        title: String,
+        inputs: Vec<FormItem>,
+        display: Vec<Display>,
+        on_save: Box<dyn FormSubmit>, 
+    }
 }
 
 impl Form {
-    pub fn new(theme: &Theme, inputs: Vec<FormItem>, review: Option<Review>, success: Option<Success>, on_submit: Box<dyn FormSubmit>) -> Self {
-        Form {
+    pub fn flow(theme: &Theme, inputs: Vec<FormItem>, review: Option<Review>, success: Option<Success>, on_submit: Box<dyn FormSubmit>) -> Self {
+        Form::Flow {
             inputs,
             theme: theme.clone(),
             review,
             success,
             on_submit,
+        }
+    }
+
+    pub fn page(theme: &Theme, title: &str, inputs: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        Form::Page {
+            title: title.to_string(),
+            inputs,
+            display,
+            on_save,
+            theme: theme.clone(),
         }
     }
 }
@@ -71,10 +90,13 @@ impl Review {
 #[derive(Debug, Clone)]
 pub enum FormItem {
     Text(String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
+    TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
     Search(String, Vec<(ListItem, Name)>),
-    Avatar(String)
+    ScanQR(String, String, Option<(String, Icons, Action)>),
+    Avatar(String),
+    AvatarWithPreset(String, AvatarContent),
 }
 
 pub struct FormStorage(pub HashMap<String, String>);
@@ -83,6 +105,11 @@ impl FormItem {
     pub fn text(text: &str, actions: Option<Vec<(String, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
         FormItem::Text(text.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
+    }
+
+    pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<(String, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
+        let text = text.to_string();
+        FormItem::TextWithPreset(text.to_string(), preset.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
     }
 
     pub fn number(title: &str, number: NumberVariant, valid: impl ValidityFn + 'static) -> Self {
@@ -103,6 +130,14 @@ impl FormItem {
     pub fn avatar(title: &str) -> Self {
         FormItem::Avatar(title.to_string())
     }
+
+    pub fn avatar_with_preset(title: &str, avatar: AvatarContent) -> Self {
+        FormItem::AvatarWithPreset(title.to_string(), avatar)
+    }
+
+    pub fn scan_qr_code(title: &str, instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
+        FormItem::ScanQR(title.to_string(), instructions.to_string(), alt)
+    }
 }
 
 impl FormItem {
@@ -110,21 +145,24 @@ impl FormItem {
         match self {
             FormItem::Search(title, ..) |
             FormItem::Text(title, ..) |
+            FormItem::TextWithPreset(title, ..) |
             FormItem::Number(title, ..) |
             FormItem::Avatar(title, ..) |
+            FormItem::AvatarWithPreset(title, ..) |
+            FormItem::ScanQR(title, ..) |
             FormItem::Enum(title, ..) => title.to_string()
         }
     }
 
-    fn validation(&self) -> Box<dyn ValidationFn> {
+    pub fn validation(&self) -> Box<dyn ValidationFn> {
         match self {
-            FormItem::Text(_, _, _, validation) => {
+            FormItem::Text(_, _, _, validation) | FormItem::TextWithPreset(_, _, _, _, validation) => {
                 use pelican_ui::components::TextInput;
 
                 let validation = validation.clone();
-                Box::new(move |children: &mut Vec<Box<dyn Drawable>>| {
+                Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                     if let Some(input) = children[0].as_any_mut().downcast_mut::<TextInput>() {
-                        let result = (validation.clone())(input.value());
+                        let result = (validation.clone())(ctx, input.value());
                         input.error(result.clone().map(|_| {}));
                         result.is_ok()
                     } else {
@@ -136,9 +174,9 @@ impl FormItem {
                 use pelican_ui::components::NumericalInput;
                 
                 let validation = validation.clone();
-                Box::new(move |children: &mut Vec<Box<dyn Drawable>>| {
+                Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                     if let Some(input) = children[0].as_any_mut().downcast_mut::<NumericalInput>() {
-                        let result = (validation.clone())(input.value());
+                        let result = (validation.clone())(ctx, input.value());
                         input.error(result.clone());
                         result.is_ok()
                     } else {
@@ -146,18 +184,22 @@ impl FormItem {
                     }
                 })
             },
-            FormItem::Search(_, _) => Box::new(|children: &mut Vec<Box<dyn Drawable>>| {
+            FormItem::Search(_, _) => Box::new(|ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                 if let Some(searchbar) = children[0].as_any_mut().downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
             }),
-            _ => Box::new(|_: &mut Vec<Box<dyn Drawable>>| true),
+            _ => Box::new(|ctx: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         }
     }
 
-    fn build(&self) -> Input {
+    pub fn build(&self) -> Input {
         match self {
             FormItem::Text(title, _, actions, _) => {
                 let title = title.clone();
                 Input::text(&title, false, None, actions.clone())
+            },
+            FormItem::TextWithPreset(title, preset, _, actions, _) => {
+                let title = title.clone();
+                Input::text(&title, true, Some(preset.to_string()), actions.clone())
             },
             FormItem::Number(_, variant, _) => {
                 match variant {
@@ -172,7 +214,9 @@ impl FormItem {
             FormItem::Search(_, items) => {
                 Input::search(items.clone())
             },
+            FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(instructions, alt.clone()),
             FormItem::Avatar(_) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
+            FormItem::AvatarWithPreset(_, avatar) => Input::avatar(avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None))
         }
     }
 }
@@ -186,37 +230,57 @@ impl Flow{
     }
 
     pub fn from_form(form: Form) -> Self {
-        let theme = form.theme;
-        let mut pages: Vec<Box<dyn ScreenBuilder>> = vec![];
+        match form {
+            Form::Flow {theme, inputs, on_submit, review, success} => {
+                let theme = theme.clone();
+                let mut pages: Vec<Box<dyn ScreenBuilder>> = vec![];
 
-        let mut submit = form.review.is_none().then(|| form.on_submit.clone());
-        form.inputs.into_iter().rev().map(|input| {
-            let submit = submit.take().map(|mut os| Box::new(move |ctx: &mut Context, state: &Vec<State>| {
-                ctx.emit(NavigationEvent::Reset);
-                (os)(ctx, &state);
-            }) as Box<dyn FormSubmit>);
-            let page = Box::new(move || PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
-            Screen::new_builder(&theme, page)
-        }).collect::<Vec<Box<dyn ScreenBuilder>>>().into_iter().rev().for_each(|s| pages.push(s));
+                let t = theme.clone();
+                let mut submit = review.is_none().then(|| on_submit.clone());
+                let mut submit = submit.map(|mut os| Box::new(move |ctx: &mut Context, state: &Vec<State>| {
+                    let theme = t.clone();
+                    let out = (os)(ctx, &state);
+                    if let Some(mut f) = out {
+                        println!("OUT");
+                        let flow = FlowWrapper::new(PelicanFlow::new(vec![(f()).build(ctx, &theme)]));
+                        ctx.emit(NavigationEvent::restart(flow));
+                    }
+                    None
+                }) as Box<dyn FormSubmit>);
 
-        if let Some(review) = form.review {
-            let review = Box::new(move || {
-                let review = review.clone();
-                PageType::review(&review.title, review.getter, form.on_submit.clone())
-            }) as Box<dyn PageBuilder>;
+                inputs.into_iter().rev().map(|input| {
+                    let mut submit = submit.take();
+                    let page = Box::new(move || PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
+                    Screen::new_builder(&theme, page)
+                }).collect::<Vec<Box<dyn ScreenBuilder>>>().into_iter().rev().for_each(|s| pages.push(s));
 
-            pages.push(Screen::new_builder(&theme, review));
+                if let Some(review) = review {
+                    let review = Box::new(move || {
+                        let review = review.clone();
+                        PageType::review(&review.title, review.getter, on_submit.clone())
+                    }) as Box<dyn PageBuilder>;
+
+                    pages.push(Screen::new_builder(&theme, review));
+                }
+
+                if let Some(success) = success {
+                    let success = Box::new(move || {
+                        let success = success.clone();
+                        PageType::success(&success.title, success.getter)
+                    }) as Box<dyn PageBuilder>;
+                    pages.push(Screen::new_builder(&theme, success));
+                }
+
+                Flow(pages)
+            },
+            Form::Page {theme, title, inputs, display, on_save} => {
+                let theme = theme;
+                let validations = inputs.iter().map(|i| i.validation()).collect::<Vec<_>>();
+                let items = inputs.into_iter().map(|i| i.build()).collect::<Vec<_>>();
+                let page = Box::new(move || PageType::edit(&title, items.clone(), display.clone(), validations.clone(), on_save.clone())) as Box<dyn PageBuilder>;
+                Flow(vec![Screen::new_builder(&theme, page)])
+            }
         }
-
-        if let Some(success) = form.success {
-            let success = Box::new(move || {
-                let success = success.clone();
-                PageType::success(&success.title, success.getter)
-            }) as Box<dyn PageBuilder>;
-            pages.push(Screen::new_builder(&theme, success));
-        }
-
-        Flow(pages)
     }
 
 
@@ -276,20 +340,35 @@ impl OnEvent for FlowWrapper {
                 let index = self.1.index;
                 self.2 = Vec::new();
 
-                if self.1.stored.is_empty() && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() && let Some(page) = screen.1.downcast_mut::<FormPage>() {
-                    page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
-                    page.on_change(self.2.clone());
-                }
-
-                for (i, each) in self.1.stored.iter_mut().enumerate() {
-                    if i == index && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() && let Some(page) = screen.1.downcast_mut::<FormPage>() {
+                if self.1.stored.is_empty() && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() {
+                    if let Some(page) = screen.1.downcast_mut::<FormPage>() {
+                        page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                        page.on_change(self.2.clone());
+                    } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
                         page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                         page.on_change(self.2.clone());
                     }
+                }
 
-                    if let Some(screen) = each.downcast_mut::<Screen>() && let Some(page) = screen.1.downcast_mut::<FormPage>() {
-                        page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
-                        page.on_change(self.2.clone());
+                for (i, each) in self.1.stored.iter_mut().enumerate() {
+                    if i == index && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() {
+                        if let Some(page) = screen.1.downcast_mut::<FormPage>() {
+                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                            page.on_change(self.2.clone());
+                        } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
+                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                            page.on_change(self.2.clone());
+                        }
+                    }
+
+                    if let Some(screen) = each.downcast_mut::<Screen>() {
+                        if let Some(page) = screen.1.downcast_mut::<FormPage>() {
+                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                            page.on_change(self.2.clone());
+                        } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
+                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                            page.on_change(self.2.clone());
+                        }
                     }
                 }
             }
