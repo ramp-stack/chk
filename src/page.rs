@@ -1,6 +1,6 @@
 use ramp::prism;
-use pelican_ui::event::OnEvent;
-use pelican_ui::drawable::{Component, Drawable};
+use pelican_ui::event::{OnEvent, Event};
+use pelican_ui::drawable::{Component, Drawable, SizedTree};
 use pelican_ui::{Request, drawables, Context, Callback};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::canvas::Align;
@@ -24,7 +24,16 @@ use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGe
 
 use air::names::Id;
 
-pub mod messages;
+mod edit;
+pub use edit::*;
+mod form;
+pub use form::*;
+mod presets;
+pub use presets::*;
+mod root;
+pub use root::*;
+mod stack;
+pub use stack::*;
 
 pub struct Root(pub PageType);
 impl Root {
@@ -77,7 +86,7 @@ pub enum PageType {
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize},
     Messaging{room_id: Id, flow_len: usize},
-    Profile{profile: Profile},
+    Profile{profile: Profile, id: Id},
 }
 
 impl PageType {
@@ -125,8 +134,8 @@ impl PageType {
         PageType::input("Scan QR code", Input::qr_code_scanner(instructions, alt), None, crate::Bumper::None)
     }
 
-    pub fn profile(profile: Profile) -> Self {
-        PageType::Profile { profile }
+    pub fn profile(profile: Profile, id: Id) -> Self {
+        PageType::Profile { profile, id }
     }
 
     pub fn nav_fn(&mut self) -> Option<&mut Option<NavFn>> {
@@ -182,7 +191,7 @@ impl PageType {
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
             PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, room_id.clone(), *flow_len)),
-            PageType::Profile{profile} => Box::new(ProfilePage::new(theme, profile.clone()))
+            PageType::Profile{profile, id} => Box::new(ProfilePage::new(ctx, theme, profile.clone(), *id))
         }
     }
 
@@ -193,110 +202,19 @@ impl PageType {
             PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), vec![], items.to_vec(), header.clone(), None, None)),
             PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), vec![item.clone()], vec![], header.clone(), None, None)),
 
+            // PageType::Profile{..} |
             PageType::Edit{..} |
             PageType::Form{..} |
             PageType::Review{..} |
             PageType::Success{..} |
-            PageType::Messaging{..} |
-            PageType::Profile{..} => panic!("Not an accepted root type"),
+            PageType::Messaging{..} => panic!("Not an accepted root type"),
 
+            PageType::Profile{profile, id} => Box::new(ProfilePage::new(ctx, theme, profile.clone(), *id)),
             PageType::EditAndDisplay{title, items, display, on_save, flow_len} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
         }
     }
 }
 
-#[derive(Debug, Component, Clone)]
-pub struct RootPage(Stack, PelicanPage);
-impl OnEvent for RootPage {}
-impl AppPage for RootPage {}
-impl RootPage {
-    pub fn new(theme: &Theme, title: String, mut input: Vec<Input>, mut display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, mut bumper_a: Option<(String, Box<dyn FlowBuilder>)>, mut bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
-        let length = input.len() + display.len();
-        let offset = match display.first() {
-            Some(Display::List {..}) => Offset::Start,
-            _ if length <= 1 => Offset::Center,
-            _ => Offset::Start,
-        };
-        
-        let header_icon = header.map(|(s, flow)| {
-            let mut flow = flow.clone();
-            (s, Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>) 
-        });
-
-        let header = Header::home(theme, &title, header_icon);
-        let mut content = input.iter_mut().filter_map(|di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        content.extend(display.iter_mut().filter_map(|di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>());
-
-        let second = bumper_b.as_mut().map(|(t, flow)| {
-            let mut flow = flow.clone();
-            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
-        });
-
-        let first = bumper_a.as_mut().map(|(t, flow)| {
-            let mut flow = flow.clone();
-            (title.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
-        });
-
-        let bumper = PelicanBumper::home(theme, first, second);
-        let page = PelicanPage::new(header, Content::new(offset, content, Box::new(|_, _| true)), Some(bumper));
-        RootPage(Stack::default(), page)
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct StackPage(Stack, PelicanPage);
-impl OnEvent for StackPage {}
-impl AppPage for StackPage {}
-impl StackPage {
-    #[allow(clippy::too_many_arguments)]
-    pub fn display(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let items = items.into_iter().filter_map(|mut di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        StackPage::new(ctx, theme, title, items, offset, header, bumper, next, flow_len)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn input(ctx: &mut Context, theme: &Theme, title: String, item: Input, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let offset = item.offset();
-        let item = item.build(theme).into_iter().flatten().collect();
-        StackPage::new(ctx, theme, title, item, offset, header, bumper, next, flow_len)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn both(ctx: &mut Context, theme: &Theme, title: String, display: Vec<Display>, inputs: Vec<Input>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let mut items = inputs.into_iter().filter_map(|mut di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        display.into_iter().for_each(|mut di| if let Some(i) = di.build(theme) {items.extend(i)});
-        StackPage::new(ctx, theme, title, items, Offset::Start, header, bumper, next, flow_len)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Box<dyn Drawable>>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let icon = header.map(|(i, mut f)| (i, (f)(ctx, theme).build(ctx)));
-        let (header, bumper) = match bumper {
-            Bumper::Custom {label, action, secondary} => {
-                let on_click = action.clone();
-                let secondary = secondary.clone().map(|(l, a)| (l, Box::new(move |ctx: &mut Context, theme: &Theme| (a.clone().get())(ctx, theme)) as Box<dyn Callback>));
-                let action = Box::new(move |ctx: &mut Context, theme: &Theme| (on_click.clone().get())(ctx, theme));
-                let bumper = PelicanBumper::stack(theme, Some(&label), action, secondary);
-                let header = Header::stack(theme, &title, icon);
-                (header, Some(bumper))
-            },
-            Bumper::Default => match next {
-                Some(n) => {
-                    let next = n.clone();
-                    let bumper = PelicanBumper::stack(theme, None, Box::new(move |ctx: &mut Context, theme: &Theme| (next.borrow_mut())(ctx, theme)), None);
-                    let header = Header::stack(theme, &title, icon);
-                    (header, Some(bumper))
-                }
-                None => (Header::stack_end(theme, &title), Some(PelicanBumper::stack_end(theme, Some(flow_len))))
-            },
-            Bumper::Done => (Header::stack_end(theme, &title), Some(PelicanBumper::stack_end(theme, Some(flow_len)))),
-            Bumper::None => (Header::stack(theme, &title, icon), None),
-        };
-
-        let page = PelicanPage::new(header, Content::new(offset, items, Box::new(|_, _| true)), bumper);
-        StackPage(Stack::default(), page)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum Bumper {
@@ -316,180 +234,6 @@ impl Bumper {
     }
 }
 
-#[derive(Debug, Component, Clone)]
-pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Option<Box<dyn FormSubmit>>, #[skip] Vec<State>);
-impl OnEvent for FormPage {}
-impl AppPage for FormPage {}
-impl FormPage {
-    pub fn new(theme: &Theme, title: String, item: Input, next: Option<NavFn>, _flow_len: usize, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
-        let header = Header::stack(theme, &title, None);
-        let content = item.build(theme).unwrap_or_default();
-        let bumper = PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validate), Some(bumper));
-
-        FormPage(Stack::default(), page, theme.clone(), next.clone(), on_submit.clone(), vec![])
-    }
-
-    pub fn on_change(&mut self, new: Vec<State>) {
-        if new != self.5 {
-            self.5 = new.clone();
-            let theme = &self.2;
-            let submit = self.4.clone();
-            let closure: Box<dyn Callback> = match self.3.clone(){
-                Some(nav) => Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    if let Some(mut on_submit) = submit.clone() {(on_submit)(ctx, &new);}
-                    (nav.borrow_mut())(ctx, theme);
-                }),
-                None => Box::new(move |ctx: &mut Context, _theme: &Theme| {
-                    if let Some(mut on_submit) = submit.clone() {(on_submit)(ctx, &new);}
-                }),
-            };
-            self.1.bumper = Some(PelicanBumper::stack(theme, None, closure, None));
-        }
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct EditPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Box<dyn FormSubmit>, #[skip] Vec<State>);
-impl OnEvent for EditPage {}
-impl AppPage for EditPage {}
-impl EditPage {
-    pub fn new(theme: &Theme, title: String, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
-        let header = Header::stack(theme, &title, None);
-        let mut content = input.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<_>>();
-        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
-
-        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-            validations.clone().into_iter().enumerate().any(|(i, mut validation)| {
-                let child = vec![&mut *children[i]];
-                !(validation)(ctx, child)
-            })
-        }) as Box<dyn ValidationFn>;
-        
-        let bumper = PelicanBumper::stack(theme, Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
-
-        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![])
-    }
-
-    pub fn edit_and_display(theme: &Theme, title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
-        let header = Header::stack(theme, &title, None);
-        let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
-        let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
-
-        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-            let mut result = true;
-            validations.clone().into_iter().enumerate().for_each(|(i, mut validation)| {
-                let child = vec![&mut *children[i]];
-                let error = (validation)(ctx, child);
-                if !error {result = error;}
-            });
-            result
-        }) as Box<dyn ValidationFn>;
-        
-        let bumper = PelicanBumper::stack(theme, Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
-
-        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![])
-    }
-
-    pub fn root(theme: &Theme, title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
-        let header = Header::home(theme, &title, None);
-        let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
-        let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
-
-        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-            let mut result = true;
-            validations.clone().into_iter().enumerate().for_each(|(i, mut validation)| {
-                let child = vec![&mut *children[i]];
-                let error = (validation)(ctx, child);
-                if !error {result = error;}
-            });
-            result
-        }) as Box<dyn ValidationFn>;
-        
-        let bumper = PelicanBumper::home(theme, ("Save".to_string(), Box::new(|_: &mut Context, _: &Theme| {})), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
-
-        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![])
-    }
-
-    pub fn on_change(&mut self, new: Vec<State>) {
-        if new != self.4 {
-            self.4 = new.clone();
-            let theme = &self.2;
-            let mut on_save = self.3.clone();
-            let closure = Box::new(move |ctx: &mut Context, _theme: &Theme| {(on_save)(ctx, &new);});
-            self.1.bumper = Some(PelicanBumper::stack(theme, Some("Save"), closure, None));
-        }
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct ReviewPage(Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] bool);
-impl OnEvent for ReviewPage {}
-impl AppPage for ReviewPage {}
-impl ReviewPage {
-    pub fn new(theme: &Theme, title: String, item_getter: Box<dyn ReviewItemGetter>, next: Option<NavFn>, _flow_len: usize, on_submit: Box<dyn FormSubmit>) -> Self {
-        let header = Header::stack(theme, &title, None);
-        let bumper = PelicanBumper::stack(theme, None, Box::new(|_ctx: &mut Context, _theme: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, Vec::new(), Box::new(|_, _| true)), Some(bumper));
-        ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone(), false)
-    }
-
-    pub fn on_change(&mut self, new: Vec<State>) {
-        if !self.6 {
-            self.6 = true;
-            let theme = &self.3;
-            let items = (self.2)(&new);
-            let content = items.into_iter().filter_map(|mut i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-            self.1.content = Content::new(Offset::Start, content, Box::new(|_, _| true));
-        }
-
-        let mut on_submit = self.5.clone();
-        *self.1.bumper.as_mut().unwrap().on_click()[0] = {
-            let mut on_click = self.4.clone().map(|n| {
-                Box::new(move |ctx: &mut Context, theme: &crate::Theme| {
-                    (on_submit)(ctx, &new);
-                    (n.borrow_mut())(ctx, theme);
-                }) as Box<dyn Callback>
-            }).unwrap_or(Box::new(|_ctx: &mut Context, _theme: &crate::Theme| {}));
-            let theme = self.3.clone();
-            Box::new(move |ctx: &mut Context| (on_click)(ctx, &theme))
-        }
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme, #[skip] bool);
-impl OnEvent for SuccessPage {}
-impl AppPage for SuccessPage {}
-impl SuccessPage {
-    pub fn new(theme: &Theme, title: String, getter: Box<dyn SuccessGetter>, flow_len: usize) -> Self {
-        let header = Header::stack_end(theme, &title);
-        let bumper = Some(PelicanBumper::stack_end(theme, Some(flow_len)));
-        let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_, _| true)), bumper);
-        SuccessPage(Stack::default(), page, getter, theme.clone(), false)
-    }
-
-    pub fn on_change(&mut self, new: Vec<State>) {
-        if !self.4 {
-            self.4 = true;
-            use pelican_ui::colors;
-            use pelican_ui::components::Icon;
-            let theme = self.3.clone();
-            let (icon, description) = (self.2)(new);
-            self.1.content = Content::new(Offset::Center, drawables![
-                Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0),
-                ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
-            ], Box::new(|_, _| true));
-        }
-    }
-}
 
 // #[derive(Debug, Component, Clone)]
 // pub struct ScanQRCodePage(Stack, PelicanPage);

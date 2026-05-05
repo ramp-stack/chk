@@ -229,7 +229,7 @@ impl Display {
 #[derive(Debug, Clone)]
 pub struct ListItem {
     avatar: Option<AvatarContent>, 
-    title: String, 
+    pub title: String, 
     subtitle: String, 
     secondary: Option<String>, 
     flow: Option<Flow>, 

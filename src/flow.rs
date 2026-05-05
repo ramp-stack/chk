@@ -241,7 +241,6 @@ impl Flow{
                     let theme = t.clone();
                     let out = (os)(ctx, &state);
                     if let Some(mut f) = out {
-                        println!("OUT");
                         let flow = FlowWrapper::new(PelicanFlow::new(vec![(f()).build(ctx, &theme)]));
                         ctx.emit(NavigationEvent::restart(flow));
                     }
@@ -283,8 +282,6 @@ impl Flow{
         }
     }
 
-
-    
     pub(crate) fn build(&mut self, ctx: &mut Context) -> Box<dyn Callback> {
         let mut new: Vec<Box<dyn AppPage>> = vec![];
         let length = self.0.len();
@@ -315,6 +312,35 @@ impl Flow{
             ctx.emit(NavigationEvent::push(flow));
         })
     }
+
+    pub(crate) fn build_as_flow(&mut self, ctx: &mut Context) -> FlowWrapper {
+        let mut new: Vec<Box<dyn AppPage>> = vec![];
+        let length = self.0.len();
+        if self.0.is_empty() { return FlowWrapper::new(PelicanFlow::new(vec![])) }
+
+        let mut pages = self.0.clone();
+        let mut first = pages.remove(0);
+        let mut next_fn: Option<NavFn> = None;
+
+        pages.into_iter().rev().for_each(|mut page| {
+            // let callback = (i == 0).then_some(self.1.clone()).flatten(); 
+            let mut page: Screen = (page)(ctx);
+            page.update(ctx, length, next_fn.take());
+            new.push(Box::new(page));
+            next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {
+                // if let Some(cb) = callback.clone() { (cb.clone())(ctx) } // on_submit
+                ctx.emit(NavigationEvent::Next);
+            }))));
+        });
+
+        let mut first = (first)(ctx);
+        if !new.is_empty() { first.update(ctx, length, next_fn.clone()); }
+        new.push(Box::new(first));
+        new.reverse();
+
+        FlowWrapper::new(PelicanFlow::new(new.clone()))
+    }
+    
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -345,6 +371,7 @@ impl OnEvent for FlowWrapper {
                         page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                         page.on_change(self.2.clone());
                     } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
+                        println!("A");
                         page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                         page.on_change(self.2.clone());
                     }
@@ -356,6 +383,7 @@ impl OnEvent for FlowWrapper {
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
+                            println!("B");
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         }
@@ -366,6 +394,7 @@ impl OnEvent for FlowWrapper {
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
+                            println!("C");
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         }

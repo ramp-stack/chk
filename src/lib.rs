@@ -13,6 +13,8 @@ pub mod items;
 pub use items::*;
 pub mod page;
 pub use page::*;
+pub mod air;
+pub use air::*;
 
 pub struct RootInfo(pub PelicanRootInfo);
 impl RootInfo {

@@ -65,6 +65,7 @@ dependencies = [
 name = "air"
 version = "1.1.0"
 dependencies = [
+ "bitcode",
  "bitcoin_hashes 0.20.0",
  "chacha20-poly1305",
  "chrono",
@@ -428,6 +429,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc827186963e592360843fb5ba4b973e145841266c1357f7180c43526f2e5b61"
 
 [[package]]
+name = "bitcode"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a6ed1b54d8dc333e7be604d00fa9262f4635485ffea923647b6521a5fff045d"
+dependencies = [
+ "arrayvec",
+ "bitcode_derive",
+ "bytemuck",
+ "glam",
+ "serde",
+]
+
+[[package]]
+name = "bitcode_derive"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "238b90427dfad9da4a9abd60f3ec1cdee6b80454bde49ed37f1781dd8e9dc7f9"
+dependencies = [
+ "proc-macro2 1.0.95",
+ "quote 1.0.40",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "bitcoin-consensus-encoding"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -633,6 +658,7 @@ checksum = "4b4b0fc281743d80256607bd65e8beedc42cb0787ea119c85b81b4c0eab85e5f"
 name = "chk"
 version = "1.1.0"
 dependencies = [
+ "air",
  "anyanymap",
  "chrono",
  "downcast-rs 2.0.2",
@@ -640,6 +666,7 @@ dependencies = [
  "include_dir",
  "pelican_ui",
  "ramp2",
+ "rand 0.8.5",
  "serde",
 ]
 
@@ -1321,6 +1348,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
+
+[[package]]
 name = "glow"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1757,7 +1790,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2040,6 +2073,7 @@ dependencies = [
  "arboard",
  "arc-swap",
  "async-trait",
+ "block",
  "block2 0.6.1",
  "cli-clipboard",
  "crossfire",
@@ -3044,6 +3078,7 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 name = "pelican_ui"
 version = "2.2.0"
 dependencies = [
+ "air",
  "chrono",
  "hex",
  "image 0.25.9",
