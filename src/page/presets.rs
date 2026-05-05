@@ -241,6 +241,7 @@ impl MessagesPage {
 // THIS DOES NOT NEED TO BE A PAGE
 pub struct GroupMessageInfoPage;
 impl GroupMessageInfoPage {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(theme: &Theme, profiles: Vec<(Profile, Id)>) -> PageType {
         // let header = Header::stack(theme, "Group info", None);
         // let profiles = ListItemGroup::new(theme, None, profiles.into_iter().map(|(p, id)| ListItem::new(theme, Some(p.avatar.clone()),

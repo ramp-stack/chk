@@ -150,6 +150,7 @@ impl Profile {
 
 pub struct Username;
 impl Username {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new() -> String {
         let parse = |s: &str| -> Vec<String> { s.lines().map(|s| str::trim(s).to_string()).filter(|l| !l.is_empty()).collect::<Vec<String>>() };
         let animals = parse(ANIMALS);
