@@ -1,39 +1,29 @@
 use ramp::prism;
+
 use pelican_ui::event::{OnEvent, Event, TickEvent};
 use pelican_ui::drawable::{Component, Drawable, SizedTree};
-use pelican_ui::{Request, drawables, Context, Callback};
+use pelican_ui::{Context, Callback, drawables};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::canvas::Align;
-use pelican_ui::components::TextInput;
-use pelican_ui::components::avatar::{Avatar, AvatarSize, AvatarContent, AvatarIconStyle};
-use pelican_ui::components::list_item::{ListItemGroup, ListItem, ListItemInfoLeft};
-use pelican_ui::navigation::NavigationEvent;
+use pelican_ui::components::avatar::AvatarContent;
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
-use pelican_ui::navigation::{AppPage, Flow as PelicanFlow};
+use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::MessageGroups;
-use std::fmt::Debug;
-use pelican_ui::utils::{ValidationFn, Timestamp};
 
-use crate::{FlowWrapper, PageType, FormItem, EditPage, Bumper};
+use crate::messages::{ChatRoom, Message, SendMessage};
+use crate::profiles::{Profile, ChangeNotes, ChangeUsername};
+use crate::{PageType, FormItem, Bumper};
 use crate::flow::{Flow, State};
-use crate::items::{Action, Input, Display};
-use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter};
+use crate::items::{Action, Display};
+use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
-use air::names::{Secret, Id, Name};
-use air::contract::{Contracts, Contract, Substance, Reactants, Reactant, Beaker};
+use air::names::{Id, Name};
+use air::contract::{Substance, Beaker};
 
-use std::collections::BTreeMap;
-use std::path::{PathBuf, Path};
-use std::convert::Infallible;
 use std::str::FromStr;
-
 use std::sync::Arc;
-use rand::{seq::SliceRandom, Rng};
-use std::fs;
-
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Component, Clone)]
 pub struct ReviewPage(Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] bool);

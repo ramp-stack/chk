@@ -19,7 +19,7 @@ use pelican_ui::utils::ValidationFn;
 use crate::FlowWrapper;
 use crate::flow::{Flow, State, FormItem};
 use crate::items::{Action, Input, Display};
-use crate::page::messages::{Profile, MessagesPage, ProfilePage};
+use crate::profiles::Profile;
 use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
 use air::names::Id;
