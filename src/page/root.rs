@@ -7,8 +7,19 @@ use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, P
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 
-use crate::FlowBuilder;
+use crate::{FlowBuilder, PageType};
 use crate::items::{Input, Display};
+
+pub struct Root(pub PageType);
+impl Root {
+    pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
+        Root(PageType::root(title, vec![], items, header, bumper_a, bumper_b))
+    }
+
+    pub fn custom(page: PageType) -> Self {
+        Root(page)
+    }
+}
 
 #[derive(Debug, Component, Clone)]
 pub struct RootPage(Stack, PelicanPage);

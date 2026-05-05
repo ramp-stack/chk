@@ -15,6 +15,12 @@ use crate::profiles::{Contact, Profile};
 
 #[derive(Serialize, Deserialize, Hash)]
 pub struct ChatRoom(pub Id);
+impl Default for ChatRoom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChatRoom { pub fn new() -> Self {ChatRoom(Id::random())} }
 impl Contract for ChatRoom {
     fn id() -> Id {Id::hash("ChatRoom2.7")}

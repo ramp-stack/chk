@@ -9,7 +9,7 @@ use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::Theme;
 use pelican_ui::utils::ValidationFn;
 
-use crate::flow::State;
+use crate::form::State;
 use crate::items::Input;
 use crate::closure::{FormSubmit, NavFn};
 

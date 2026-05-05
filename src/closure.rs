@@ -2,7 +2,8 @@
 use pelican_ui::{Context, theme::{Icons}};
 use crate::page::{Screen, PageType};
 use crate::{ListItem, FormStorage, Display};
-use crate::flow::{State, Flow};
+use crate::flow::Flow;
+use crate::form::State;
 use pelican_ui::theme::Theme;
 
 use std::rc::Rc;

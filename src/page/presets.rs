@@ -1,11 +1,10 @@
 use ramp::prism;
 
-use pelican_ui::event::{OnEvent, Event, TickEvent};
+use pelican_ui::event::{OnEvent, Event};
 use pelican_ui::drawable::{Component, Drawable, SizedTree};
 use pelican_ui::{Context, Callback, drawables};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::canvas::Align;
-use pelican_ui::components::avatar::AvatarContent;
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
@@ -15,7 +14,8 @@ use pelican_ui::components::MessageGroups;
 use crate::messages::{ChatRoom, Message, SendMessage};
 use crate::profiles::{Profile, ChangeNotes, ChangeUsername};
 use crate::{PageType, FormItem, Bumper};
-use crate::flow::{Flow, State};
+use crate::flow::Flow;
+use crate::form::State;
 use crate::items::{Action, Display};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
@@ -24,6 +24,30 @@ use air::contract::{Substance, Beaker};
 
 use std::str::FromStr;
 use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub struct Success {
+    pub title: String,
+    pub getter: Box<dyn SuccessGetter>,
+}
+
+impl Success {
+    pub fn new(title: &str, getter: impl SuccessGetter + 'static) -> Self {
+        Success{title: title.to_string(), getter: Box::new(getter)}
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Review {
+    pub title: String,
+    pub getter: Box<dyn ReviewItemGetter>,
+}
+
+impl Review {
+    pub fn new(title: &str, getter: impl ReviewItemGetter + 'static) -> Self {
+        Review{title: title.to_string(), getter: Box::new(getter)}
+    }
+}
 
 #[derive(Debug, Component, Clone)]
 pub struct ReviewPage(Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] bool);
@@ -99,7 +123,7 @@ pub struct MessagesPage {
     #[skip] flow_len: usize,
 }
 impl OnEvent for MessagesPage {
-    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         // move this code to the MessageGroups
         let messages = if let Some(Substance::Seq(substances)) = ctx.get::<ChatRoom, _>(&self.room_id, "/messages") {
             substances.iter().flat_map(|substance| {
@@ -119,7 +143,7 @@ impl OnEvent for MessagesPage {
         let profiles = if let Some(Substance::Seq(substances)) = ctx.get::<ChatRoom, _>(&self.room_id, "/members") {
             substances.iter().filter_map(|name| {
                 if let Substance::String(n) = name {
-                    let name = Name::from_str(&n).unwrap();
+                    let name = Name::from_str(n).unwrap();
                     if name == ctx.me() {None} else {
                         Some(Profile::from_name(ctx, name))
                     }
@@ -134,20 +158,20 @@ impl OnEvent for MessagesPage {
             self.is_group = self.profiles.len() > 1;
             self.profiles = profiles.clone();
 
-            let info = match (self.is_group, profiles.get(0).cloned()) {
+            let info = match (self.is_group, profiles.first().cloned()) {
                 (false, Some((profile, id))) => {
                     Box::new(move |ctx: &mut Context, theme: &Theme| {
                         let profile = profile.clone();
-                        let id = id.clone();
-                        (Flow::new(&theme, vec![
-                            Box::new(move || PageType::profile(profile.clone(), id.clone()))
+                        let id = id;
+                        (Flow::new(theme, vec![
+                            Box::new(move || PageType::profile(profile.clone(), id))
                         ]).build(ctx))(ctx, theme);
                     }) as Box<dyn Callback>
                 }
                 _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let profiles = profiles.clone();
                     let t = theme.clone();
-                    (Flow::new(&theme, vec![
+                    (Flow::new(theme, vec![
                         Box::new(move || GroupMessageInfoPage::new(&t.clone(), profiles.clone()))
                     ]).build(ctx))(ctx, theme);
                 }) as Box<dyn Callback>,
@@ -167,7 +191,7 @@ impl MessagesPage {
         let profiles = if let Some(Substance::Seq(substances)) = ctx.get::<ChatRoom, _>(&room_id, "/members") {
             substances.iter().filter_map(|name| {
                 if let Substance::String(n) = name {
-                    let name = Name::from_str(&n).unwrap();
+                    let name = Name::from_str(n).unwrap();
                     if name == ctx.me() {None} else {
                         Some(Profile::from_name(ctx, name))
                     }
@@ -179,18 +203,18 @@ impl MessagesPage {
         let is_group = profiles.len() > 1;
         let all = profiles.clone();
 
-        let info = match (is_group, profiles.get(0).cloned()) {
+        let info = match (is_group, profiles.first().cloned()) {
             (false, Some((profile, id))) => Box::new(move |ctx: &mut Context, theme: &Theme| {
                 let profile = profile.clone();
-                let id = id.clone();
-                (Flow::new(&theme, vec![
-                    Box::new(move || PageType::profile(profile.clone(), id.clone()))
+                let id = id;
+                (Flow::new(theme, vec![
+                    Box::new(move || PageType::profile(profile.clone(), id))
                 ]).build(ctx))(ctx, theme);
             }) as Box<dyn Callback>,
             _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
                 let profiles = all.clone();
                 let t = theme.clone();
-                (Flow::new(&theme, vec![
+                (Flow::new(theme, vec![
                     Box::new(move || GroupMessageInfoPage::new(&t, profiles.clone()))
                 ]).build(ctx))(ctx, theme);
             }) as Box<dyn Callback>,
@@ -236,7 +260,7 @@ impl GroupMessageInfoPage {
                 let profiles = profiles.clone();
                 profiles.into_iter().filter(|(p, _)| p.name.unwrap() != ctx.me()).map(|(p, id)| {
                     let profile = p.clone();
-                    let view_contact = Flow::new(&theme, vec![Box::new(move || PageType::profile(profile.clone(), id.clone()))]);
+                    let view_contact = Flow::new(&theme, vec![Box::new(move || PageType::profile(profile.clone(), id))]);
                     crate::ListItem::avatar(p.avatar.clone(), &p.username, &p.name(), None, Some(view_contact))
                 }).collect::<Vec<crate::ListItem>>()
             })), None),
@@ -259,8 +283,8 @@ impl ProfilePage {
             }
             None
         }) as Box<dyn FormSubmit>;
-        let username_name = profile.name.unwrap().clone();
-        let notes_name = username_name.clone();
+        let username_name = profile.name.unwrap();
+        let notes_name = username_name;
 
         let title = if notes_name == ctx.me() {"My profile"} else {"View contact"};
         let page = PageType::edit_and_display(
@@ -271,7 +295,7 @@ impl ProfilePage {
                     match a.is_empty() {
                         true => Err("Username cannot be empty".to_string()),
                         false => {
-                            let (current, _) = Profile::from_name(ctx, username_name.clone());
+                            let (current, _) = Profile::from_name(ctx, username_name);
                             match current.username == a {
                                 true => Ok(String::new()),
                                 false => Err(String::new())
@@ -280,7 +304,7 @@ impl ProfilePage {
                     }
                 }),
                 FormItem::text_with_preset("About me", &profile.notes, None, move |ctx: &mut Context, a: String| {
-                    let (current, _) = Profile::from_name(ctx, notes_name.clone());
+                    let (current, _) = Profile::from_name(ctx, notes_name);
                     match current.notes == a {
                         true => Ok(String::new()),
                         false => Err(String::new())

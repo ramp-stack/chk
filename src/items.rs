@@ -1,22 +1,22 @@
-use pelican_ui::{drawables, colors, Context, Callback, Request, IS_MOBILE};
+use pelican_ui::{drawables, colors, Context, Callback, IS_MOBILE};
 use pelican_ui::drawable::Drawable;
-use pelican_ui::canvas::{Align, RgbaImage, ShapeType, Image};
+use pelican_ui::canvas::{Align, ShapeType, Image};
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::layout::Offset;
 use pelican_ui::utils::{TitleSubtitle};
 use pelican_ui::components::list_item::{ListItemSection, ListItemInfoLeft, ListItem as PelicanListItem};
-use pelican_ui::components::{QRCodeScannedEvent, QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
+use pelican_ui::components::{QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{SecondaryButton, QuickActions};
 use pelican_ui::components::{SearchBar, Keypad, TextInputEvent};
-use pelican_ui::navigation::NavigationEvent;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use air::names::Name;
 
-use crate::flow::{Flow, State};
+use crate::form::State;
+use crate::flow::Flow;
 use crate::ListItemGetter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,14 +68,13 @@ impl Input {
         Some(match self {
             Input::Text {show_label, label, preset, actions} => {
                 let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
-                if let Some(a) = actions.as_ref() {
-                    if !a.is_empty() {
+                if let Some(a) = actions.as_ref()
+                    && !a.is_empty() {
                         items.push(Box::new(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, icon, action)| {
                             let action: Box<dyn Callback> = action.get();
                             (label.to_string(), *icon, action)
                         }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>())));
                     }
-                }
 
                 items
             },
@@ -88,11 +87,11 @@ impl Input {
             Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
             Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
             Input::Avatar {content, flair, action} => drawables![Avatar::new(theme, content.clone(), *flair, flair.is_some(), AvatarSize::Xxl, action.as_ref().map(|a| a.get()))],
-            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|(item, id)| (item.build(theme), id.clone())).collect::<Vec<_>>())],
+            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>())],
             Input::QRCodeScanner {instructions, alt} => {
                 let mut items = drawables![
-                    QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, d: String| {})),
-                    ExpandableText::new(theme, &instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)
+                    QRCodeScanner::new(theme, Box::new(|_ctx: &mut Context, _d: String| {})),
+                    ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)
                 ];
                 if let Some((label, icon, action)) = alt.as_ref() {
                     items.push(Box::new(ExpandableText::new(theme, "or", TextSize::Md, TextStyle::Secondary, Align::Center, None)));

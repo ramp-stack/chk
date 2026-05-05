@@ -1,23 +1,14 @@
 use ramp::prism;
-use pelican_ui::event::{OnEvent, Event};
-use pelican_ui::drawable::{Component, Drawable, SizedTree};
-use pelican_ui::{Request, drawables, Context, Callback};
+use pelican_ui::event::OnEvent;
+use pelican_ui::drawable::Component;
+use pelican_ui::Context;
 use pelican_ui::layout::{Stack, Offset};
-use pelican_ui::canvas::Align;
-use pelican_ui::components::TextInput;
-use pelican_ui::components::avatar::{Avatar, AvatarSize};
-use pelican_ui::components::list_item::{ListItemGroup, ListItem, ListItemInfoLeft};
-use pelican_ui::navigation::NavigationEvent;
-use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
-use pelican_ui::navigation::{AppPage, Flow as PelicanFlow};
-use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
+use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::MessageGroups;
 use std::fmt::Debug;
 use pelican_ui::utils::ValidationFn;
 
-use crate::FlowWrapper;
-use crate::flow::{Flow, State, FormItem};
+use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
 use crate::profiles::Profile;
 use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, FlowBuilder};
@@ -34,17 +25,6 @@ mod root;
 pub use root::*;
 mod stack;
 pub use stack::*;
-
-pub struct Root(pub PageType);
-impl Root {
-    pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
-        Root(PageType::root(title, vec![], items, header, bumper_a, bumper_b))
-    }
-
-    pub fn custom(page: PageType) -> Self {
-        Root(page)
-    }
-}
 
 #[derive(Debug, Component, Clone)]
 pub struct Screen(Stack, pub Box<dyn AppPage>, #[skip] Box<dyn PageBuilder>, #[skip] Option<NavFn>, #[skip] usize, #[skip] Theme);
@@ -186,11 +166,11 @@ impl PageType {
             PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(StackPage::display(ctx, theme, title.to_string(), items.to_vec(), *offset, header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(StackPage::input(ctx, theme, title.to_string(), item.clone(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Form{title, item, next, flow_len, validate, on_submit} => Box::new(FormPage::new(theme, title.to_string(), item.clone(), next.clone(), *flow_len, validate.clone(), on_submit.clone())),
-            PageType::Edit{title, input, display, validations, on_save, flow_len} => Box::new(EditPage::new(theme, title.to_string(), input.clone(), display.clone(), validations.clone(), on_save.clone())),
-            PageType::EditAndDisplay{title, items, display, on_save, flow_len} => Box::new(EditPage::edit_and_display(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
+            PageType::Edit{title, input, display, validations, on_save, flow_len: _} => Box::new(EditPage::new(theme, title.to_string(), input.clone(), display.clone(), validations.clone(), on_save.clone())),
+            PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::edit_and_display(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
-            PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, room_id.clone(), *flow_len)),
+            PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, *room_id, *flow_len)),
             PageType::Profile{profile, id} => Box::new(ProfilePage::new(ctx, theme, profile.clone(), *id))
         }
     }
@@ -198,9 +178,9 @@ impl PageType {
     pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), Some(bumper_a.clone()), bumper_b.clone())),
-            PageType::Both{title, inputs, display, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), inputs.to_vec(), display.to_vec(), header.clone(), None, None)),
-            PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), vec![], items.to_vec(), header.clone(), None, None)),
-            PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(RootPage::new(theme, title.to_string(), vec![item.clone()], vec![], header.clone(), None, None)),
+            PageType::Both{title, inputs, display, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), inputs.to_vec(), display.to_vec(), header.clone(), None, None)),
+            PageType::Display{title, items, offset: _, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), vec![], items.to_vec(), header.clone(), None, None)),
+            PageType::Input{title, item, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), vec![item.clone()], vec![], header.clone(), None, None)),
 
             // PageType::Profile{..} |
             PageType::Edit{..} |
@@ -210,7 +190,7 @@ impl PageType {
             PageType::Messaging{..} => panic!("Not an accepted root type"),
 
             PageType::Profile{profile, id} => Box::new(ProfilePage::new(ctx, theme, profile.clone(), *id)),
-            PageType::EditAndDisplay{title, items, display, on_save, flow_len} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
+            PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
         }
     }
 }

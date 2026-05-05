@@ -120,7 +120,7 @@ impl Profile {
 
     pub fn from_name(ctx: &mut Context, name: Name) -> (Profile, Id) {
         ctx.list::<Contact>().iter().find_map(|contact| {
-            if Some(Substance::String(name.to_string())) == ctx.get::<Contact, _>(&contact, "/name") {
+            if Some(Substance::String(name.to_string())) == ctx.get::<Contact, _>(contact, "/name") {
                 Some((Profile::from_id(ctx, *contact), *contact))
             } else {None}
         }).unwrap_or(Profile::create(ctx, name))
@@ -128,7 +128,7 @@ impl Profile {
 
     pub fn from_substance(ctx: &mut Context, substance: &Substance) -> Option<(Self, Id)> {
         if let Substance::String(first) = substance {
-            if let Ok(first) = Name::from_str(&first) {
+            if let Ok(first) = Name::from_str(first) {
                 Some(Profile::from_name(ctx, first))
             } else {None}
         } else {None}

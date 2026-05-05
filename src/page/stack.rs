@@ -31,7 +31,7 @@ impl StackPage {
 
     #[allow(clippy::too_many_arguments)]
     pub fn both(ctx: &mut Context, theme: &Theme, title: String, display: Vec<Display>, inputs: Vec<Input>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let mut items = inputs.into_iter().filter_map(|mut di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
+        let mut items = inputs.into_iter().filter_map(|di| di.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
         display.into_iter().for_each(|mut di| if let Some(i) = di.build(theme) {items.extend(i)});
         StackPage::new(ctx, theme, title, items, Offset::Start, header, bumper, next, flow_len)
     }
