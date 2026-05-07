@@ -23,7 +23,7 @@ impl Default for ChatRoom {
 
 impl ChatRoom { pub fn new() -> Self {ChatRoom(Id::random())} }
 impl Contract for ChatRoom {
-    fn id() -> Id {Id::hash("ChatRoom2.7")}
+    fn id() -> Id {Id::hash("ChatRoom2.8")}
 
     fn init(self, signer: &Name, _timestamp: u64) -> Substance {Substance::Map(BTreeMap::from([
         ("name".to_string(), Substance::String("myroom".to_string())),
@@ -87,6 +87,14 @@ impl Message {
             body,
             timestamp,
         }
+    }
+
+    pub fn from_substance(substance: Substance) -> Self {
+        let author = if let Ok(Substance::String(name)) = substance.query("/author") { Name::from_str(&name).unwrap() } else {todo!()};
+        let body = if let Ok(Substance::String(body)) = substance.query("/body") { body } else {todo!()};
+        let timestamp = if let Ok(Substance::Integer(timestamp)) = substance.query("/timestamp") { timestamp } else {todo!()};
+        
+        Message {author, body, timestamp}
     }
 
     pub fn to_pel(&self, ctx: &mut Context) -> pelican_ui::components::Message {

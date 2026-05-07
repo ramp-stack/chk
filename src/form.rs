@@ -81,8 +81,8 @@ pub enum FormItem {
     Enum(String, Vec<EnumItem>),
     Search(String, Vec<(ListItem, Name)>),
     ScanQR(String, String, Option<(String, Icons, Action)>),
-    Avatar(String),
-    AvatarWithPreset(String, AvatarContent),
+    Avatar(String, AvatarContent, Box<dyn ValidityFn>),
+    AvatarWithPreset(String, AvatarContent, Box<dyn ValidityFn>),
 }
 
 pub struct FormStorage(pub HashMap<String, String>);
@@ -113,12 +113,12 @@ impl FormItem {
         FormItem::Search(title.to_string(), items)
     }
 
-    pub fn avatar(title: &str) -> Self {
-        FormItem::Avatar(title.to_string())
+    pub fn avatar(title: &str, valid: impl ValidityFn + 'static) -> Self {
+        FormItem::Avatar(title.to_string(), AvatarContent::default(), Box::new(valid))
     }
 
-    pub fn avatar_with_preset(title: &str, avatar: AvatarContent) -> Self {
-        FormItem::AvatarWithPreset(title.to_string(), avatar)
+    pub fn avatar_with_preset(title: &str, avatar: AvatarContent, valid: impl ValidityFn + 'static) -> Self {
+        FormItem::AvatarWithPreset(title.to_string(), avatar, Box::new(valid))
     }
 
     pub fn scan_qr_code(title: &str, instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
@@ -171,6 +171,18 @@ impl FormItem {
             FormItem::Search(_, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                 if let Some(searchbar) = children[0].as_any_mut().downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
             }),
+            FormItem::Avatar(_, _, validation) | FormItem::AvatarWithPreset(_, _, validation) => {
+                use pelican_ui::components::avatar::Avatar;
+                let validation = validation.clone();
+                Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
+                    if let Some(avatar) = children[0].as_any_mut().downcast_mut::<Avatar>() {
+                        let result = (validation.clone())(ctx, avatar.content.get_image().unwrap_or_default().to_string());
+                        result.is_ok()
+                    } else {
+                        true
+                    }
+                })
+            }
             _ => Box::new(|_ctx: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         }
     }
@@ -199,8 +211,8 @@ impl FormItem {
                 Input::search(items.clone())
             },
             FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(instructions, alt.clone()),
-            FormItem::Avatar(_) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
-            FormItem::AvatarWithPreset(_, avatar) => Input::avatar(avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None))
+            FormItem::Avatar(_, _, _) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
+            FormItem::AvatarWithPreset(_, avatar, _) => Input::avatar(avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None))
         }
     }
 }

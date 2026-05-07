@@ -14,18 +14,18 @@ use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Hash)]
-pub struct Contact(Id, Name, String, String);
+pub struct Contact(Name);
 impl Contact {
-    pub fn new(name: Name, username: String, notes: String) -> Self {Contact(Id::random(), name, username, notes)}
+    pub fn new(name: Name) -> Self {Contact(name)}
 }
 impl Contract for Contact {
-    fn id() -> Id {Id::hash("Contact0.0")}
+    fn id() -> Id {Id::hash("Contact0.1")}
 
     fn init(self, signer: &Name, _timestamp: u64) -> Substance {Substance::Map(BTreeMap::from([
-        ("username".to_string(), Substance::String(self.2.to_string())),
-        ("notes".to_string(), Substance::String(self.3.to_string())),
+        ("username".to_string(), Substance::String(String::new())),
+        ("notes".to_string(), Substance::String(String::new())),
         ("avatar".to_string(), Substance::String(String::new())),
-        ("name".to_string(), Substance::String(self.1.to_string())),
+        ("name".to_string(), Substance::String(self.0.to_string())),
         ("author".to_string(), Substance::String(signer.to_string())),
     ]))}
 
@@ -91,7 +91,6 @@ pub struct Profile {
 
 impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> (Profile, Id) {
-        println!("creating new profile");
         let profile = Profile {
             name: Some(name),
             username: Username::new(),
@@ -99,7 +98,8 @@ impl Profile {
             avatar: AvatarContent::default(),
         };
 
-        let id = ctx.create(Contact::new(name, profile.username.to_string(), profile.notes.to_string())).unwrap();
+        let id = ctx.create(Contact::new(name)).unwrap();
+        let _ = ctx.send(id, "/username", ChangeUsername(profile.username.to_string()));
         (profile, id)
     }
 
@@ -109,27 +109,40 @@ impl Profile {
         let name = if let Some(Substance::String(name)) = ctx.get::<Contact, _>(&id, "/name") { Name::from_str(&name).ok() } else {None};
         let username = if let Some(Substance::String(name)) = ctx.get::<Contact, _>(&id, "/username") { name } else { String::new() };
         let notes = if let Some(Substance::String(notes)) = ctx.get::<Contact, _>(&id, "/notes") { notes } else { String::new() };
-        
+        let avatar = if let Some(Substance::String(avatar)) = ctx.get::<Contact, _>(&id, "/avatar") { avatar } else { String::new() };
+
         Profile {
             name,
-            username,
+            username: username.is_empty().then_some("Orange Profile".to_string()).unwrap_or(username),
             notes,
-            avatar: AvatarContent::default(),
+            avatar: AvatarContent::from_string(&avatar),
         }
     }
 
     pub fn from_name(ctx: &mut Context, name: Name) -> (Profile, Id) {
         ctx.list::<Contact>().iter().find_map(|contact| {
-            if Some(Substance::String(name.to_string())) == ctx.get::<Contact, _>(contact, "/name") {
-                Some((Profile::from_id(ctx, *contact), *contact))
+            if let Some(Substance::String(n)) = ctx.get::<Contact, _>(contact, "/name") {
+                if name.to_string() == n {
+                    Some((Profile::from_id(ctx, *contact), *contact))
+                } else {None}
             } else {None}
-        }).unwrap_or(Profile::create(ctx, name))
+        }).unwrap_or_else(|| Profile::create(ctx, name))
+    }
+
+    pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<(Profile, Id)> {
+        ctx.list::<Contact>().iter().find_map(|contact| {
+            if let Some(Substance::String(n)) = ctx.get::<Contact, _>(contact, "/name") {
+                if name.to_string() == n {
+                    Some((Profile::from_id(ctx, *contact), *contact))
+                } else {None}
+            } else {None}
+        })
     }
 
     pub fn from_substance(ctx: &mut Context, substance: &Substance) -> Option<(Self, Id)> {
         if let Substance::String(first) = substance {
             if let Ok(first) = Name::from_str(first) {
-                Some(Profile::from_name(ctx, first))
+                Profile::try_from_name(ctx, first)
             } else {None}
         } else {None}
     }
@@ -138,7 +151,7 @@ impl Profile {
         pelican_ui::components::Profile {
             name: self.name.unwrap(),
             username: self.username.clone(),
-            pfp: None, // TODO
+            pfp: self.avatar.clone(), // TODO
         }
     }
 

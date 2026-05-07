@@ -171,7 +171,7 @@ impl PageType {
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
             PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, *room_id, *flow_len)),
-            PageType::Profile{profile, id} => Box::new(ProfilePage::new(ctx, theme, profile.clone(), *id))
+            PageType::Profile{profile, id} => ProfilePage::new(ctx, theme, profile.clone(), *id)
         }
     }
 
@@ -189,7 +189,7 @@ impl PageType {
             PageType::Success{..} |
             PageType::Messaging{..} => panic!("Not an accepted root type"),
 
-            PageType::Profile{profile, id} => Box::new(ProfilePage::new(ctx, theme, profile.clone(), *id)),
+            PageType::Profile{profile, id} => ProfilePage::new(ctx, theme, profile.clone(), *id),
             PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
         }
     }

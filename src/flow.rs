@@ -131,13 +131,11 @@ impl OnEvent for FlowWrapper {
             } else {
                 let index = self.1.index;
                 self.2 = Vec::new();
-
                 if self.1.stored.is_empty() && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() {
                     if let Some(page) = screen.1.downcast_mut::<FormPage>() {
                         page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                         page.on_change(self.2.clone());
                     } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
-                        println!("A");
                         page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                         page.on_change(self.2.clone());
                     }
@@ -149,7 +147,6 @@ impl OnEvent for FlowWrapper {
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
-                            println!("B");
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         }
@@ -160,7 +157,6 @@ impl OnEvent for FlowWrapper {
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
-                            println!("C");
                             page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
                             page.on_change(self.2.clone());
                         }

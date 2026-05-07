@@ -78,7 +78,6 @@ impl EditPage {
     }
 
     pub fn on_change(&mut self, new: Vec<State>) {
-        println!("On change");
         if new != self.4 {
             self.4 = new.clone();
             let theme = &self.2;
