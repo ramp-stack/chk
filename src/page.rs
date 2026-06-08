@@ -10,10 +10,13 @@ use pelican_ui::utils::ValidationFn;
 
 use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
-use crate::profiles::Profile;
 use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
+use air::Instance;
 use air::names::Id;
+
+use crate::messages::ChatRoom;
+use crate::profiles::Profile;
 
 mod edit;
 pub use edit::*;
@@ -65,8 +68,8 @@ pub enum PageType {
     Edit{title: String, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>, flow_len: usize},
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize},
-    Messaging{room_id: Id, flow_len: usize},
-    Profile{profile: Profile, id: Id},
+    Messaging{room: Instance<ChatRoom>, flow_len: usize},
+    Profile{profile: Instance<Profile>},
 }
 
 impl PageType {
@@ -106,16 +109,16 @@ impl PageType {
         PageType::Success { title: title.to_string(), getter, flow_len: 1 }
     }
 
-    pub fn messaging(room_id: Id) -> Self {
-        PageType::Messaging{ room_id, flow_len: 1 }
+    pub fn messaging(room: Instance<ChatRoom>) -> Self {
+        PageType::Messaging{ room, flow_len: 1 }
     }
 
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
         PageType::input("Scan QR code", Input::qr_code_scanner(instructions, alt), None, crate::Bumper::None)
     }
 
-    pub fn profile(profile: Profile, id: Id) -> Self {
-        PageType::Profile { profile, id }
+    pub fn profile(profile: Instance<Profile>) -> Self {
+        PageType::Profile { profile }
     }
 
     pub fn nav_fn(&mut self) -> Option<&mut Option<NavFn>> {
@@ -170,8 +173,8 @@ impl PageType {
             PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::edit_and_display(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
-            PageType::Messaging{room_id, flow_len} => Box::new(MessagesPage::new(ctx, theme, *room_id, *flow_len)),
-            PageType::Profile{profile, id} => ProfilePage::new(ctx, theme, profile.clone(), *id)
+            PageType::Messaging{room, flow_len} => Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len)),
+            PageType::Profile{profile} => ProfilePage::new(ctx, theme, profile.clone())
         }
     }
 
@@ -189,7 +192,7 @@ impl PageType {
             PageType::Success{..} |
             PageType::Messaging{..} => panic!("Not an accepted root type"),
 
-            PageType::Profile{profile, id} => ProfilePage::new(ctx, theme, profile.clone(), *id),
+            PageType::Profile{profile} => ProfilePage::new(ctx, theme, profile.clone()),
             PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
         }
     }

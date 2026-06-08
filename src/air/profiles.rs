@@ -1,8 +1,9 @@
 use pelican_ui::Context;
 use pelican_ui::components::avatar::AvatarContent;
 
+use air::Instance;
 use air::names::{Id, Name};
-use air::contract::{Contract, Substance, Reactants, Reactant, Beaker};
+use air::{Contract, Reactants, Reactant};
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -13,138 +14,94 @@ use rand::{seq::SliceRandom, Rng};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Hash)]
-pub struct Contact(Name);
-impl Contact {
-    pub fn new(name: Name) -> Self {Contact(name)}
-}
-impl Contract for Contact {
-    fn id() -> Id {Id::hash("Contact0.1")}
-
-    fn init(self, signer: &Name, _timestamp: u64) -> Substance {Substance::Map(BTreeMap::from([
-        ("username".to_string(), Substance::String(String::new())),
-        ("notes".to_string(), Substance::String(String::new())),
-        ("avatar".to_string(), Substance::String(String::new())),
-        ("name".to_string(), Substance::String(self.0.to_string())),
-        ("author".to_string(), Substance::String(signer.to_string())),
-    ]))}
-
-    fn routes() -> BTreeMap<PathBuf, Reactants> {
-        BTreeMap::from([
-            (PathBuf::from("/username"), Reactants::new().add::<ChangeUsername>()),
-            (PathBuf::from("/notes"), Reactants::new().add::<ChangeNotes>()),
-            (PathBuf::from("/avatar"), Reactants::new().add::<ChangeAvatar>()),
-        ])
-    }
-}
-
-#[derive(Serialize, Deserialize, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeUsername(pub String);
-impl Reactant for ChangeUsername {
-    type Error = Infallible;
-    type Contract = Contact;
+impl Reactant<Profile> for ChangeUsername {
+    type Result = ();
 
-    fn apply<B: Beaker>(self, _path: &Path, signer: &Name, _timestamp: u64, substance: &mut B) -> Result<(), Self::Error> {
-        if substance.query("/author") == Ok(Substance::String(signer.to_string())) {
-            let _ = substance.insert("username", Substance::String(self.0));
-        }
-        Ok(())
+    fn id() -> Id {Id::hash("ChangeUsername")}
+
+    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+        profile.username = self.0.to_string();
     }
 }
 
-#[derive(Serialize, Deserialize, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeNotes(pub String);
-impl Reactant for ChangeNotes {
-    type Error = Infallible;
-    type Contract = Contact;
+impl Reactant<Profile> for ChangeNotes {
+    type Result = ();
 
-    fn apply<B: Beaker>(self, _path: &Path, signer: &Name, _timestamp: u64, substance: &mut B) -> Result<(), Self::Error> {
-        if substance.query("/author") == Ok(Substance::String(signer.to_string())) {
-            let _ = substance.insert("notes", Substance::String(self.0));
-        }
-        Ok(())
+    fn id() -> Id {Id::hash("ChangeNotes")}
+
+    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+        profile.notes = self.0.to_string();
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChangeAvatar(pub AvatarContent);
+impl Reactant<Profile> for ChangeAvatar {
+    type Result = ();
+
+    fn id() -> Id {Id::hash("ChangeAvatar")}
+
+    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+        profile.avatar = self.0.clone();
     }
 }
 
 
-#[derive(Serialize, Deserialize, Hash)]
-pub struct ChangeAvatar(pub String);
-impl Reactant for ChangeAvatar {
-    type Error = Infallible;
-    type Contract = Contact;
-
-    fn apply<B: Beaker>(self, _path: &Path, signer: &Name, _timestamp: u64, substance: &mut B) -> Result<(), Self::Error> {
-        if substance.query("/author") == Ok(Substance::String(signer.to_string())) {
-            let _ = substance.insert("avatar", Substance::String(self.0));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
     pub name: Option<Name>,
     pub username: String,
     pub notes: String,
     pub avatar: AvatarContent,
+    pub id: Id,
 }
 
-impl Profile {
-    pub fn create(ctx: &mut Context, name: Name) -> (Profile, Id) {
-        let profile = Profile {
-            name: Some(name),
+impl Contract for Profile {
+    type Init = Name;
+
+    fn id() -> Id {Id::hash("Profile0.1")}
+
+    fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
+        Profile {
+            name: Some(init),
             username: Username::new(),
             notes: String::new(),
             avatar: AvatarContent::default(),
-        };
-
-        let id = ctx.create(Contact::new(name)).unwrap();
-        let _ = ctx.send(id, "/username", ChangeUsername(profile.username.to_string()));
-        (profile, id)
-    }
-
-    pub fn me(ctx: &mut Context) -> (Self, Id) {Profile::from_name(ctx, ctx.me())}
-
-    pub fn from_id(ctx: &mut Context, id: Id) -> Self {
-        let name = if let Some(Substance::String(name)) = ctx.get::<Contact, _>(&id, "/name") { Name::from_str(&name).ok() } else {None};
-        let username = if let Some(Substance::String(name)) = ctx.get::<Contact, _>(&id, "/username") { name } else { String::new() };
-        let notes = if let Some(Substance::String(notes)) = ctx.get::<Contact, _>(&id, "/notes") { notes } else { String::new() };
-        let avatar = if let Some(Substance::String(avatar)) = ctx.get::<Contact, _>(&id, "/avatar") { avatar } else { String::new() };
-
-        Profile {
-            name,
-            username: username.is_empty().then_some("Orange Profile".to_string()).unwrap_or(username),
-            notes,
-            avatar: AvatarContent::from_string(&avatar),
+            id: Id::random(),
         }
     }
 
-    pub fn from_name(ctx: &mut Context, name: Name) -> (Profile, Id) {
-        ctx.list::<Contact>().iter().find_map(|contact| {
-            if let Some(Substance::String(n)) = ctx.get::<Contact, _>(contact, "/name") {
-                if name.to_string() == n {
-                    Some((Profile::from_id(ctx, *contact), *contact))
-                } else {None}
-            } else {None}
-        }).unwrap_or_else(|| Profile::create(ctx, name))
+    fn reactants() -> Reactants<Profile> {
+        Reactants::default().add::<ChangeUsername>().add::<ChangeNotes>().add::<ChangeAvatar>()
+    }
+}
+
+impl Profile {
+    pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
+        ctx.create::<Profile>(name)
     }
 
-    pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<(Profile, Id)> {
-        ctx.list::<Contact>().iter().find_map(|contact| {
-            if let Some(Substance::String(n)) = ctx.get::<Contact, _>(contact, "/name") {
-                if name.to_string() == n {
-                    Some((Profile::from_id(ctx, *contact), *contact))
-                } else {None}
-            } else {None}
+    pub fn me(ctx: &mut Context) -> Instance<Profile> {
+        let my_name = ctx.me();
+        Profile::from_name(ctx, my_name)
+    }
+
+    pub fn from_name(ctx: &mut Context, name: Name) -> Instance<Profile> {
+        Profile::try_from_name(ctx, name).unwrap_or_else(|| Profile::create(ctx, name))
+    }
+
+    pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<Instance<Profile>> {
+        ctx.list::<Profile>().iter_mut().find_map(|profile| {
+            if profile.pending().name == Some(name) {
+                Some(profile.clone())
+            } else {
+                None
+            }
         })
-    }
-
-    pub fn from_substance(ctx: &mut Context, substance: &Substance) -> Option<(Self, Id)> {
-        if let Substance::String(first) = substance {
-            if let Ok(first) = Name::from_str(first) {
-                Profile::try_from_name(ctx, first)
-            } else {None}
-        } else {None}
     }
 
     pub fn to_pel(&self) -> pelican_ui::components::Profile {

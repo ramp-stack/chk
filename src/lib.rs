@@ -76,17 +76,17 @@ pub mod __private {
 
 #[macro_export]
 macro_rules! run {
-    ([$($c:ty),* $(,)?]; $app:expr) => {
+    ($app:expr) => {
         use $crate::__private::*;
 
-        ramp::run!([$($c),*]; move |ctx: &mut Context| {
+        ramp::run!(move |ctx: &mut Context| {
             let app: Rc<RefCell<dyn App>> = Rc::new(RefCell::new(($app)(ctx)));
             let assets = include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources");
             let theme: Theme = app.borrow().theme().to_pelican(Assets::new(assets));
             let roots: Vec<RootInfo> = app.borrow().roots(ctx, &theme);
             let roots = roots.into_iter().map(|root| root.0).collect::<Vec<PelicanRootInfo>>();
             let app = Rc::clone(&app);
-            let on_event = Box::new(move |d: &mut Box<dyn Drawable>, ctx: &mut Context, event: Box<dyn Event>| {
+            let on_event = Box::new(move |ctx: &mut Context, event: Box<dyn Event>| {
                 app.borrow_mut().on_event(ctx, event)
             });
             Interface::new(ctx, &theme, roots, on_event)
