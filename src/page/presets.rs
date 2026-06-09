@@ -246,7 +246,8 @@ impl ProfilePage {
         let mut notes = profile.clone();
 
         let p = profile.pending();
-        let title = if p.name.unwrap() == ctx.me() {"My profile"} else {"View contact"};
+        let my_name = p.name.unwrap();
+        let title = if my_name == ctx.me() {"My profile"} else {"View contact"};
         let page = PageType::edit_and_display(
             title,
             vec![
@@ -276,7 +277,12 @@ impl ProfilePage {
                 }),
             ],
             vec![
-                Display::cta("Orange name", None, &p.name.unwrap().to_string(), vec![("Copy".to_string(), Icons::Copy, Action::copy(&p.name.unwrap().to_string()))]),
+                Display::cta("Orange name", None, &my_name.to_string(), vec![
+                    ("Copy".to_string(), Icons::Copy, Action::copy(&my_name.to_string())),
+                    ("Display QR Code".to_string(), Icons::QrCode, Action::flow(Flow::new(&theme, vec![
+                        Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
+                    ])))
+                ]),
             ],
             closure
         );

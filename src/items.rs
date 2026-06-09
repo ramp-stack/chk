@@ -27,7 +27,7 @@ pub enum Input {
     Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
-    Search {items: Vec<(ListItem, Name)>},
+    Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>},
     QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
 }
 
@@ -56,8 +56,8 @@ impl Input {
         Input::Avatar {content, flair, action}
     }
 
-    pub fn search(items: Vec<(ListItem, Name)>) -> Self {
-        Input::Search {items}
+    pub fn search(items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>) -> Self {
+        Input::Search {items, actions}
     }
 
     pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
@@ -87,7 +87,15 @@ impl Input {
             Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
             Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
             Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, flair.is_some(), AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
-            Input::Search {items} => drawables![SearchBar::new(theme, items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>())],
+            Input::Search {items, actions} => drawables![SearchBar::new(theme, 
+                items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
+                if let Some(a) = actions.as_ref() && !a.is_empty() {
+                    Some(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, icon, action)| {
+                        let action: Box<dyn Callback> = action.get();
+                        (label.to_string(), *icon, action)
+                    }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>()))
+                } else {None}
+            )],
             Input::QRCodeScanner {instructions, alt} => {
                 let mut items = drawables![
                     QRCodeScanner::new(theme, Box::new(|_ctx: &mut Context, _d: String| {})),

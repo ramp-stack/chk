@@ -79,7 +79,7 @@ pub enum FormItem {
     TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
-    Search(String, Vec<(ListItem, Name)>),
+    Search(String, Vec<(ListItem, Name)>, Option<Vec<(String, Icons, Action)>>),
     ScanQR(String, String, Option<(String, Icons, Action)>),
     Avatar(String, AvatarContent, Box<dyn ValidityFn>),
     AvatarWithPreset(String, AvatarContent, Box<dyn ValidityFn>),
@@ -109,8 +109,8 @@ impl FormItem {
         FormItem::Enum(label.to_string(), items)
     }
 
-    pub fn search(title: &str, items: Vec<(ListItem, Name)>) -> Self {
-        FormItem::Search(title.to_string(), items)
+    pub fn search(title: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>) -> Self {
+        FormItem::Search(title.to_string(), items, actions)
     }
 
     pub fn avatar(title: &str, valid: impl ValidityFn + 'static) -> Self {
@@ -168,7 +168,7 @@ impl FormItem {
                     }
                 })
             },
-            FormItem::Search(_, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
+            FormItem::Search(_, _, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                 if let Some(searchbar) = children[0].as_any_mut().downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
             }),
             FormItem::Avatar(_, _, validation) | FormItem::AvatarWithPreset(_, _, validation) => {
@@ -207,8 +207,8 @@ impl FormItem {
             FormItem::Enum(_, items) => {
                 Input::enumerator(items.clone())
             },
-            FormItem::Search(_, items) => {
-                Input::search(items.clone())
+            FormItem::Search(_, items, actions) => {
+                Input::search(items.clone(), actions.clone())
             },
             FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(instructions, alt.clone()),
             FormItem::Avatar(_, _, _) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),

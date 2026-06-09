@@ -1,7 +1,7 @@
 use ramp::prism;
 use pelican_ui::event::OnEvent;
 use pelican_ui::drawable::Component;
-use pelican_ui::Context;
+use pelican_ui::{Context, IS_MOBILE};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
@@ -115,6 +115,17 @@ impl PageType {
 
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
         PageType::input("Scan QR code", Input::qr_code_scanner(instructions, alt), None, crate::Bumper::None)
+    }
+
+    pub fn display_qr_code(title: &str, data: &str, instructions: &str) -> Self {
+        PageType::display(title, vec![Display::qr_code(&data, instructions)],
+            None,
+            Bumper::custom(
+                if IS_MOBILE {"Share"} else {"Copy"}, 
+                if IS_MOBILE {Action::share(&data)} else {Action::copy(&data)}
+            ),
+            Offset::Center,
+        )
     }
 
     pub fn profile(profile: Instance<Profile>) -> Self {
