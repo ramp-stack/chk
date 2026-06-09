@@ -82,6 +82,8 @@ impl Contract for Profile {
 
 impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
+        // ctx.register::<Profile>();
+        // std::thread::sleep(std::time::Duration::from_secs(1));
         ctx.create::<Profile>(name)
     }
 
