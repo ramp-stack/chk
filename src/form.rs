@@ -73,6 +73,34 @@ impl Form {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormValidState {
+    InvalidWithData(String), // Disables continue button, sends out error message
+    Invalid, // Disables continue button, with no error message,
+    Valid, // Enables continue button
+    ValidWithData(String), // Enables continue button, sends out help messsage
+}
+
+impl FormValidState {
+    pub fn eval(&self) -> Result<String, String> {
+        match self {
+            FormValidState::InvalidWithData(s) => Err(s.to_string()),
+            FormValidState::Invalid => Err(String::new()),
+            FormValidState::Valid => Ok(String::new()),
+            FormValidState::ValidWithData(s) => Ok(s.to_string()),
+        }
+    }
+
+    pub fn from(r: Result<String, String>) -> Self {
+        match r {
+            Ok(e) if e.is_empty() => FormValidState::Valid,
+            Ok(e) => FormValidState::ValidWithData(e),
+            Err(e) if e.is_empty() => FormValidState::Invalid,
+            Err(e) => FormValidState::InvalidWithData(e),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FormItem {
     Text(String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
@@ -147,8 +175,8 @@ impl FormItem {
                 Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                     if let Some(input) = children[0].as_any_mut().downcast_mut::<TextInput>() {
                         let result = (validation.clone())(ctx, input.value());
-                        input.error(result.clone().map(|_| {}));
-                        result.is_ok()
+                        input.error(result.eval().map(|_| {}));
+                        result == FormValidState::Valid
                     } else {
                         true
                     }
@@ -161,8 +189,8 @@ impl FormItem {
                 Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                     if let Some(input) = children[0].as_any_mut().downcast_mut::<NumericalInput>() {
                         let result = (validation.clone())(ctx, input.value());
-                        input.error(result.clone());
-                        result.is_ok()
+                        input.error(result.eval());
+                        result == FormValidState::Valid
                     } else {
                         true
                     }
@@ -177,7 +205,7 @@ impl FormItem {
                 Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                     if let Some(avatar) = children[0].as_any_mut().downcast_mut::<Avatar>() {
                         let result = (validation.clone())(ctx, avatar.content.get_image().unwrap_or_default().to_string());
-                        result.is_ok()
+                        result == FormValidState::Valid
                     } else {
                         true
                     }

@@ -3,7 +3,7 @@ use pelican_ui::{Context, theme::{Icons}};
 use crate::page::{Screen, PageType};
 use crate::{ListItem, FormStorage, Display};
 use crate::flow::Flow;
-use crate::form::State;
+use crate::form::{State, FormValidState};
 use pelican_ui::theme::Theme;
 
 use std::rc::Rc;
@@ -33,11 +33,11 @@ impl std::fmt::Debug for dyn FnMutClone {
     }
 }
 
-pub trait ValidityFn: FnMut(&mut Context, String) -> Result<String, String> + 'static {
+pub trait ValidityFn: FnMut(&mut Context, String) -> FormValidState + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn>;
 }
 
-impl<F> ValidityFn for F where F: FnMut(&mut Context, String) -> Result<String, String> + Clone + 'static {
+impl<F> ValidityFn for F where F: FnMut(&mut Context, String) -> FormValidState + Clone + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn> {
         Box::new(self.clone())
     }

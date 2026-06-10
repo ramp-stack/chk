@@ -15,7 +15,7 @@ use crate::messages::{ChatRoom, Message, SendMessage};
 use crate::profiles::{Profile, ChangeNotes, ChangeUsername, ChangeAvatar};
 use crate::{PageType, FormItem, Bumper};
 use crate::flow::Flow;
-use crate::form::State;
+use crate::form::{State, FormValidState};
 use crate::items::{Action, Display};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
@@ -254,25 +254,21 @@ impl ProfilePage {
                 FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
                     let current = avatar.pending().avatar.get_image().unwrap_or_default();
                     match current == a {
-                        true => Ok(String::new()),
-                        false => Err(String::new())
+                        true => FormValidState::Valid,
+                        false => FormValidState::Invalid,
                     }
                 }),
                 FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
-                    match a.is_empty() {
-                        true => Err("Username cannot be empty".to_string()),
-                        false => {
-                            match username.pending().username == a {
-                                true => Ok(String::new()),
-                                false => Err(String::new())
-                            }
-                        }
+                    match a.as_str() {
+                        a if a == &username.pending().username => FormValidState::Valid,
+                        "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
+                        _ => FormValidState::Invalid,
                     }
                 }),
                 FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
                     match notes.pending().notes == a {
-                        true => Ok(String::new()),
-                        false => Err(String::new())
+                        true => FormValidState::Valid,
+                        false => FormValidState::Invalid,
                     }
                 }),
             ],
