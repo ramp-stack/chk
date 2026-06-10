@@ -15,6 +15,21 @@ use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SetUsernameInit(pub String);
+impl Reactant<Profile> for SetUsernameInit {
+    type Result = ();
+
+    fn id() -> Id {Id::hash("SetUsernameInit")}
+
+    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+        if !profile.init {
+            profile.init = true;
+            profile.username = self.0.to_string();
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeUsername(pub String);
 impl Reactant<Profile> for ChangeUsername {
     type Result = ();
@@ -56,25 +71,27 @@ pub struct Profile {
     pub name: Option<Name>,
     pub username: String,
     pub notes: String,
-    pub avatar: AvatarContent
+    pub avatar: AvatarContent,
+    init: bool,
 }
 
 impl Contract for Profile {
-    type Init = (Name, String);
+    type Init = Name;
 
-    fn id() -> Id {Id::hash("Profile0.1")}
+    fn id() -> Id {Id::hash("Profile0.2")}
 
     fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
         Profile {
-            name: Some(init.0),
-            username: init.1,
+            name: Some(init),
+            username: "Orange Profile".to_string(),
             notes: String::new(),
             avatar: AvatarContent::default(),
+            init: false,
         }
     }
 
     fn reactants() -> Reactants<Profile> {
-        Reactants::default().add::<ChangeUsername>().add::<ChangeNotes>().add::<ChangeAvatar>()
+        Reactants::default().add::<ChangeUsername>().add::<ChangeNotes>().add::<ChangeAvatar>().add::<SetUsernameInit>()
     }
 }
 
@@ -82,7 +99,9 @@ impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
         // ctx.register::<Profile>();
         // std::thread::sleep(std::time::Duration::from_secs(1));
-        ctx.create::<Profile>((name, Username::new()))
+        let mut profile = ctx.create::<Profile>(name);
+        profile.apply(SetUsernameInit(Username::new()));
+        profile
     }
 
     pub fn me(ctx: &mut Context) -> Instance<Profile> {

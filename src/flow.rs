@@ -124,7 +124,6 @@ pub struct FlowWrapper(Stack, PelicanFlow, #[skip] Vec<State>);
 impl OnEvent for FlowWrapper {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {        
         if event.downcast_ref::<TickEvent>().is_some() {
-            println!("Tick");
             if let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>().as_mut() && let Some(page) = screen.1.downcast_mut::<ReviewPage>() {
                 page.on_change(self.2.clone());
             } else if let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>().as_mut() && let Some(page) = screen.1.downcast_mut::<SuccessPage>() {
