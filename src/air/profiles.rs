@@ -56,22 +56,20 @@ pub struct Profile {
     pub name: Option<Name>,
     pub username: String,
     pub notes: String,
-    pub avatar: AvatarContent,
-    pub id: Id,
+    pub avatar: AvatarContent
 }
 
 impl Contract for Profile {
-    type Init = Name;
+    type Init = (Name, String);
 
     fn id() -> Id {Id::hash("Profile0.1")}
 
     fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
         Profile {
-            name: Some(init),
-            username: Username::new(),
+            name: Some(init.0),
+            username: init.1,
             notes: String::new(),
             avatar: AvatarContent::default(),
-            id: Id::random(),
         }
     }
 
@@ -84,7 +82,7 @@ impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
         // ctx.register::<Profile>();
         // std::thread::sleep(std::time::Duration::from_secs(1));
-        ctx.create::<Profile>(name)
+        ctx.create::<Profile>((name, Username::new()))
     }
 
     pub fn me(ctx: &mut Context) -> Instance<Profile> {

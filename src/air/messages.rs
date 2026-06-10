@@ -14,14 +14,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::profiles::Profile;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ChatRoom {
     pub members: Vec<Name>,
     pub messages: Vec<Message>,
+    id: Id,
 }
 
 impl Contract for ChatRoom {
-    type Init = ();
+    type Init = Id;
 
     fn id() -> Id {Id::hash("ChatRoom2.9")}
 
@@ -29,6 +30,7 @@ impl Contract for ChatRoom {
         ChatRoom {
             members: vec![signer],
             messages: Vec::new(),
+            id: init,
         }
     }
 
@@ -39,7 +41,7 @@ impl Contract for ChatRoom {
 
 #[allow(unused)]
 #[derive(Debug, Clone)]
-pub struct MemberExists(Id);
+pub struct MemberExists;
 impl std::error::Error for MemberExists {}
 impl std::fmt::Display for MemberExists {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{:?}", self)}
@@ -53,7 +55,7 @@ impl Reactant<ChatRoom> for AddMember {
     fn id() -> Id {Id::hash("AddMember")}
 
     fn apply(self, room: &mut ChatRoom, signer: Name, timestamp: u64) -> Self::Result {
-        // if room.members.any(|m| m.id == self.0) {Err(MemberExists(self.0))?}
+        if room.members.contains(&self.0) {return Err(MemberExists)}
         room.members.push(self.0);
         Ok(())
     }
@@ -75,7 +77,6 @@ impl Reactant<ChatRoom> for SendMessage {
     fn id() -> Id {Id::hash("SendMessage")}
 
     fn apply(self, room: &mut ChatRoom, signer: Name, timestamp: u64) -> Self::Result {
-        // if room.messages.find_map(|m| m.id == self.0).is_some() { Err(MessageExists(self.0))?}
         room.messages.push(Message{author: signer, timestamp, body: self.0});
         Ok(())
     }
