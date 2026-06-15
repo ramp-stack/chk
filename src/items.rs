@@ -9,11 +9,13 @@ use pelican_ui::components::{QRCodeScanner, TextInput, RadioSelector, Icon, Data
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::components::button::{SecondaryButton, QuickActions};
+use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup};
 use pelican_ui::components::{SearchBar, Keypad, TextInputEvent};
 
 use std::sync::Arc;
 use air::names::Name;
+use air::Instance;
+use crate::profiles::Profile;
 
 use crate::form::State;
 use crate::flow::Flow;
@@ -29,6 +31,7 @@ pub enum Input {
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
     Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>},
     QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
+    Actions {items: Vec<(String, Icons, Action)>}
 }
 
 impl Input {
@@ -62,6 +65,10 @@ impl Input {
 
     pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
         Input::QRCodeScanner {instructions: instructions.to_string(), alt}
+    }
+
+    pub fn actions(items: Vec<(String, Icons, Action)>) -> Self {
+        Input::Actions {items}
     }
 
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
@@ -106,12 +113,21 @@ impl Input {
                     items.push(Box::new(QuickActions::new(theme, Offset::Center, vec![(label.to_string(), *icon, action.get())])));
                 }
                 items
+            },
+            Input::Actions{items} => {
+                let items = items.into_iter().map(|(_, icon, action)| {
+                    let action: Box<dyn Callback> = action.get();
+                    (*icon, action)
+                }).collect::<Vec<_>>();
+
+                drawables![IconButtonGroup::new(theme, items)]
             }
         })
     }
 
     pub fn offset(&self) -> Offset {
         match self {
+            Input::Actions {..} |
             Input::Text {..} |
             Input::Enumerator {..} |
             Input::Currency {..} |
@@ -151,7 +167,7 @@ pub enum Display {
     Currency {amount: f32, instructions: String},
     List {label: Option<String>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
-    Avatar {content: AvatarContent, allow_edit: bool},
+    Avatar {content: AvatarContent, purpose: AvatarPurpose},
     Actions {actions: Vec<ActionItem>}
 }
 
@@ -166,6 +182,10 @@ impl Display {
 
     pub fn label(text: &str) -> Self {
         Display::Text {text: text.to_string(), size: TextSize::H5, style: TextStyle::Heading, align: Align::Center}
+    }
+
+    pub fn confirmation_message(text: &str) -> Self {
+        Display::Text {text: text.to_string(), size: TextSize::H4, style: TextStyle::Heading, align: Align::Center}
     }
 
     pub fn icon(icon: Icons) -> Self {
@@ -197,8 +217,8 @@ impl Display {
         Display::Currency {amount, instructions: instructions.to_string()}
     }
 
-    pub fn avatar(content: AvatarContent, allow_edit: bool) -> Self {
-        Display::Avatar {content, allow_edit}
+    pub fn avatar(content: AvatarContent, purpose: AvatarPurpose) -> Self {
+        Display::Avatar {content, purpose}
     }
 
     pub fn actions(actions: Vec<ActionItem>) -> Self {
@@ -226,7 +246,14 @@ impl Display {
                 })]
             },
             Display::QRCode {data, instructions} => drawables![QRCode::new(theme, data), ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
-            Display::Avatar {content, allow_edit} => drawables![Avatar::new(theme, content.clone(), allow_edit.then_some((Icons::Edit, AvatarIconStyle::Secondary)), *allow_edit, AvatarSize::Xxl, None)],
+            Display::Avatar {content, purpose} => {
+                let (style, outline) = match purpose {
+                    AvatarPurpose::None => (None, false),
+                    AvatarPurpose::Custom{icon, style} => (Some((*icon, *style)), true)
+                };
+
+                drawables![Avatar::new(theme, content.clone(), style, outline, AvatarSize::Xxl, None)]
+            }
             Display::Actions {actions} => actions.iter_mut().map(|ActionItem(a, l, i)| Box::new(SecondaryButton::medium(theme, *i, l, None, a.get())) as Box<dyn Drawable>).collect::<Vec<_>>(),
             _ => return None
         })
@@ -290,19 +317,20 @@ impl ListItem {
 
 #[derive(Debug, Clone)]
 pub enum Action {
-    Share {data: String},
+    Share { data: String },
     SelectImage,
-    Custom {action: Box<dyn Callback>},
+    Custom { action: Box<dyn Callback> },
     None,
-    Flow {flow: Flow},
+    Flow { flow: Flow },
     Paste,
-    Copy {data: String},
-    // Navigate {flow: Flow},
+    Copy { data: String },
+    Message { name: Name },
 }
 
 impl PartialEq for Action {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Action::Message {name: a}, Action::Message {name: b}) => a == b,
             (Action::Share { data: a }, Action::Share { data: b }) => a == b,
             (Action::SelectImage, Action::SelectImage) => true,
             (Action::None, Action::None) => true,
@@ -319,11 +347,11 @@ impl PartialEq for Action {
 
 impl Action {
     pub fn share(data: &str) -> Self {
-        Action::Share {data: data.to_string()}
+        Action::Share { data: data.to_string() }
     }
 
     pub fn copy(data: &str) -> Self {
-        Action::Copy {data: data.to_string()}
+        Action::Copy { data: data.to_string() }
     }
 
     pub fn select_image() -> Self {
@@ -338,11 +366,29 @@ impl Action {
     }
 
     pub fn custom(action: impl Callback + 'static) -> Self {
-        Action::Custom {action: Box::new(action)}
+        Action::Custom { action: Box::new(action) }
     }
 
     pub fn flow(flow: Flow) -> Self {
-        Action::Flow {flow}
+        Action::Flow { flow }
+    }
+
+    pub fn block(theme: &Theme, profile: Instance<Profile>) -> Self {
+        let theme = theme.clone();
+        let avatar = profile.pending().avatar.clone();
+        let username = profile.pending().username.clone();
+        Action::flow(Flow::action_target(&theme, "block", "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
+    }
+
+    pub fn unblock(theme: &Theme, profile: Instance<Profile>) -> Self {
+        let theme = theme.clone();
+        let avatar = profile.pending().avatar.clone();
+        let username = profile.pending().username.clone();
+        Action::flow(Flow::action_target(&theme, "unblock", "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
+    }
+
+    pub fn message(name: Name) -> Self {
+        Action::Message { name }
     }
 
     // pub fn navigate(flow: Flow) -> Self {
@@ -377,6 +423,19 @@ impl Action {
             Action::Copy {data} => {
                 let data = data.to_string();
                 Box::new(move |ctx: &mut Context, _: &Theme| {ctx.set_clipboard(data.to_string())})
+            }
+
+            Action::Message {name} => {
+                let recipient = name.clone();
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    let mut instance = ctx.create::<crate::messages::ChatRoom>(air::Id::random());
+                    instance.apply(crate::messages::AddMember(recipient));
+                    instance.share(recipient);
+                    println!("Created room with members {:?}", recipient);
+
+                    let mut flow = Flow::new(&theme, vec![Box::new(move || crate::PageType::messaging(instance.clone()))]);
+                    flow.build(ctx)(ctx, theme);
+                })
             }
 
             // Action::Navigate {flow} => flow.clone().build(),
@@ -428,5 +487,17 @@ impl PartialEq for EnumItem {
     fn eq(&self, other: &Self) -> bool {
         self.title == other.title &&
         self.data == other.data
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AvatarPurpose {
+    None,
+    Custom {icon: Icons, style: AvatarIconStyle}
+}
+
+impl AvatarPurpose {
+    pub fn new(icon: Icons, style: AvatarIconStyle) -> Self {
+        AvatarPurpose::Custom {icon, style}
     }
 }

@@ -12,13 +12,13 @@ use crate::items::Input;
 use crate::page::{EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder};
 use crate::page::Screen;
-
+use crate::{Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
+use air::Instance;
+use crate::profiles::Profile;
 
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt::Debug;
-
-
 
 #[derive(Debug, Clone, Default)]
 pub struct Flow(Vec<Box<dyn ScreenBuilder>>);
@@ -26,6 +26,35 @@ impl Flow{
     pub fn new(theme: &Theme, pages: Vec<Box<dyn PageBuilder>>) -> Self {
         let pages = pages.into_iter().map(|p| Screen::new_builder(theme, p)).collect::<Vec<_>>();
         Flow(pages)
+    }
+
+    pub fn action_target(theme: &Theme, action: &str, past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
+        let action_caps = action.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action[c.len_utf8()..]).unwrap_or_default();
+
+        let prompt = PageType::display(&format!("{} user", action_caps), 
+            vec![
+                Display::avatar(avatar.clone(), purpose.clone()),
+                Display::confirmation_message(&format!("Are you sure you want to {} {}", action, target.clone())),
+            ], 
+            None, 
+            Bumper::double(&action_caps, Action::None, "Cancel", Action::None), 
+            Offset::Center
+        );
+
+        let complete = PageType::display(&format!("User {}", past_action), 
+            vec![
+                Display::avatar(avatar, purpose),
+                Display::confirmation_message(&format!("{} has been {}", target, past_action)),
+            ], 
+            None, 
+            Bumper::Done, 
+            Offset::Center
+        );
+
+        Self::new(theme, vec![
+            Box::new(move || prompt.clone()),
+            Box::new(move || complete.clone()),
+        ])
     }
 
     pub fn from_form(form: Form) -> Self {

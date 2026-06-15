@@ -41,10 +41,21 @@ impl StackPage {
         let icon = header.map(|(i, mut f)| (i, (f)(ctx, theme).build(ctx)));
         let (header, bumper) = match bumper {
             Bumper::Custom {label, action, secondary} => {
-                let on_click = action.clone();
-                let secondary = secondary.clone().map(|(l, a)| (l, Box::new(move |ctx: &mut Context, theme: &Theme| (a.clone().get())(ctx, theme)) as Box<dyn Callback>));
-                let action = Box::new(move |ctx: &mut Context, theme: &Theme| (on_click.clone().get())(ctx, theme));
-                let bumper = PelicanBumper::stack(theme, Some(&label), action, secondary);
+                let on_click = match next {
+                    Some(n) => {
+                        let next = n.clone();
+                        Box::new(move |ctx: &mut Context, theme: &Theme| {
+                            (next.borrow_mut())(ctx, theme);
+                            (action.clone().get())(ctx, theme);
+                        }) as Box<dyn Callback>
+                    }
+                    None => Box::new(move |ctx: &mut Context, theme: &Theme| (action.clone().get())(ctx, theme)) as Box<dyn Callback>,
+                };
+                let secondary = secondary.clone().map(|(l, a)| (l, Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    (a.clone().get())(ctx, theme);
+                    (0..1).for_each(|_| ctx.emit(pelican_ui::navigation::NavigationEvent::Pop))
+                }) as Box<dyn Callback>));
+                let bumper = PelicanBumper::stack(theme, Some(&label), on_click, secondary);
                 let header = Header::stack(theme, &title, icon);
                 (header, Some(bumper))
             },

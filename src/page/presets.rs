@@ -16,7 +16,7 @@ use crate::profiles::{Profile, ChangeNotes, ChangeUsername, ChangeAvatar};
 use crate::{PageType, FormItem, Bumper};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState};
-use crate::items::{Action, Display};
+use crate::items::{Action, Display, AvatarPurpose};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
 use air::Instance;
@@ -162,7 +162,6 @@ impl OnEvent for MessagesPage {
             let messages = room.messages.iter().map(|message: &Message| message.to_pel(ctx)).collect::<Vec<_>>();
 
             if messages != self.messages {
-                println!("Updating mesages");
                 self.messages = messages.clone();
                 self.page.content = Content::new(Offset::End, drawables![MessageGroups::new(ctx, &self.theme, messages, self.is_group, false)], Box::new(|_, _| true));
             }
@@ -178,35 +177,21 @@ impl MessagesPage {
         let info = Box::new(|ctx: &mut Context, theme: &Theme|{});
         let header = Header::messaging(ctx, theme, vec![], flow_len, info);
         let mut room_taken = room.clone();
-        let bumper = Some(PelicanBumper::input(theme, "Message...", move |ctx: &mut Context, val: &mut String| {
+        let bumper = PelicanBumper::input(theme, "Message...", move |ctx: &mut Context, val: &mut String| {
             if !val.is_empty() { room_taken.apply(SendMessage(val.to_string())); }
-        }));
+        });
 
         let messages = MessageGroups::new(ctx, theme, vec![], false, false);
-        let page = PelicanPage::new(header, Content::new(Offset::End, drawables![messages], Box::new(|_, _| true)), bumper);
+        let page = PelicanPage::new(header, Content::new(Offset::End, drawables![messages], Box::new(|_, _| true)), Some(bumper));
 
         MessagesPage {layout: Stack::default(), page, room, messages: vec![], is_group: false, theme: theme.clone(), profiles: vec![], flow_len}
     }
 }
 
-
-// THIS DOES NOT NEED TO BE A PAGE
 pub struct GroupMessageInfoPage;
 impl GroupMessageInfoPage {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(theme: &Theme, profiles: Vec<Instance<Profile>>) -> PageType {
-        // let header = Header::stack(theme, "Group info", None);
-        // let profiles = ListItemGroup::new(theme, None, profiles.into_iter().map(|(p, id)| ListItem::new(theme, Some(p.avatar.clone()),
-        //     ListItemInfoLeft::new(&p.username, Some(&p.name.unwrap().to_string()), None, None), 
-        //     None, None, Some(Icons::Forward), Box::new(move |ctx: &mut Context, theme: &Theme| {
-        //         let page: Box<dyn AppPage> = Box::new(ProfilePage::new(ctx, theme, p.clone(), id));
-        //         let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
-        //         ctx.emit(NavigationEvent::push(flow));
-        //     })
-        // )).collect());
-
-        // let page = PelicanPage::new(header, Content::new(Offset::Start, drawables![profiles], Box::new(|_, _| true)), None);
-        // GroupMessageInfoPage(Stack::default(), page)
         let theme = theme.clone();
         PageType::display("Group info", vec![
             Display::list(None, Arc::new(Box::new(move |ctx: &mut Context| {
@@ -248,30 +233,42 @@ impl ProfilePage {
         let p = profile.pending();
         let my_name = p.name.unwrap();
         let title = if my_name == ctx.me() {"My profile"} else {"View contact"};
+        let avatar = FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
+            let current = avatar.pending().avatar.get_image().unwrap_or_default();
+            match current == a {
+                true => FormValidState::Valid,
+                false => FormValidState::Invalid,
+            }
+        });
+        let username = FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
+            match a.as_str() {
+                a if a == &username.pending().username => FormValidState::Valid,
+                "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
+                _ => FormValidState::Invalid,
+            }
+        });
+        let about_me = FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
+            match notes.pending().notes == a {
+                true => FormValidState::Valid,
+                false => FormValidState::Invalid,
+            }
+        });
+
+        // BREAKING: THIS SHOULD NOT BE A FORM ITEM. 
+        let actions = FormItem::actions(None, vec![
+            ("Bitcoin".to_string(), Icons::Bitcoin, Action::None),
+            ("Message".to_string(), Icons::Messages, Action::message(my_name)),
+            ("Block".to_string(), Icons::Block, Action::unblock(theme, profile.clone())),
+        ]);
+
+        let (title, form_items) = if my_name == ctx.me() {
+            ("My profile", vec![avatar, username, about_me])
+        } else {
+            ("View contact", vec![avatar, actions, username, about_me])
+        };
+
         let page = PageType::edit_and_display(
-            title,
-            vec![
-                FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
-                    let current = avatar.pending().avatar.get_image().unwrap_or_default();
-                    match current == a {
-                        true => FormValidState::Valid,
-                        false => FormValidState::Invalid,
-                    }
-                }),
-                FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
-                    match a.as_str() {
-                        a if a == &username.pending().username => FormValidState::Valid,
-                        "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
-                        _ => FormValidState::Invalid,
-                    }
-                }),
-                FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
-                    match notes.pending().notes == a {
-                        true => FormValidState::Valid,
-                        false => FormValidState::Invalid,
-                    }
-                }),
-            ],
+            title, form_items,
             vec![
                 Display::cta("Orange name", None, &my_name.to_string(), vec![
                     ("Copy".to_string(), Icons::Copy, Action::copy(&my_name.to_string())),
@@ -289,4 +286,3 @@ impl ProfilePage {
         }
     }
 }
-
