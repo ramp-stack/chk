@@ -3,7 +3,7 @@ use pelican_ui::{Context, theme::{Icons}};
 use crate::page::{Screen, PageType};
 use crate::{ListItem, FormStorage, Display};
 use crate::flow::Flow;
-use crate::form::{State, FormValidState};
+use crate::form::{State, FormValidState, FormComplete};
 use pelican_ui::theme::Theme;
 
 use std::rc::Rc;
@@ -251,13 +251,13 @@ impl std::fmt::Debug for dyn SuccessGetter {
 }
 
 
-pub trait FormSubmit: FnMut(&mut Context, &Vec<State>) -> Option<Box<dyn PageBuilder>> + 'static {
+pub trait FormSubmit: FnMut(&mut Context, &Vec<State>) -> FormComplete + 'static {
     fn clone_box(&self) -> Box<dyn FormSubmit>;
 }
 
 impl PartialEq for dyn FormSubmit{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> FormSubmit for F where F: FnMut(&mut Context, &Vec<State>) -> Option<Box<dyn PageBuilder>> + Clone + 'static {
+impl<F> FormSubmit for F where F: FnMut(&mut Context, &Vec<State>) -> FormComplete + Clone + 'static {
     fn clone_box(&self) -> Box<dyn FormSubmit> {
         Box::new(self.clone())
     }

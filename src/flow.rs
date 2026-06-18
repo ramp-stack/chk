@@ -7,7 +7,7 @@ use pelican_ui::event::OnEvent;
 use ramp::prism;
 use pelican_ui::event::{Event, TickEvent};
 
-use crate::form::{Form, State};
+use crate::form::{Form, State, FormComplete};
 use crate::items::Input;
 use crate::page::{EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder};
@@ -67,12 +67,10 @@ impl Flow{
                 let submit = review.is_none().then(|| on_submit.clone());
                 let mut submit = submit.map(|mut os| Box::new(move |ctx: &mut Context, state: &Vec<State>| {
                     let theme = t.clone();
-                    let out = (os)(ctx, state);
-                    if let Some(mut f) = out {
-                        let flow = FlowWrapper::new(PelicanFlow::new(vec![(f()).build(ctx, &theme)]));
-                        ctx.emit(NavigationEvent::restart(flow));
-                    }
-                    None
+                    let mut on_form_complete = (os)(ctx, state);
+                    on_form_complete.run(ctx, &theme);
+                    
+                    FormComplete::None
                 }) as Box<dyn FormSubmit>);
 
                 inputs.into_iter().rev().map(|input| {

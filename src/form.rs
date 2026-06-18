@@ -2,12 +2,14 @@ use pelican_ui::Context;
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::drawable::Drawable;
 use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
+use pelican_ui::navigation::{NavigationEvent, Flow as PelicanFlow, FlowContainer, AppPage};
+
 use pelican_ui::components::SearchBar;
 use pelican_ui::utils::ValidationFn;
 
-use crate::{Review, Success};
+use crate::{Review, Success, PageBuilder, FlowWrapper};
 use crate::items::{EnumItem, Input, ListItem, Action, Display};
-use crate::closure::{FormSubmit, FormClosure, ValidityFn};
+use crate::closure::{FormSubmit, FormClosure, ValidityFn, FnMutClone};
 
 use air::names::Name;
 
@@ -73,6 +75,37 @@ impl Form {
     }
 }
 
+
+// When a form is completed, this is what can happen
+
+// 1. Navigate to a new page
+// 2. Go back a page and run a closure
+// 3. Do nothing
+
+#[derive(Debug, Clone)]
+pub enum FormComplete {
+    Next(Box<dyn PageBuilder>),
+    Return(Box<dyn pelican_ui::Callback>),
+    None,
+}
+
+impl FormComplete {
+    pub fn run(&mut self, ctx: &mut Context, theme: &Theme) {
+        match self {
+            FormComplete::Return(function) => {
+                let theme = theme.clone();
+                let function = function.clone();
+                ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| (function.clone())(ctx, &theme.clone())));
+            },
+            FormComplete::Next(page) => {
+                let flow = FlowWrapper::new(PelicanFlow::new(vec![(page()).build(ctx, &theme)]));
+                ctx.emit(NavigationEvent::restart(flow));
+            },  
+            FormComplete::None => {}
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FormValidState {
     InvalidWithData(String), // Disables continue button, sends out error message
@@ -111,7 +144,6 @@ pub enum FormItem {
     ScanQR(String, String, Option<(String, Icons, Action)>),
     Avatar(String, AvatarContent, Box<dyn ValidityFn>),
     AvatarWithPreset(String, AvatarContent, Box<dyn ValidityFn>),
-    Actions(String, Vec<(String, Icons, Action)>),
 }
 
 pub struct FormStorage(pub HashMap<String, String>);
@@ -154,10 +186,6 @@ impl FormItem {
         FormItem::ScanQR(title.to_string(), instructions.to_string(), alt)
     }
 
-    pub fn actions(title: Option<&str>, actions: Vec<(String, Icons, Action)>) -> Self {
-        FormItem::Actions(title.unwrap_or_default().to_string(), actions)
-    }
-
     pub fn title(&self) -> String {
         match self {
             FormItem::Search(title, ..) |
@@ -167,7 +195,6 @@ impl FormItem {
             FormItem::Avatar(title, ..) |
             FormItem::AvatarWithPreset(title, ..) |
             FormItem::ScanQR(title, ..) |
-            FormItem::Actions(title, ..) |
             FormItem::Enum(title, ..) => title.to_string()
         }
     }
@@ -247,7 +274,6 @@ impl FormItem {
             FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(instructions, alt.clone()),
             FormItem::Avatar(_, _, _) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
             FormItem::AvatarWithPreset(_, avatar, _) => Input::avatar(avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
-            FormItem::Actions(_, actions) => Input::actions(actions.clone())
         }
     }
 }

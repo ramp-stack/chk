@@ -10,7 +10,7 @@ use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup};
-use pelican_ui::components::{SearchBar, Keypad, TextInputEvent};
+use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 
 use std::sync::Arc;
 use air::names::Name;
@@ -31,7 +31,6 @@ pub enum Input {
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
     Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>},
     QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
-    Actions {items: Vec<(String, Icons, Action)>}
 }
 
 impl Input {
@@ -65,10 +64,6 @@ impl Input {
 
     pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
         Input::QRCodeScanner {instructions: instructions.to_string(), alt}
-    }
-
-    pub fn actions(items: Vec<(String, Icons, Action)>) -> Self {
-        Input::Actions {items}
     }
 
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
@@ -114,20 +109,11 @@ impl Input {
                 }
                 items
             },
-            Input::Actions{items} => {
-                let items = items.into_iter().map(|(_, icon, action)| {
-                    let action: Box<dyn Callback> = action.get();
-                    (*icon, action)
-                }).collect::<Vec<_>>();
-
-                drawables![IconButtonGroup::new(theme, items)]
-            }
         })
     }
 
     pub fn offset(&self) -> Offset {
         match self {
-            Input::Actions {..} |
             Input::Text {..} |
             Input::Enumerator {..} |
             Input::Currency {..} |
@@ -254,7 +240,15 @@ impl Display {
 
                 drawables![Avatar::new(theme, content.clone(), style, outline, AvatarSize::Xxl, None)]
             }
-            Display::Actions {actions} => actions.iter_mut().map(|ActionItem(a, l, i)| Box::new(SecondaryButton::medium(theme, *i, l, None, a.get())) as Box<dyn Drawable>).collect::<Vec<_>>(),
+            Display::Actions {actions} => {
+                let items = actions.into_iter().map(|ActionItem(action, _, icon)| {
+                    let action: Box<dyn Callback> = action.get();
+                    (*icon, action)
+                }).collect::<Vec<_>>();
+
+                drawables![IconButtonGroup::new(theme, items)]
+            }
+            //actions.iter_mut().map(|ActionItem(a, l, i)| Box::new(SecondaryButton::medium(theme, *i, l, None, a.get())) as Box<dyn Drawable>).collect::<Vec<_>>(),
             _ => return None
         })
     }
@@ -325,27 +319,31 @@ pub enum Action {
     Paste,
     Copy { data: String },
     Message { name: Name },
+    ChooseSearch { name: Name },
 }
 
 impl PartialEq for Action {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Action::Message {name: a}, Action::Message {name: b}) => a == b,
-            (Action::Share { data: a }, Action::Share { data: b }) => a == b,
-            (Action::SelectImage, Action::SelectImage) => true,
-            (Action::None, Action::None) => true,
-            (Action::Paste, Action::Paste) => true,
-            (Action::Copy { data: a }, Action::Copy { data: b }) => a == b,
-
-            (Action::Custom { .. }, Action::Custom { .. }) => false,
-            (Action::Flow { .. }, Action::Flow { .. }) => false,
-
-            _ => false,
-        }
+        matches!(
+            (self, other),
+            (Action::Share { .. }, Action::Share { .. })
+                | (Action::SelectImage, Action::SelectImage)
+                | (Action::Custom { .. }, Action::Custom { .. })
+                | (Action::None, Action::None)
+                | (Action::Flow { .. }, Action::Flow { .. })
+                | (Action::Paste, Action::Paste)
+                | (Action::Copy { .. }, Action::Copy { .. })
+                | (Action::Message { .. }, Action::Message { .. })
+                | (Action::ChooseSearch { .. }, Action::ChooseSearch { .. })
+        )
     }
 }
 
 impl Action {
+    pub fn choose_search(name: Name) -> Self {
+        Action::ChooseSearch {name}
+    }
+
     pub fn share(data: &str) -> Self {
         Action::Share { data: data.to_string() }
     }
@@ -435,6 +433,13 @@ impl Action {
 
                     let mut flow = Flow::new(&theme, vec![Box::new(move || crate::PageType::messaging(instance.clone()))]);
                     flow.build(ctx)(ctx, theme);
+                })
+            }
+
+            Action::ChooseSearch {name} => {
+                let name = name.clone();
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    ctx.emit(SearchbarEvent::Select(name.clone()))
                 })
             }
 

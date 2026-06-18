@@ -13,9 +13,9 @@ use pelican_ui::components::MessageGroups;
 
 use crate::messages::{ChatRoom, Message, SendMessage};
 use crate::profiles::{Profile, ChangeNotes, ChangeUsername, ChangeAvatar};
-use crate::{PageType, FormItem, Bumper};
+use crate::{ActionItem, PageType, FormItem, Bumper};
 use crate::flow::Flow;
-use crate::form::{State, FormValidState};
+use crate::form::{State, FormValidState, FormComplete};
 use crate::items::{Action, Display, AvatarPurpose};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
@@ -211,6 +211,19 @@ impl GroupMessageInfoPage {
 pub struct ProfilePage;
 impl ProfilePage {
     pub fn new(ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>) -> Box<dyn AppPage> {
+        let my_name = profile.pending().name.unwrap();
+        let is_me = my_name == ctx.me();
+        match is_me {
+            true => ProfilePage::editing(theme, is_me, profile).build_root(ctx, theme),
+            false => ProfilePage::view_only(ctx, theme, profile, is_me)
+        }
+    }
+
+    pub fn view_only(ctx: &mut Context, theme: &Theme, mut p: Instance<Profile>, is_me: bool) -> Box<dyn AppPage> {
+        Box::new(ProfileView::new(ctx, theme, p, is_me))
+    }
+
+    pub fn editing(theme: &Theme, is_me: bool, mut profile: Instance<Profile>) -> PageType {
         let mut p = profile.clone();
         let closure = Box::new(move |ctx: &mut Context, objects: &Vec<State>| {
             println!("Saving profile");
@@ -223,66 +236,100 @@ impl ProfilePage {
             if let Some(State::Avatar(result)) = objects.get(0) {
                 p.apply(ChangeAvatar(result.clone()));
             }
-            None
+            FormComplete::None
         }) as Box<dyn FormSubmit>;
         
         let mut avatar = profile.clone();
         let mut username = profile.clone();
         let mut notes = profile.clone();
-
         let p = profile.pending();
         let my_name = p.name.unwrap();
-        let title = if my_name == ctx.me() {"My profile"} else {"View contact"};
-        let avatar = FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
-            let current = avatar.pending().avatar.get_image().unwrap_or_default();
-            match current == a {
-                true => FormValidState::Valid,
-                false => FormValidState::Invalid,
-            }
-        });
-        let username = FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
-            match a.as_str() {
-                a if a == &username.pending().username => FormValidState::Valid,
-                "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
-                _ => FormValidState::Invalid,
-            }
-        });
-        let about_me = FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
-            match notes.pending().notes == a {
-                true => FormValidState::Valid,
-                false => FormValidState::Invalid,
-            }
-        });
-
-        // BREAKING: THIS SHOULD NOT BE A FORM ITEM. 
-        let actions = FormItem::actions(None, vec![
-            ("Bitcoin".to_string(), Icons::Bitcoin, Action::None),
-            ("Message".to_string(), Icons::Messages, Action::message(my_name)),
-            ("Block".to_string(), Icons::Block, Action::unblock(theme, profile.clone())),
-        ]);
-
-        let (title, form_items) = if my_name == ctx.me() {
-            ("My profile", vec![avatar, username, about_me])
-        } else {
-            ("View contact", vec![avatar, actions, username, about_me])
-        };
-
-        let page = PageType::edit_and_display(
-            title, form_items,
+        let title = if is_me {"My profile"} else {"Edit profile"};
+        let display = if is_me {vec![
+            Display::cta("Orange name", None, &my_name.to_string(), vec![
+                ("Copy".to_string(), Icons::Copy, Action::copy(&my_name.to_string())),
+                ("Display QR Code".to_string(), Icons::QrCode, Action::flow(Flow::new(&theme, vec![
+                    Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
+                ])))
+            ]),
+        ]} else {vec![]};
+        
+        PageType::edit_and_display(title, 
             vec![
+                FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
+                    let current = avatar.pending().avatar.get_image().unwrap_or_default();
+                    match current == a {
+                        true => FormValidState::Valid,
+                        false => FormValidState::Invalid,
+                    }
+                }),
+                FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
+                    match a.as_str() {
+                        a if a == &username.pending().username => FormValidState::Valid,
+                        "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
+                        _ => FormValidState::Invalid,
+                    }
+                }),
+                FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
+                    match notes.pending().notes == a {
+                        true => FormValidState::Valid,
+                        false => FormValidState::Invalid,
+                    }
+                })
+            ], 
+            display,
+            closure
+        )
+    }
+}
+
+#[derive(Debug, Component, Clone)]
+pub struct ProfileView(Stack, pub Box<dyn AppPage>, #[skip] Instance<Profile>, #[skip] Profile, #[skip] bool, #[skip] Theme);
+impl OnEvent for ProfileView {
+    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        if event.downcast_ref::<TickEvent>().is_some() {
+            let profile = self.2.pending().clone();
+            if self.3 != profile {
+                self.3 = profile;
+                *self = Self::new(ctx, &self.5, self.2.clone(), self.4);
+            }
+        }
+
+        vec![event]
+    }
+}
+impl AppPage for ProfileView {}
+impl ProfileView {
+    pub fn new(ctx: &mut Context, theme: &Theme, mut p: Instance<Profile>, is_me: bool) -> Self {
+        let saved = p.clone();
+        let profile = p.pending().clone();
+        let my_name = profile.name.unwrap();
+        let about_me = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
+
+        let page = PageType::display(&profile.username,
+            vec![
+                Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
+                Display::actions(vec![
+                    ActionItem::new(Action::None, "Bitcoin", Icons::Bitcoin),
+                    ActionItem::new(Action::message(my_name), "Message", Icons::Messages),
+                    ActionItem::new(Action::unblock(theme, p.clone()), "Block", Icons::Block),
+                ]),
+                Display::cta("About me", None, about_me, vec![]),
                 Display::cta("Orange name", None, &my_name.to_string(), vec![
                     ("Copy".to_string(), Icons::Copy, Action::copy(&my_name.to_string())),
                     ("Display QR Code".to_string(), Icons::QrCode, Action::flow(Flow::new(&theme, vec![
                         Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
                     ])))
                 ]),
-            ],
-            closure
-        );
+            ], 
+            Some((Icons::Edit, Box::new(move |ctx: &mut Context, theme: &Theme| {
+                let p = p.clone();
+                let t = theme.clone();
+                Flow::new(&theme, vec![Box::new(move|| ProfilePage::editing(&t.clone(), is_me, p.clone()))])
+            }))), 
+            Bumper::None, Offset::Start,
+        ).build(ctx, theme);
 
-        match p.name.unwrap() == ctx.me() {
-            true => page.build_root(ctx, theme),
-            false => page.build(ctx, theme)
-        }
+        ProfileView(Stack::default(), page, saved, profile, is_me, theme.clone())
     }
 }

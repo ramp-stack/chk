@@ -141,28 +141,26 @@ pub struct Username;
 impl Username {
     #[allow(clippy::new_ret_no_self)]
     pub fn new() -> String {
-        let parse = |s: &str| -> Vec<String> { s.lines().map(|s| str::trim(s).to_string()).filter(|l| !l.is_empty()).collect::<Vec<String>>() };
+        let parse = |s: &str| s.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| l.to_string()).collect::<Vec<_>>();
+        let mut rng = rand::thread_rng();
+
         let animals = parse(ANIMALS);
         let adjectives = parse(ADJECTIVES);
         let foods = parse(FOODS);
+        let noun = if rng.gen_bool(0.5) { &animals } else { &foods };
 
-        let mut rng = rand::thread_rng();
-
-        let cap = |s: &str| {
-            let s = s.to_lowercase();
-            let mut c = s.chars();
-            c.next()
-                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
-                .unwrap_or_default()
+        let f = |s: &str| {
+            let mut o = String::with_capacity(s.len());
+            let mut cap = true;
+            for c in s.chars() {
+                if c == ' ' || c == '-' { cap = true; continue; }
+                if cap { for u in c.to_uppercase() { o.push(u); } cap = false; }
+                else { o.push(c); }
+            }
+            o
         };
 
-        let noun_list = if rng.gen_bool(0.5) { animals } else { foods };
-
-        format!(
-            "{}{}",
-            cap(adjectives.choose(&mut rng).unwrap()),
-            cap(noun_list.choose(&mut rng).unwrap())
-        )
+        format!("{}{}", f(adjectives.choose(&mut rng).unwrap()), f(noun.choose(&mut rng).unwrap()))
     }
 }
 
