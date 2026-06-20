@@ -9,7 +9,7 @@ use pelican_ui::components::{QRCodeScanner, TextInput, RadioSelector, Icon, Data
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup};
+use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup, ActionData};
 use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 
 use std::sync::Arc;
@@ -23,13 +23,13 @@ use crate::ListItemGetter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    Text {label: String, actions: Option<Vec<(String, Icons, Action)>>, show_label: bool, preset: Option<String>},
+    Text {label: String, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, show_label: bool, preset: Option<String>},
     Currency {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Date {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
-    Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>},
+    Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>},
     QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
 }
 
@@ -50,7 +50,7 @@ impl Input {
         Input::Enumerator {items}
     }
 
-    pub fn text(label: &str, show_label: bool, preset: Option<String>, actions: Option<Vec<(String, Icons, Action)>>) -> Self {
+    pub fn text(label: &str, show_label: bool, preset: Option<String>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
         Input::Text {label: label.to_string(), show_label, preset, actions}
     }
 
@@ -58,7 +58,7 @@ impl Input {
         Input::Avatar {content, flair, action}
     }
 
-    pub fn search(items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>) -> Self {
+    pub fn search(items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
         Input::Search {items, actions}
     }
 
@@ -72,10 +72,10 @@ impl Input {
                 let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
                 if let Some(a) = actions.as_ref()
                     && !a.is_empty() {
-                        items.push(Box::new(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, icon, action)| {
-                            let action: Box<dyn Callback> = action.get();
-                            (label.to_string(), *icon, action)
-                        }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>())));
+                        items.push(Box::new(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, active, icon, action)| {
+                            let on_click: Box<dyn Callback> = action.get();
+                            ActionData { label: label.to_string(), active: active.clone(), icon: *icon, on_click }
+                        }).collect::<Vec<ActionData>>())));
                     }
 
                 items
@@ -92,10 +92,10 @@ impl Input {
             Input::Search {items, actions} => drawables![SearchBar::new(theme, 
                 items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
                 if let Some(a) = actions.as_ref() && !a.is_empty() {
-                    Some(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, icon, action)| {
-                        let action: Box<dyn Callback> = action.get();
-                        (label.to_string(), *icon, action)
-                    }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>()))
+                    Some(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, active, icon, action)| {
+                        let on_click: Box<dyn Callback> = action.get();
+                        ActionData{ label: label.to_string(), active: active.clone(), icon: *icon, on_click }
+                    }).collect::<Vec<ActionData>>()))
                 } else {None}
             )],
             Input::QRCodeScanner {instructions, alt} => {
@@ -105,7 +105,7 @@ impl Input {
                 ];
                 if let Some((label, icon, action)) = alt.as_ref() {
                     items.push(Box::new(ExpandableText::new(theme, "or", TextSize::Md, TextStyle::Secondary, Align::Center, None)));
-                    items.push(Box::new(QuickActions::new(theme, Offset::Center, vec![(label.to_string(), *icon, action.get())])));
+                    items.push(Box::new(QuickActions::new(theme, Offset::Center, vec![ActionData::new(label, None, *icon, action.get())])));
                 }
                 items
             },
@@ -148,7 +148,7 @@ pub enum Display {
     Text {text: String, size: TextSize, style: TextStyle, align: Align},
     Icon {icon: Icons},
     Image {image: String, size: (f32, f32)},
-    Cta {label: String, data: Option<String>, instructions: String, actions: Vec<(String, Icons, Action)>},
+    Cta {label: String, data: Option<String>, instructions: String, actions: Vec<(String, Option<String>, Icons, Action)>},
     Table {label: String, items: Vec<TableItem>},
     Currency {amount: f32, instructions: String},
     List {label: Option<String>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<String>},
@@ -182,7 +182,7 @@ impl Display {
         Display::Image {image: image.to_string(), size}
     }
 
-    pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<(String, Icons, Action)>) -> Self {
+    pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<(String, Option<String>, Icons, Action)>) -> Self {
         Display::Cta {label: label.to_string(), data: data.map(|s| s.to_string()), instructions: instructions.to_string(), actions}
     }
 
@@ -217,12 +217,12 @@ impl Display {
             Display::Image {image, size} => drawables![Image{shape: ShapeType::Rectangle(0.0, *size, 0.0), image: theme.brand().images.get(&image.to_string()).unwrap().clone(), color: None}],
             Display::Text {text, size, style, align} if !text.is_empty() => drawables![ExpandableText::new(theme, text, *size, *style, *align, None)],
             Display::Cta {label, data, instructions, actions} => drawables![DataItem::text(theme, label, data.as_deref(), instructions, 
-                Some(actions.iter().map(|(label, icon, action)| {
-                    let action: Box<dyn Callback> = action.get();
-                    (label.to_string(), *icon, action)
-                }).collect::<Vec<(String, Icons, Box<dyn Callback>)>>()),
+                Some(actions.iter().map(|(label, active, icon, action)| {
+                    let on_click: Box<dyn Callback> = action.get();
+                    ActionData {label: label.to_string(), active: active.clone(), icon: *icon, on_click}
+                }).collect::<Vec<ActionData>>()),
             )],
-            Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), Some(Vec::<(String, Icons, Box<dyn Callback>)>::new()))],
+            Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), None)],
             Display::Currency {amount, instructions} => drawables![NumericalInput::display(theme, *amount, instructions)],
             Display::List {label, item_getter, instructions, ..} => {
                 let item_getter = item_getter.clone();

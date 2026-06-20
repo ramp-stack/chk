@@ -247,8 +247,8 @@ impl ProfilePage {
         let title = if is_me {"My profile"} else {"Edit profile"};
         let display = if is_me {vec![
             Display::cta("Orange name", None, &my_name.to_string(), vec![
-                ("Copy".to_string(), Icons::Copy, Action::copy(&my_name.to_string())),
-                ("Display QR Code".to_string(), Icons::QrCode, Action::flow(Flow::new(&theme, vec![
+                ("Copy".to_string(), Some("Copied".to_string()), Icons::Copy, Action::copy(&my_name.to_string())),
+                ("Display QR Code".to_string(), None, Icons::QrCode, Action::flow(Flow::new(&theme, vec![
                     Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
                 ])))
             ]),
@@ -316,8 +316,8 @@ impl ProfileView {
                 ]),
                 Display::cta("About me", None, about_me, vec![]),
                 Display::cta("Orange name", None, &my_name.to_string(), vec![
-                    ("Copy".to_string(), Icons::Copy, Action::copy(&my_name.to_string())),
-                    ("Display QR Code".to_string(), Icons::QrCode, Action::flow(Flow::new(&theme, vec![
+                    ("Copy".to_string(), Some("Copied".to_string()), Icons::Copy, Action::copy(&my_name.to_string())),
+                    ("Display QR Code".to_string(), None, Icons::QrCode, Action::flow(Flow::new(&theme, vec![
                         Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
                     ])))
                 ]),

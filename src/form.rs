@@ -136,11 +136,11 @@ impl FormValidState {
 
 #[derive(Debug, Clone)]
 pub enum FormItem {
-    Text(String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
-    TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<(String, Icons, Action)>>, Box<dyn ValidityFn>),
+    Text(String, Box<dyn FormClosure>, Option<Vec<(String, Option<String>, Icons, Action)>>, Box<dyn ValidityFn>),
+    TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<(String, Option<String>, Icons, Action)>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
-    Search(String, Vec<(ListItem, Name)>, Option<Vec<(String, Icons, Action)>>),
+    Search(String, Vec<(ListItem, Name)>, Option<Vec<(String, Option<String>, Icons, Action)>>),
     ScanQR(String, String, Option<(String, Icons, Action)>),
     Avatar(String, AvatarContent, Box<dyn ValidityFn>),
     AvatarWithPreset(String, AvatarContent, Box<dyn ValidityFn>),
@@ -149,12 +149,12 @@ pub enum FormItem {
 pub struct FormStorage(pub HashMap<String, String>);
 
 impl FormItem {
-    pub fn text(text: &str, actions: Option<Vec<(String, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
+    pub fn text(text: &str, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
         FormItem::Text(text.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
     }
 
-    pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<(String, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
+    pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
         FormItem::TextWithPreset(text.to_string(), preset.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
     }
@@ -170,7 +170,7 @@ impl FormItem {
         FormItem::Enum(label.to_string(), items)
     }
 
-    pub fn search(title: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Icons, Action)>>) -> Self {
+    pub fn search(title: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
         FormItem::Search(title.to_string(), items, actions)
     }
 
