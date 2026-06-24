@@ -193,7 +193,8 @@ impl GroupMessageInfoPage {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(theme: &Theme, profiles: Vec<Instance<Profile>>) -> PageType {
         let theme = theme.clone();
-        PageType::display("Group info", vec![
+        PageType::display("Group members", vec![
+            Display::instructions(&format!("This group has {} members.", profiles.len())),
             Display::list(None, Arc::new(Box::new(move |ctx: &mut Context| {
                 profiles.clone().into_iter().flat_map(|mut profile| {
                     let p = profile.clone();

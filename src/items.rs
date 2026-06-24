@@ -88,7 +88,7 @@ impl Input {
             },
             Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
             Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
-            Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, flair.is_some(), AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
+            Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, false, AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
             Input::Search {items, actions} => drawables![SearchBar::new(theme, 
                 items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
                 if let Some(a) = actions.as_ref() && !a.is_empty() {
