@@ -2,7 +2,7 @@ use pelican_ui::Context;
 use pelican_ui::utils::Timestamp;
 
 use air::names::{Id, Name};
-use air::{Contract, Reactants, Reactant};
+use air::{Metadata, Contract, Reactants, Reactant};
 use air::Instance;
 
 use std::collections::BTreeMap;
@@ -18,24 +18,26 @@ use crate::profiles::Profile;
 pub struct ChatRoom {
     pub members: Vec<Name>,
     pub messages: Vec<Message>,
-    id: Id,
+    pub name: (String, bool),
+    pub id: Id,
 }
 
 impl Contract for ChatRoom {
     type Init = Id;
 
-    fn id() -> Id {Id::hash("ChatRoom2.9")}
+    fn id() -> Id {Id::hash("ChatRoom2.10")}
 
-    fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
+    fn init(init: Self::Init, metadata: Metadata) -> Self {
         ChatRoom {
-            members: vec![signer],
+            members: vec![metadata.signer],
             messages: Vec::new(),
+            name: (String::new(), false), // name, manually changed?
             id: init,
         }
     }
 
     fn reactants() -> Reactants<ChatRoom> {
-        Reactants::default().add::<SendMessage>().add::<AddMember>()
+        Reactants::default().add::<SendMessage>().add::<AddMember>().add::<ChangeRoomName>()
     }
 }
 
@@ -48,15 +50,24 @@ impl std::fmt::Display for MemberExists {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AddMember(pub Name);
+pub struct AddMember(pub Name, pub String);
 impl Reactant<ChatRoom> for AddMember {
     type Result = Result<(), MemberExists>;
 
     fn id() -> Id {Id::hash("AddMember")}
 
-    fn apply(self, room: &mut ChatRoom, signer: Name, timestamp: u64) -> Self::Result {
+    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Result {
         if room.members.contains(&self.0) {return Err(MemberExists)}
         room.members.push(self.0);
+
+        if !room.name.1 {
+            if room.members.len() > 2 {
+                room.name.0 = "Group message".to_string();
+            } else {
+                room.name.0 = self.1.to_string();
+            }
+        }
+
         Ok(())
     }
 }
@@ -76,9 +87,22 @@ impl Reactant<ChatRoom> for SendMessage {
 
     fn id() -> Id {Id::hash("SendMessage")}
 
-    fn apply(self, room: &mut ChatRoom, signer: Name, timestamp: u64) -> Self::Result {
-        room.messages.push(Message{author: signer, timestamp, body: self.0});
+    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Result {
+        room.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: self.0});
         Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChangeRoomName(pub String);
+impl Reactant<ChatRoom> for ChangeRoomName {
+    type Result = ();
+
+    fn id() -> Id {Id::hash("ChangeRoomName")}
+
+    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Result {
+        room.name.0 = self.0.to_string();
+        room.name.1 = true;
     }
 }
 

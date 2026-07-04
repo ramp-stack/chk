@@ -12,7 +12,7 @@ use crate::items::{Input, Display};
 
 pub struct Root(pub PageType);
 impl Root {
-    pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
         Root(PageType::root(title, vec![], items, header, bumper_a, bumper_b))
     }
 
@@ -53,8 +53,12 @@ impl RootPage {
             (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
         });
 
-        let bumper = PelicanBumper::home(theme, first, second);
-        let page = PelicanPage::new(header, Content::new(offset, content, Box::new(|_, _| true)), Some(bumper));
+        let bumper = match first.is_some() || second.is_some() {
+            true => Some(PelicanBumper::home(theme, first, second)),
+            false => None,
+        };
+
+        let page = PelicanPage::new(header, Content::new(offset, content, Box::new(|_, _| true)), bumper);
         RootPage(Stack::default(), page)
     }
 }

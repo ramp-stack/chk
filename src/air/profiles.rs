@@ -3,7 +3,7 @@ use pelican_ui::components::avatar::AvatarContent;
 
 use air::Instance;
 use air::names::{Id, Name};
-use air::{Contract, Reactants, Reactant};
+use air::{Metadata, Contract, Reactants, Reactant};
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -21,7 +21,7 @@ impl Reactant<Profile> for SetUsernameInit {
 
     fn id() -> Id {Id::hash("SetUsernameInit")}
 
-    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
         if !profile.init {
             profile.init = true;
             profile.username = self.0.to_string();
@@ -36,7 +36,7 @@ impl Reactant<Profile> for ChangeUsername {
 
     fn id() -> Id {Id::hash("ChangeUsername")}
 
-    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
         profile.username = self.0.to_string();
     }
 }
@@ -48,7 +48,7 @@ impl Reactant<Profile> for ChangeNotes {
 
     fn id() -> Id {Id::hash("ChangeNotes")}
 
-    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
         profile.notes = self.0.to_string();
     }
 }
@@ -60,7 +60,7 @@ impl Reactant<Profile> for ChangeAvatar {
 
     fn id() -> Id {Id::hash("ChangeAvatar")}
 
-    fn apply(self, profile: &mut Profile, signer: Name, timestamp: u64) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
         profile.avatar = self.0.clone();
     }
 }
@@ -80,7 +80,7 @@ impl Contract for Profile {
 
     fn id() -> Id {Id::hash("Profile0.2")}
 
-    fn init(init: Self::Init, signer: Name, _timestamp: u64) -> Self {
+    fn init(init: Self::Init, metadata: Metadata) -> Self {
         Profile {
             name: Some(init),
             username: "Orange Profile".to_string(),

@@ -5,6 +5,8 @@ pub use ramp::prism::IS_MOBILE;
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 
+pub mod listener;
+pub use listener::*;
 pub mod closure;
 pub use closure::*;
 pub mod flow;
@@ -72,14 +74,14 @@ pub mod __private {
 }
 
 // example
-// chk::run! {[ChatRoom]; |_ctx: &mut Context| Orange }
+// chk::run! {[MyService]; |_ctx: &mut Context| Orange }
 
 #[macro_export]
 macro_rules! run {
-    ($app:expr) => {
+    ([$($service:expr),* $(,)?]; $app:expr) => {
         use $crate::__private::*;
 
-        ramp::run!(move |ctx: &mut Context| {
+        ramp::run!([$($service),*], move |ctx: &mut Context| {
             let app: Rc<RefCell<dyn App>> = Rc::new(RefCell::new(($app)(ctx)));
             let assets = include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources");
             let theme: Theme = app.borrow().theme().to_pelican(Assets::new(assets));
@@ -95,3 +97,4 @@ macro_rules! run {
 }
 
 extern crate self as chk;
+

@@ -5,6 +5,9 @@ use crate::{ListItem, FormStorage, Display};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
 use pelican_ui::theme::Theme;
+use pelican_ui::navigation::AppPage;
+
+use air::Contract;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -317,3 +320,50 @@ impl std::fmt::Debug for dyn FlowBuilder {
         write!(f, "Flow Builder Closure")
     }
 }
+
+pub trait PageTypeToAppPageFn: FnMut(&mut Context, &Theme, PageType) -> Box<dyn AppPage> + 'static {
+    fn clone_box(&self) -> Box<dyn PageTypeToAppPageFn>;
+}
+
+impl PartialEq for dyn PageTypeToAppPageFn{fn eq(&self, _: &Self) -> bool {true}}
+
+impl<F> PageTypeToAppPageFn for F where F: FnMut(&mut Context, &Theme, PageType) -> Box<dyn AppPage> + Clone + 'static {
+    fn clone_box(&self) -> Box<dyn PageTypeToAppPageFn> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn PageTypeToAppPageFn> {
+    fn clone(&self) -> Self {
+        self.as_ref().clone_box()
+    }
+}
+
+impl std::fmt::Debug for dyn PageTypeToAppPageFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PageTypeToAppPageFn Closure")
+    }
+}
+
+pub trait PageBuilderContractFn<C: Contract>: FnMut(&mut Context, C) -> PageType + 'static {
+    fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>>;
+}
+
+impl<F, C: Contract> PageBuilderContractFn<C> for F where F: FnMut(&mut Context, C) -> PageType + Clone + 'static {
+    fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>> {
+        Box::new(self.clone())
+    }
+}
+
+impl<C: Contract> Clone for Box<dyn PageBuilderContractFn<C>> {
+    fn clone(&self) -> Self {
+        self.as_ref().clone_box()
+    }
+}
+
+impl<C: Contract> std::fmt::Debug for dyn PageBuilderContractFn<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PageBuilderContractFn")
+    }
+}
+

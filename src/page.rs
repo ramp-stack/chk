@@ -59,7 +59,7 @@ impl Screen {
 
 #[derive(Clone, Debug)]
 pub enum PageType {
-    Root {title: String, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>},
+    Root {title: String, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>},
     Both{title: String, display: Vec<Display>, inputs: Vec<Input>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
     EditAndDisplay {title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>, flow_len: usize},
     Display{title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
@@ -67,13 +67,13 @@ pub enum PageType {
     Form{title: String, item: Input, flow_len: usize, next: Option<NavFn>, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>},
     Edit{title: String, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>, flow_len: usize},
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
-    Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize},
+    Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize, on_submit: Option<Box<dyn FormSubmit>>},
     Messaging{room: Instance<ChatRoom>, flow_len: usize},
     Profile{profile: Instance<Profile>},
 }
 
 impl PageType {
-    pub fn root(title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: (String, Box<dyn FlowBuilder>), bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn root(title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
         PageType::Root { title: title.to_string(), input, display, header, bumper_a, bumper_b }
     }
 
@@ -105,8 +105,8 @@ impl PageType {
         PageType::Review { title: title.to_string(), getter, flow_len: 1, next: None, on_submit }
     }
 
-    pub fn success(title: &str, getter: Box<dyn SuccessGetter>) -> Self {
-        PageType::Success { title: title.to_string(), getter, flow_len: 1 }
+    pub fn success(title: &str, getter: Box<dyn SuccessGetter>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
+        PageType::Success { title: title.to_string(), getter, flow_len: 1, on_submit }
     }
 
     pub fn messaging(room: Instance<ChatRoom>) -> Self {
@@ -169,13 +169,14 @@ impl PageType {
             PageType::Edit{on_save, ..} => Some(on_save),
             PageType::Form{on_submit, ..} => on_submit.as_mut(),
             PageType::Review{on_submit, ..} => Some(on_submit),
+            PageType::Success{on_submit, ..} => on_submit.as_mut(),
             _ => None
         }
     }
 
     pub fn build(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
-            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), Some(bumper_a.clone()), bumper_b.clone())),
+            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone())),
             PageType::Both{title, inputs, display, header, bumper, next, flow_len} => Box::new(StackPage::both(ctx, theme, title.to_string(), display.to_vec(), inputs.to_vec(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(StackPage::display(ctx, theme, title.to_string(), items.to_vec(), *offset, header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(StackPage::input(ctx, theme, title.to_string(), item.clone(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
@@ -183,7 +184,7 @@ impl PageType {
             PageType::Edit{title, input, display, validations, on_save, flow_len: _} => Box::new(EditPage::new(theme, title.to_string(), input.clone(), display.clone(), validations.clone(), on_save.clone())),
             PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::edit_and_display(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
-            PageType::Success{title, getter, flow_len} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len)),
+            PageType::Success{title, getter, flow_len, on_submit} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len, on_submit.clone())),
             PageType::Messaging{room, flow_len} => Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len)),
             PageType::Profile{profile} => ProfilePage::new(ctx, theme, profile.clone())
         }
@@ -191,7 +192,7 @@ impl PageType {
 
     pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
-            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), Some(bumper_a.clone()), bumper_b.clone())),
+            PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone())),
             PageType::Both{title, inputs, display, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), inputs.to_vec(), display.to_vec(), header.clone(), None, None)),
             PageType::Display{title, items, offset: _, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), vec![], items.to_vec(), header.clone(), None, None)),
             PageType::Input{title, item, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), vec![item.clone()], vec![], header.clone(), None, None)),

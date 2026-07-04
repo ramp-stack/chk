@@ -90,8 +90,10 @@ impl Flow{
 
                 if let Some(success) = success {
                     let success = Box::new(move || {
+                        println!("Built sucess");
+                        let submit = submit.take();
                         let success = success.clone();
-                        PageType::success(&success.title, success.getter)
+                        PageType::success(&success.title, success.getter, submit.clone())
                     }) as Box<dyn PageBuilder>;
                     pages.push(Screen::new_builder(&theme, success));
                 }
@@ -149,12 +151,12 @@ impl Flow{
 #[derive(Debug, Component, Clone)]
 pub struct FlowWrapper(Stack, PelicanFlow, #[skip] Vec<State>);
 impl OnEvent for FlowWrapper {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {        
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {        
         if event.downcast_ref::<TickEvent>().is_some() {
             if let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>().as_mut() && let Some(page) = screen.1.downcast_mut::<ReviewPage>() {
                 page.on_change(self.2.clone());
             } else if let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>().as_mut() && let Some(page) = screen.1.downcast_mut::<SuccessPage>() {
-                page.on_change(self.2.clone());
+                page.on_change(ctx, self.2.clone());
             } else {
                 let index = self.1.index;
                 self.2 = Vec::new();

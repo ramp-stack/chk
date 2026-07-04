@@ -13,7 +13,7 @@ use pelican_ui::components::MessageGroups;
 
 use crate::messages::{ChatRoom, Message, SendMessage};
 use crate::profiles::{Profile, ChangeNotes, ChangeUsername, ChangeAvatar};
-use crate::{ActionItem, PageType, FormItem, Bumper};
+use crate::{ActionItem, PageType, FormItem, Bumper, Listener};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
 use crate::items::{Action, Display, AvatarPurpose};
@@ -85,22 +85,23 @@ impl ReviewPage {
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme, #[skip] bool);
+pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme, #[skip] bool, #[skip] Option<Box<dyn FormSubmit>>);
 impl OnEvent for SuccessPage {}
 impl AppPage for SuccessPage {}
 impl SuccessPage {
-    pub fn new(theme: &Theme, title: String, getter: Box<dyn SuccessGetter>, flow_len: usize) -> Self {
+    pub fn new(theme: &Theme, title: String, getter: Box<dyn SuccessGetter>, flow_len: usize, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
         let header = Header::stack_end(theme, &title);
         let bumper = Some(PelicanBumper::stack_end(theme, Some(flow_len)));
         let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_, _| true)), bumper);
-        SuccessPage(Stack::default(), page, getter, theme.clone(), false)
+        SuccessPage(Stack::default(), page, getter, theme.clone(), false, on_submit.clone())
     }
 
-    pub fn on_change(&mut self, new: Vec<State>) {
+    pub fn on_change(&mut self, ctx: &mut Context, new: Vec<State>) {
         if !self.4 {
             self.4 = true;
             use pelican_ui::colors;
             use pelican_ui::components::Icon;
+            if let Some(on_submit) = &mut self.5 {(on_submit)(ctx, &new);}
             let theme = self.3.clone();
             let (icon, description) = (self.2)(new);
             self.1.content = Content::new(Offset::Center, drawables![
@@ -248,10 +249,10 @@ impl ProfilePage {
         let title = if is_me {"My profile"} else {"Edit profile"};
         let display = if is_me {vec![
             Display::cta("Orange name", None, &my_name.to_string(), vec![
-                ("Copy".to_string(), Some("Copied".to_string()), Icons::Copy, Action::copy(&my_name.to_string())),
-                ("Display QR Code".to_string(), None, Icons::QrCode, Action::flow(Flow::new(&theme, vec![
+                ActionItem::new_with_active(Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy),
+                ActionItem::new(Action::flow(Flow::new(&theme, vec![
                     Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
-                ])))
+                ])), "Display QR Code", Icons::QrCode)
             ]),
         ]} else {vec![]};
         
@@ -284,53 +285,45 @@ impl ProfilePage {
     }
 }
 
-#[derive(Debug, Component, Clone)]
-pub struct ProfileView(Stack, pub Box<dyn AppPage>, #[skip] Instance<Profile>, #[skip] Profile, #[skip] bool, #[skip] Theme);
-impl OnEvent for ProfileView {
-    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if event.downcast_ref::<TickEvent>().is_some() {
-            let profile = self.2.pending().clone();
-            if self.3 != profile {
-                self.3 = profile;
-                *self = Self::new(ctx, &self.5, self.2.clone(), self.4);
-            }
-        }
-
-        vec![event]
-    }
-}
-impl AppPage for ProfileView {}
+pub struct ProfileView;
 impl ProfileView {
-    pub fn new(ctx: &mut Context, theme: &Theme, mut p: Instance<Profile>, is_me: bool) -> Self {
-        let saved = p.clone();
+    pub fn new(ctx: &mut Context, theme: &Theme, mut p: Instance<Profile>, is_me: bool) -> Listener<Profile> {
         let profile = p.pending().clone();
-        let my_name = profile.name.unwrap();
-        let about_me = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
+        let listener_p = p.clone();
+        let saved = p.clone();
+        let t = theme.clone();
 
-        let page = PageType::display(&profile.username,
-            vec![
-                Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
-                Display::actions(vec![
-                    ActionItem::new(Action::None, "Bitcoin", Icons::Bitcoin),
-                    ActionItem::new(Action::message(my_name), "Message", Icons::Messages),
-                    ActionItem::new(Action::unblock(theme, p.clone()), "Block", Icons::Block),
-                ]),
-                Display::cta("About me", None, about_me, vec![]),
-                Display::cta("Orange name", None, &my_name.to_string(), vec![
-                    ("Copy".to_string(), Some("Copied".to_string()), Icons::Copy, Action::copy(&my_name.to_string())),
-                    ("Display QR Code".to_string(), None, Icons::QrCode, Action::flow(Flow::new(&theme, vec![
-                        Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
-                    ])))
-                ]),
-            ], 
-            Some((Icons::Edit, Box::new(move |ctx: &mut Context, theme: &Theme| {
-                let p = p.clone();
-                let t = theme.clone();
-                Flow::new(&theme, vec![Box::new(move|| ProfilePage::editing(&t.clone(), is_me, p.clone()))])
-            }))), 
-            Bumper::None, Offset::Start,
-        ).build(ctx, theme);
+        let page = move |ctx: &mut Context, profile: Profile| {
+            let p = p.clone();
+            let theme = t.clone();
+            let saved = saved.clone();
+            let my_name = profile.name.unwrap();
+            let about_me = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
+            PageType::display(&profile.username,
+                vec![
+                    Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
+                    Display::actions(vec![
+                        ActionItem::new(Action::None, "Bitcoin", Icons::Bitcoin),
+                        ActionItem::new(Action::message(my_name), "Message", Icons::Messages),
+                        ActionItem::new(Action::unblock(&theme, p.clone()), "Block", Icons::Block),
+                    ], true),
+                    Display::cta("About me", None, about_me, vec![]),
+                    Display::cta("Orange name", None, &my_name.to_string(), vec![
+                        ActionItem::new_with_active(Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy),
+                        ActionItem::new(Action::flow(Flow::new(&theme, vec![
+                            Box::new(move || PageType::display_qr_code("Share name", &my_name.to_string(), "Scan to share orange name."))
+                        ])), "Display QR Code", Icons::QrCode)
+                    ]),
+                ], 
+                Some((Icons::Edit, Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    let p = p.clone();
+                    let t = theme.clone();
+                    Flow::new(&theme, vec![Box::new(move|| ProfilePage::editing(&t.clone(), is_me, p.clone()))])
+                }))), 
+                Bumper::None, Offset::Start,
+            )
+        };
 
-        ProfileView(Stack::default(), page, saved, profile, is_me, theme.clone())
+        Listener::new(ctx, theme, listener_p, profile, page, |ctx: &mut Context, theme: &Theme, page: PageType| page.build(ctx, theme))
     }
 }

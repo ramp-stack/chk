@@ -33,6 +33,7 @@ pub enum NumberVariant {
     Currency,
     Date,
     Time,
+    Number,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,7 @@ impl Form {
 
 #[derive(Debug, Clone)]
 pub enum FormComplete {
+    // Home,
     Next(Box<dyn PageBuilder>),
     Return(Box<dyn pelican_ui::Callback>),
     None,
@@ -92,6 +94,9 @@ pub enum FormComplete {
 impl FormComplete {
     pub fn run(&mut self, ctx: &mut Context, theme: &Theme) {
         match self {
+            // FormComplete::Home => {
+            //     ctx.emit(NavigationEvent::Root(None));
+            // },
             FormComplete::Return(function) => {
                 let theme = theme.clone();
                 let function = function.clone();
@@ -263,6 +268,7 @@ impl FormItem {
                     NumberVariant::Currency => Input::currency("Enter dollar amount"),
                     NumberVariant::Date => Input::date("Enter date"),
                     NumberVariant::Time => Input::time("Enter time"),
+                    NumberVariant::Number => Input::number("Enter number"),
                 }
             },
             FormItem::Enum(_, items) => {

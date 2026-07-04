@@ -5,7 +5,7 @@ use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::layout::Offset;
 use pelican_ui::utils::{TitleSubtitle};
 use pelican_ui::components::list_item::{ListItemSection, ListItemInfoLeft, ListItem as PelicanListItem};
-use pelican_ui::components::{QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
+use pelican_ui::components::{NumberGetter, QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
@@ -25,6 +25,7 @@ use crate::ListItemGetter;
 pub enum Input {
     Text {label: String, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, show_label: bool, preset: Option<String>},
     Currency {instructions: String}, //, on_edited: Box<dyn EditedFn>},
+    Number {instructions: String},
     Date {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Enumerator {items: Vec<EnumItem>},
@@ -44,6 +45,10 @@ impl Input {
 
     pub fn time(instructions: &str) -> Self { //, on_edited: impl FnMut(&mut Context, &mut String) + Clone + 'static) -> Self {
         Input::Time {instructions: instructions.to_string()} //, on_edited: Box::new(on_edited)}
+    }
+
+    pub fn number(instructions: &str) -> Self { //, on_edited: impl FnMut(&mut Context, &mut String) + Clone + 'static) -> Self {
+        Input::Number {instructions: instructions.to_string()} //, on_edited: Box::new(on_edited)}
     }
 
     pub fn enumerator(items: Vec<EnumItem>) -> Self {
@@ -86,8 +91,21 @@ impl Input {
                 if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             },
-            Input::Date {instructions} => drawables![NumericalInput::date(theme, instructions)],
-            Input::Time {instructions} => drawables![NumericalInput::time(theme, instructions)],
+            Input::Number {instructions} => {
+                let mut drawables = drawables![NumericalInput::number(theme, instructions)];
+                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                drawables
+            },
+            Input::Date {instructions} => {
+                let mut drawables = drawables![NumericalInput::date(theme, instructions)];
+                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                drawables
+            },
+            Input::Time {instructions} => {
+                let mut drawables = drawables![NumericalInput::time(theme, instructions)];
+                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                drawables
+            },
             Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, false, AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
             Input::Search {items, actions} => drawables![SearchBar::new(theme, 
                 items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
@@ -115,6 +133,7 @@ impl Input {
     pub fn offset(&self) -> Offset {
         match self {
             Input::Text {..} |
+            Input::Number {..} |
             Input::Enumerator {..} |
             Input::Currency {..} |
             Input::Date {..} |
@@ -148,13 +167,14 @@ pub enum Display {
     Text {text: String, size: TextSize, style: TextStyle, align: Align},
     Icon {icon: Icons},
     Image {image: String, size: (f32, f32)},
-    Cta {label: String, data: Option<String>, instructions: String, actions: Vec<(String, Option<String>, Icons, Action)>},
+    Cta {label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem>},
     Table {label: String, items: Vec<TableItem>},
-    Currency {amount: f32, instructions: String},
+    Currency {amount: Box<dyn NumberGetter>, instructions: String},
+    Number {number: Box<dyn NumberGetter>, instructions: String},
     List {label: Option<String>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
     Avatar {content: AvatarContent, purpose: AvatarPurpose},
-    Actions {actions: Vec<ActionItem>}
+    Actions {actions: Vec<ActionItem>, as_icons: bool}
 }
 
 impl Display {
@@ -182,7 +202,7 @@ impl Display {
         Display::Image {image: image.to_string(), size}
     }
 
-    pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<(String, Option<String>, Icons, Action)>) -> Self {
+    pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<ActionItem>) -> Self {
         Display::Cta {label: label.to_string(), data: data.map(|s| s.to_string()), instructions: instructions.to_string(), actions}
     }
 
@@ -199,16 +219,20 @@ impl Display {
         Display::List{label: label.map(|i| i.to_string()), item_getter, instructions: instructions.map(|i| i.to_string())}
     }
 
-    pub fn currency(amount: f32, instructions: &str) -> Self {
-        Display::Currency {amount, instructions: instructions.to_string()}
+    pub fn currency(amount: impl NumberGetter + Clone + 'static, instructions: &str) -> Self {
+        Display::Currency {amount: Box::new(amount), instructions: instructions.to_string()}
+    }
+
+    pub fn number(number: impl NumberGetter + Clone + 'static, instructions: &str) -> Self {
+        Display::Number {number: Box::new(number), instructions: instructions.to_string()}
     }
 
     pub fn avatar(content: AvatarContent, purpose: AvatarPurpose) -> Self {
         Display::Avatar {content, purpose}
     }
 
-    pub fn actions(actions: Vec<ActionItem>) -> Self {
-        Display::Actions {actions}
+    pub fn actions(actions: Vec<ActionItem>, as_icons: bool) -> Self {
+        Display::Actions {actions, as_icons}
     }
 
     pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
@@ -217,13 +241,14 @@ impl Display {
             Display::Image {image, size} => drawables![Image{shape: ShapeType::Rectangle(0.0, *size, 0.0), image: theme.brand().images.get(&image.to_string()).unwrap().clone(), color: None}],
             Display::Text {text, size, style, align} if !text.is_empty() => drawables![ExpandableText::new(theme, text, *size, *style, *align, None)],
             Display::Cta {label, data, instructions, actions} => drawables![DataItem::text(theme, label, data.as_deref(), instructions, 
-                Some(actions.iter().map(|(label, active, icon, action)| {
+                Some(actions.iter().map(|ActionItem(action, label, active, icon)| {
                     let on_click: Box<dyn Callback> = action.get();
                     ActionData {label: label.to_string(), active: active.clone(), icon: *icon, on_click}
                 }).collect::<Vec<ActionData>>()),
             )],
             Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), None)],
-            Display::Currency {amount, instructions} => drawables![NumericalInput::display(theme, *amount, instructions)],
+            Display::Currency {amount, instructions} => drawables![NumericalInput::display_currency(theme, amount.clone(), instructions)],
+            Display::Number {number, instructions} => drawables![NumericalInput::display_number(theme, number.clone(), instructions)],
             Display::List {label, item_getter, instructions, ..} => {
                 let item_getter = item_getter.clone();
                 let theme = theme.clone();
@@ -240,15 +265,23 @@ impl Display {
 
                 drawables![Avatar::new(theme, content.clone(), style, outline, AvatarSize::Xxl, None)]
             }
-            Display::Actions {actions} => {
-                let items = actions.into_iter().map(|ActionItem(action, _, icon)| {
-                    let action: Box<dyn Callback> = action.get();
-                    (*icon, action)
-                }).collect::<Vec<_>>();
-
-                drawables![IconButtonGroup::new(theme, items)]
+            Display::Actions {actions, as_icons} => {
+                match as_icons {
+                    true => {
+                        let items = actions.into_iter().map(|ActionItem(action, _, _, icon)| {
+                            let action: Box<dyn Callback> = action.get();
+                            (*icon, action)
+                        }).collect::<Vec<_>>();
+                        drawables![IconButtonGroup::new(theme, items)]
+                    },
+                    false => {
+                        drawables![QuickActions::new(theme, Offset::Start, actions.into_iter().map(|ActionItem(action, label, _, icon)| {
+                            let on_click: Box<dyn Callback> = action.get();
+                            ActionData { label: label.to_string(), active: None, icon: *icon, on_click }
+                        }).collect::<Vec<ActionData>>())]
+                    }
+                }
             }
-            //actions.iter_mut().map(|ActionItem(a, l, i)| Box::new(SecondaryButton::medium(theme, *i, l, None, a.get())) as Box<dyn Drawable>).collect::<Vec<_>>(),
             _ => return None
         })
     }
@@ -427,7 +460,8 @@ impl Action {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut instance = ctx.create::<crate::messages::ChatRoom>(air::Id::random());
-                    instance.apply(crate::messages::AddMember(recipient));
+                    let profile = Profile::from_name(ctx, recipient);
+                    instance.apply(crate::messages::AddMember(recipient, profile.pending().username.to_string()));
                     instance.share(recipient);
                     println!("Created room with members {:?}", recipient);
 
@@ -452,10 +486,14 @@ impl Action {
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ActionItem(Action, String, Icons);
+pub struct ActionItem(Action, String, Option<String>, Icons);
 impl ActionItem {
     pub fn new(action: Action, label: &str, icon: Icons) -> Self {
-        ActionItem(action, label.to_string(), icon)
+        ActionItem(action, label.to_string(), None, icon)
+    }
+
+    pub fn new_with_active(action: Action, label: &str, active: &str, icon: Icons) -> Self {
+        ActionItem(action, label.to_string(), Some(active.to_string()), icon)
     }
 }
 
