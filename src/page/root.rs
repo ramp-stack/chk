@@ -1,22 +1,22 @@
 use ramp::prism;
-use pelican_ui::event::OnEvent;
-use pelican_ui::drawable::{Component, Drawable};
+use pelican_ui::event::{OnEvent, Event};
+use pelican_ui::drawable::{Component, Drawable, SizedTree};
 use pelican_ui::{Context, Callback};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 
-use crate::{FlowBuilder, PageType};
+use crate::{Page, FlowBuilder, PageType};
 use crate::items::{Input, Display};
 
-pub struct Root(pub PageType);
+pub struct Root(pub Page);
 impl Root {
     pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
-        Root(PageType::root(title, vec![], items, header, bumper_a, bumper_b))
+        Root(Page::Static(PageType::root(title, vec![], items, header, bumper_a, bumper_b)))
     }
 
-    pub fn custom(page: PageType) -> Self {
+    pub fn custom(page: Page) -> Self {
         Root(page)
     }
 }

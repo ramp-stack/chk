@@ -112,42 +112,18 @@ impl Flow{
 
         pages.into_iter().rev().for_each(|mut page| {
             // let callback = (i == 0).then_some(self.1.clone()).flatten(); 
-            match page {
-                Page::Static(mut page) => {
-                    page.update(ctx, theme, length, next_fn.take());
-                    new.push(page.build(ctx, theme));
-                },
-                Page::Refreshing(page_builder) => {
-                    let mut listener = Listener::new(ctx, theme, page_builder, false);
-                    listener.update(ctx, next_fn.take(), length);
-                    new.push(Box::new(listener));
-                }
-            }
-            
+            new.push(page.build(ctx, theme, next_fn.take(), length));
             next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {
                 // if let Some(cb) = callback.clone() { (cb.clone())(ctx) } // on_submit
                 ctx.emit(NavigationEvent::Next);
             }))));
         });
 
-        match first {
-            Page::Static(mut page) => {
-                page.update(ctx, theme, length, next_fn.take());
-                new.push(page.build(ctx, theme));
-            },
-            Page::Refreshing(page_builder) => {
-                let mut first = Listener::new(ctx, theme, page_builder, false);
-                if !new.is_empty() { first.update(ctx, next_fn.clone(), length); }
-                new.push(Box::new(first));
-            }
-        }
-
-        
+        new.push(first.build(ctx, theme, next_fn.clone(), length));
         new.reverse();
 
         FlowWrapper::new(PelicanFlow::new(new.clone()))
     }
-    
 }
 
 #[derive(Debug, Component, Clone)]
@@ -155,53 +131,31 @@ pub struct FlowWrapper(Stack, PelicanFlow, #[skip] Vec<State>);
 impl OnEvent for FlowWrapper {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {        
         if event.downcast_ref::<TickEvent>().is_some() {
-            let mut screen = self.1.current.as_mut().unwrap();
-            if let Some(listener) = screen.downcast_mut::<Listener>() {
-                *screen = listener.page.clone();
+            let index = self.1.index;
+            self.2.clear();
+
+            if self.1.stored.is_empty() {
+                Self::handle_page(
+                    self.1.current.as_mut().unwrap().as_mut(),
+                    ctx,
+                    &mut self.2,
+                );
             }
 
-            if let Some(page) = screen.downcast_mut::<ReviewPage>() {
-                page.on_change(self.2.clone());
-            } else if let Some(page) = screen.downcast_mut::<SuccessPage>() {
-                page.on_change(ctx, self.2.clone());
-            } else {
-                let index = self.1.index;
-                self.2.clear();
-
-                if self.1.stored.is_empty() {
-                    if let Some(page) = screen.downcast_mut::<FormPage>() {
-                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
-                        page.on_change(self.2.clone());
-                    } else if let Some(page) = screen.downcast_mut::<EditPage>() {
-                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
-                        page.on_change(self.2.clone());
-                    }
+            for (i, stored) in self.1.stored.iter_mut().enumerate() {
+                if i == index {
+                    Self::handle_page(
+                        self.1.current.as_mut().unwrap().as_mut(),
+                        ctx,
+                        &mut self.2,
+                    );
                 }
 
-                for (i, stored) in self.1.stored.iter_mut().enumerate() {
-                    if i == index {
-                        if let Some(page) = screen.downcast_mut::<FormPage>() {
-                            page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
-                            page.on_change(self.2.clone());
-                        } else if let Some(page) = screen.downcast_mut::<EditPage>() {
-                            page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
-                            page.on_change(self.2.clone());
-                        }
-                    }
-
-                    let mut screen = stored;
-                    if let Some(listener) = screen.downcast_mut::<Listener>() {
-                        *screen = listener.page.clone();
-                    }
-
-                    if let Some(page) = screen.downcast_mut::<FormPage>() {
-                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
-                        page.on_change(self.2.clone());
-                    } else if let Some(page) = screen.downcast_mut::<EditPage>() {
-                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
-                        page.on_change(self.2.clone());
-                    }
-                }
+                Self::handle_page(
+                    stored.as_mut(),
+                    ctx,
+                    &mut self.2,
+                );
             }
         }
         vec![event]
@@ -210,6 +164,32 @@ impl OnEvent for FlowWrapper {
 
 impl FlowWrapper {
     pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, vec![])}
+    fn handle_page(
+        page: &mut dyn AppPage,
+        ctx: &mut Context,
+        inputs: &mut Vec<State>,
+    ) {
+        if let Some(listener) = page.downcast_mut::<Listener>() {
+            Self::handle_page(listener.page.as_mut(), ctx, inputs);
+            return;
+        }
+
+        if let Some(page) = page.downcast_mut::<ReviewPage>() {
+            page.on_change(inputs.clone());
+        } else if let Some(page) = page.downcast_mut::<SuccessPage>() {
+            page.on_change(ctx, inputs.clone());
+        } else if let Some(page) = page.downcast_mut::<FormPage>() {
+            page.1.content.children()
+                .iter()
+                .for_each(|c| Input::store_in(c, inputs));
+            page.on_change(inputs.clone());
+        } else if let Some(page) = page.downcast_mut::<EditPage>() {
+            page.1.content.children()
+                .iter()
+                .for_each(|c| Input::store_in(c, inputs));
+            page.on_change(inputs.clone());
+        }
+    }
 }
 
 impl FlowContainer for FlowWrapper {

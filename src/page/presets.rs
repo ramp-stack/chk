@@ -116,99 +116,107 @@ impl SuccessPage {
 pub struct MessagesPage {
     layout: Stack,
     page: PelicanPage,
-    #[skip] room: Instance<ChatRoom>,
-    #[skip] profiles: Vec<Profile>,
-    #[skip] messages: Vec<pelican_ui::components::Message>,
-    #[skip] is_group: bool,
-    #[skip] theme: Theme,
-    #[skip] flow_len: usize,
 }
 
-impl OnEvent for MessagesPage {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if event.downcast_ref::<TickEvent>().is_some() {
-            let room = self.room.load_pending();
-            let members = room.members.clone();
-            let my_name = ctx.me();
-            let mut profiles = members.into_iter().filter(|n| *n != my_name).map(|n| Profile::from_name(ctx, n)).collect::<Vec<Instance<Profile>>>();
-            let deref_profiles = profiles.iter_mut().map(|p| p.load_pending().clone()).collect::<Vec<Profile>>();
-            
-            if deref_profiles != *self.profiles {
-                self.profiles = deref_profiles.clone();
-                self.is_group = self.profiles.len() > 1;
-                let p = deref_profiles.iter().map(|p| p.to_pel()).collect::<Vec<_>>();
+impl OnEvent for MessagesPage {}
+impl AppPage for MessagesPage {}
 
-                let info = match (self.is_group, profiles.first().cloned()) {
-                    (false, Some(profile)) => {
-                        Box::new(move |ctx: &mut Context, theme: &Theme| {
-                            let profile = profile.clone();
-                            (Flow::new(vec![
-                                // NOT STATIC
-                                Page::Static(PageType::profile(profile.clone()))
-                            ]).build(ctx, theme))(ctx, theme);
-                        }) as Box<dyn Callback>
-                    }
-                    _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
-                        let profiles = profiles.clone();
-                        let t = theme.clone();
-                        (Flow::new(vec![
-                            // NOT STATIC
-                            Page::Static(GroupMessageInfoPage::new(&t.clone(), profiles.clone()))
-                        ]).build(ctx, theme))(ctx, theme);
-                    }) as Box<dyn Callback>,
-                };
+impl MessagesPage {
+    pub fn new(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, flow_len: usize ) -> Self {
+        let room_data = room.load_pending().clone();
+        let my_name = ctx.me();
 
+        let mut profiles = room_data.members.clone().into_iter().filter(|n| *n != my_name)
+            .map(|n| Profile::from_name(ctx, n)).collect::<Vec<_>>();
 
-                self.page.header = Header::messaging(ctx, &self.theme, p.clone(), self.flow_len, info);
+        let deref_profiles = profiles.iter_mut()
+            .map(|p| p.load_pending().clone()).collect::<Vec<Profile>>();
+
+        let is_group = deref_profiles.len() > 1;
+
+        let pel_profiles = deref_profiles.iter()
+            .map(|p| p.to_pel()).collect::<Vec<_>>();
+
+        let info = match (is_group, profiles.first().cloned()) {
+            (false, Some(profile)) => {
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    let mut profile = profile.clone();
+                    (Flow::new(vec![Page::profile(&mut profile)]).build(ctx, theme))(ctx, theme);
+                }) as Box<dyn Callback>
             }
+            _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
+                let profiles = profiles.clone();
+                let t = theme.clone();
+                (Flow::new(vec![
+                    Page::Static(GroupMessageInfoPage::new(ctx, &t, profiles.clone()))
+                ]).build(ctx, theme))(ctx, theme);
+            }) as Box<dyn Callback>,
+        };
 
-            let messages = room.messages.iter().map(|message: &Message| message.to_pel(ctx)).collect::<Vec<_>>();
+        let header = Header::messaging(ctx, theme, pel_profiles, flow_len, info);
 
-            if messages != self.messages {
-                self.messages = messages.clone();
-                self.page.content = Content::new(Offset::End, drawables![MessageGroups::new(ctx, &self.theme, messages, self.is_group, false)], Box::new(|_, _| true));
+        let mut room_taken = room.clone();
+        let bumper = PelicanBumper::input(theme, "Message...",  move |_ctx: &mut Context, val: &mut String| {
+            if !val.is_empty() {
+                room_taken.apply(SendMessage(val.to_string()));
             }
-        }
+        });
 
-        vec![event]
+        let messages = room_data.messages.iter()
+            .map(|message| message.to_pel(ctx)).collect::<Vec<_>>();
+
+        let content = Content::new(
+            Offset::End,
+            drawables![MessageGroups::new(ctx, theme, messages.clone(), is_group, false)],
+            Box::new(|_, _| true),
+        );
+
+        let page = PelicanPage::new(header, content, Some(bumper));
+
+        MessagesPage { layout: Stack::default(), page }
     }
 }
 
-impl AppPage for MessagesPage {}
-impl MessagesPage {
-    pub fn new(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>, flow_len: usize) -> Self {
-        let info = Box::new(|ctx: &mut Context, theme: &Theme|{});
-        let header = Header::messaging(ctx, theme, vec![], flow_len, info);
-        let mut room_taken = room.clone();
-        let bumper = PelicanBumper::input(theme, "Message...", move |ctx: &mut Context, val: &mut String| {
-            if !val.is_empty() { room_taken.apply(SendMessage(val.to_string())); }
-        });
+#[derive(Debug, Clone)]
+pub struct ViewMessages(Instance<ChatRoom>, ChatRoom, Vec<Profile>);
 
-        let messages = MessageGroups::new(ctx, theme, vec![], false, false);
-        let page = PelicanPage::new(header, Content::new(Offset::End, drawables![messages], Box::new(|_, _| true)), Some(bumper));
+impl ViewMessages {
+    pub fn new(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
+        let profiles = room.load_pending().members.iter().map(|m| Profile::from_name(ctx, *m).load_pending().clone()).collect::<Vec<_>>();
+        ViewMessages(room.clone(), room.load_pending().clone(), profiles)
+    }
+}
 
-        MessagesPage {layout: Stack::default(), page, room, messages: vec![], is_group: false, theme: theme.clone(), profiles: vec![], flow_len}
+impl PageBuilder for ViewMessages {
+    fn poll(&mut self, ctx: &mut Context) -> bool {
+        let current = self.0.load_pending().clone();
+        let profiles = current.members.iter().map(|m| Profile::from_name(ctx, *m).load_pending().clone()).collect::<Vec<_>>();
+        let has_changed = current != self.1 || profiles != self.2;
+        if has_changed {self.1 = current;}
+        has_changed
+    }
+
+    fn build(&mut self, _ctx: &mut Context, _theme: &Theme) -> PageType {
+        PageType::messaging(self.0.clone())
     }
 }
 
 pub struct GroupMessageInfoPage;
 impl GroupMessageInfoPage {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(theme: &Theme, profiles: Vec<Instance<Profile>>) -> PageType {
+    pub fn new(ctx: &mut Context, theme: &Theme, profiles: Vec<Instance<Profile>>) -> PageType {
         let theme = theme.clone();
+        let items = profiles.clone().into_iter().flat_map(|mut profile| {
+            let mut p = profile.clone();
+            let deref = profile.load_pending();
+            if deref.name.unwrap() != ctx.me() {
+                let view_contact = Flow::new(vec![Page::profile(&mut p)]);
+                Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
+            } else {None}
+        }).collect::<Vec<crate::ListItem>>();
         PageType::display("Group members", vec![
             Display::instructions(&format!("This group has {} members.", profiles.len())),
-            Display::list(None, Arc::new(Box::new(move |ctx: &mut Context| {
-                profiles.clone().into_iter().flat_map(|mut profile| {
-                    let p = profile.clone();
-                    let deref = profile.load_pending();
-                    if deref.name.unwrap() != ctx.me() {
-                        // NOT STATIC
-                        let view_contact = Flow::new(vec![Page::Static(PageType::profile(p.clone()))]);
-                        Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
-                    } else {None}
-                }).collect::<Vec<crate::ListItem>>()
-            })), None),
+            Display::list(None, items, None),
         ], None, Bumper::None, Offset::Start)
     }
 }
@@ -225,7 +233,7 @@ impl ProfilePage {
     }
 
     pub fn view_only(ctx: &mut Context, theme: &Theme, mut p: Instance<Profile>, is_me: bool) -> Box<dyn AppPage> {
-        Box::new(Listener::new(ctx, theme, Box::new(ProfileView(p.clone(), p.load_pending().clone())), false))
+        Box::new(Listener::new(ctx, theme, Page::profile(&mut p).builder().unwrap(), false))
     }
 
     pub fn editing(theme: &Theme, is_me: bool, mut profile: Instance<Profile>) -> PageType {
@@ -292,23 +300,11 @@ impl ProfilePage {
 //     Listener::new(ctx, theme, listener_p, profile, page, |ctx: &mut Context, theme: &Theme, page: PageType| page.build(ctx, theme))
 // }
 
-#[derive(Debug, Clone)]
-pub struct ProfileView(pub Instance<Profile>, pub Profile);
-impl PageBuilder for ProfileView {
-    fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = self.0.load_pending().clone();
-        if current != self.1 {
-            self.1 = current;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let p = self.0.clone();
-        let profile = self.0.load_pending().clone();
-        let theme = theme.clone();
+pub struct ProfileView;
+impl ProfileView {
+    pub fn new(ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>) -> PageType {
+        let p = profile.clone();
+        let profile = profile.load_pending().clone();
         let saved = p.clone();
 
         let is_me = profile.name.unwrap() == ctx.me();

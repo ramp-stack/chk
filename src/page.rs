@@ -8,11 +8,12 @@ use pelican_ui::theme::{Theme, Icons};
 use std::fmt::Debug;
 use pelican_ui::utils::ValidationFn;
 
+use crate::Listener;
 use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
-use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
+use crate::closure::{PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
-use air::Instance;
+use air::{Instance, Contract};
 use air::names::Id;
 
 use crate::messages::ChatRoom;
@@ -35,6 +36,110 @@ pub enum Page {
     Refreshing(Box<dyn PageBuilder>)
 }
 
+impl Page {
+    pub fn contract_updates<C: Contract + PartialEq>(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
+        let updater = ContractUpdates::new(contract, builder);
+        Page::Refreshing(Box::new(updater))
+    }
+
+    pub fn updates_list_changes<C: Contract + PartialEq>(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
+        Page::Refreshing(Box::new(ContractUpdatesMultiples::new(ctx, builder)))
+    }
+
+    pub fn profile(profile: &mut Instance<Profile>) -> Self {
+        Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+    }
+
+    pub fn messaging(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
+        Page::Refreshing(Box::new(chk::ViewMessages::new(ctx, room)))
+    }
+
+    pub fn builder(&self) -> Option<Box<dyn PageBuilder>> {
+        match self {
+            Page::Refreshing(p) => Some(p.clone()),
+            _ => None
+        }
+    }
+
+    pub fn page_type(&self) -> Option<PageType> {
+        match self {
+            Page::Static(p) => Some(p.clone()),
+            _ => None
+        }
+    }
+
+    pub fn build(&self, ctx: &mut Context, theme: &Theme, mut next_fn: Option<NavFn>, length: usize) -> Box<dyn AppPage> {
+        match self {
+            Page::Static(page) => {
+                let mut page = page.clone();
+                page.update(ctx, theme, length, next_fn.take());
+                return page.build(ctx, theme);
+            },
+            Page::Refreshing(page_builder) => {
+                let mut listener = Listener::new(ctx, theme, page_builder.clone(), false);
+                listener.update(ctx, next_fn.take(), length);
+                return Box::new(listener);
+            }
+        }
+    }
+
+    pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
+        match self {
+            Page::Static(page) => {
+                return page.clone().build_root(ctx, theme);
+            },
+            Page::Refreshing(page_builder) => {
+                return Box::new(Listener::new(ctx, theme, page_builder.clone(), true));
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ContractUpdates<C: Contract + PartialEq>(Box<dyn PageBuilderContractFn<C>>, Instance<C>, C);
+impl<C: Contract + PartialEq> ContractUpdates<C> {
+    pub fn new(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
+        ContractUpdates(Box::new(builder), contract.clone(), contract.load_pending().clone())
+    }
+}
+impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
+    fn poll(&mut self, ctx: &mut Context) -> bool {
+        let current = self.1.load_pending().clone();
+        let has_changed = current != self.2;
+        if has_changed {self.2 = current;}
+        has_changed
+    }
+
+    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
+        let contract = self.1.clone();
+        (self.0)(ctx, theme, contract)
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct ContractUpdatesMultiples<C: Contract + PartialEq>(Box<dyn PageBuilderContractMultiplesFn<C>>, Vec<C>);
+impl<C: Contract + PartialEq> ContractUpdatesMultiples<C> {
+    pub fn new(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
+        let new = ctx.instances::<C>().iter_mut().map(|(_, c)| c.load_pending().clone()).collect::<Vec<_>>();
+        ContractUpdatesMultiples(Box::new(builder), new)
+    }
+}
+impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
+    fn poll(&mut self, ctx: &mut Context) -> bool {
+        let current = ctx.instances::<C>().iter_mut().map(|(_, c)| c.load_pending().clone()).collect::<Vec<_>>();
+        let has_changed = current != self.1;
+        if has_changed {self.1 = current;}
+        has_changed
+    }
+
+    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
+        let new = ctx.instances::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
+        (self.0)(ctx, theme, new)
+    }
+}
+
+
 pub trait PageBuilder: Debug + dyn_clone::DynClone {
     fn poll(&mut self, ctx: &mut Context) -> bool;
     fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType;
@@ -54,7 +159,6 @@ pub enum PageType {
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize, on_submit: Option<Box<dyn FormSubmit>>},
     Messaging{room: Instance<ChatRoom>, flow_len: usize},
-    Profile{profile: Instance<Profile>},
 }
 
 impl PageType {
@@ -113,15 +217,10 @@ impl PageType {
         )
     }
 
-    pub fn profile(profile: Instance<Profile>) -> Self {
-        PageType::Profile { profile }
-    }
-
     pub fn nav_fn(&mut self) -> Option<&mut Option<NavFn>> {
         match self {
             PageType::Root{..} |
             PageType::Messaging{..} |
-            PageType::Profile{..} |
             PageType::Edit{..} |
             PageType::EditAndDisplay {..} |
             PageType::Success{..} => None,
@@ -135,7 +234,6 @@ impl PageType {
 
     pub fn length(&mut self) -> Option<&mut usize> {
         match self {
-            PageType::Profile{..} |
             PageType::Messaging{..} |
             PageType::Root{..} => None,
             PageType::Edit{flow_len, ..} |
@@ -176,7 +274,6 @@ impl PageType {
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len, on_submit} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len, on_submit.clone())),
             PageType::Messaging{room, flow_len} => Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len)),
-            PageType::Profile{profile} => ProfilePage::new(ctx, theme, profile.clone())
         }
     }
 
@@ -194,7 +291,6 @@ impl PageType {
             PageType::Success{..} |
             PageType::Messaging{..} => panic!("Not an accepted root type"),
 
-            PageType::Profile{profile} => ProfilePage::new(ctx, theme, profile.clone()),
             PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
         }
     }

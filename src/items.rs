@@ -172,7 +172,7 @@ pub enum Display {
     Table {label: String, items: Vec<TableItem>},
     Currency {amount: Box<dyn NumberGetter>, instructions: String},
     Number {number: Box<dyn NumberGetter>, instructions: String},
-    List {label: Option<String>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<String>},
+    List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
     Avatar {content: AvatarContent, purpose: AvatarPurpose},
     Actions {actions: Vec<ActionItem>, as_icons: bool}
@@ -215,9 +215,9 @@ impl Display {
         Display::QRCode {data: data.to_string(), instructions: instructions.to_string()}
     }
 
-    pub fn list(label: Option<&str>, item_getter: Arc<Box<dyn ListItemGetter>>, instructions: Option<&str>) -> Self {
+    pub fn list(label: Option<&str>, items: Vec<ListItem>, instructions: Option<&str>) -> Self {
         // let item_getter: Arc<Box<dyn ListItemGetter>> = Arc::new(Box::new(|ctx: &mut Context| vec![]));
-        Display::List{label: label.map(|i| i.to_string()), item_getter, instructions: instructions.map(|i| i.to_string())}
+        Display::List{label: label.map(|i| i.to_string()), items, instructions: instructions.map(|i| i.to_string())}
     }
 
     pub fn currency(amount: impl NumberGetter + Clone + 'static, instructions: &str) -> Self {
@@ -250,12 +250,9 @@ impl Display {
             Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), None)],
             Display::Currency {amount, instructions} => drawables![NumericalInput::display_currency(theme, amount.clone(), instructions)],
             Display::Number {number, instructions} => drawables![NumericalInput::display_number(theme, number.clone(), instructions)],
-            Display::List {label, item_getter, instructions, ..} => {
-                let item_getter = item_getter.clone();
-                let theme = theme.clone();
-                drawables![ListItemSection::new(&theme.clone(), label.clone(), instructions.clone(), move |ctx: &mut Context| {
-                    (item_getter)(ctx).iter_mut().map(|item| item.build(&theme.clone())).collect::<Vec<_>>()
-                })]
+            Display::List {label, items, instructions, ..} => {
+                let items = items.into_iter().map(|i| i.build(&theme)).collect::<Vec<_>>();
+                drawables![ListItemSection::new(&theme.clone(), label.clone(), instructions.clone(), items)]
             },
             Display::QRCode {data, instructions} => drawables![QRCode::new(theme, data), ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
             Display::Avatar {content, purpose} => {
@@ -461,13 +458,12 @@ impl Action {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut instance = ctx.create::<crate::messages::ChatRoom>(air::Id::random());
-                    let mut profile = Profile::from_name(ctx, recipient);
-                    instance.apply(crate::messages::AddMember(recipient, profile.load_pending().username.to_string()));
+                    instance.apply(crate::messages::AddMember(recipient));
                     instance.share(recipient);
                     println!("Created room with members {:?}", recipient);
 
                     // NOT STATIC
-                    let mut flow = Flow::new(vec![Page::Static(crate::PageType::messaging(instance.clone()))]);
+                    let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
                     flow.build(ctx, theme)(ctx, theme);
                 })
             }

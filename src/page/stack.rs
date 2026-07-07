@@ -1,6 +1,6 @@
 use ramp::prism;
-use pelican_ui::event::OnEvent;
-use pelican_ui::drawable::{Component, Drawable};
+use pelican_ui::event::{OnEvent, Event};
+use pelican_ui::drawable::{Component, Drawable, SizedTree};
 use pelican_ui::{Context, Callback};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};

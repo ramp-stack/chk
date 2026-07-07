@@ -7,7 +7,7 @@ use crate::form::{State, FormValidState, FormComplete};
 use pelican_ui::theme::Theme;
 use pelican_ui::navigation::AppPage;
 
-use air::Contract;
+use air::{Contract, Instance};
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -345,11 +345,11 @@ impl std::fmt::Debug for dyn PageTypeToAppPageFn {
     }
 }
 
-pub trait PageBuilderContractFn<C: Contract>: FnMut(&mut Context, C) -> PageType + 'static {
+pub trait PageBuilderContractFn<C: Contract>: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + 'static {
     fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>>;
 }
 
-impl<F, C: Contract> PageBuilderContractFn<C> for F where F: FnMut(&mut Context, C) -> PageType + Clone + 'static {
+impl<F, C: Contract> PageBuilderContractFn<C> for F where F: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + Clone + 'static {
     fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>> {
         Box::new(self.clone())
     }
@@ -367,3 +367,24 @@ impl<C: Contract> std::fmt::Debug for dyn PageBuilderContractFn<C> {
     }
 }
 
+pub trait PageBuilderContractMultiplesFn<C: Contract>: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + 'static {
+    fn clone_box(&self) -> Box<dyn PageBuilderContractMultiplesFn<C>>;
+}
+
+impl<F, C: Contract> PageBuilderContractMultiplesFn<C> for F where F: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + Clone + 'static {
+    fn clone_box(&self) -> Box<dyn PageBuilderContractMultiplesFn<C>> {
+        Box::new(self.clone())
+    }
+}
+
+impl<C: Contract> Clone for Box<dyn PageBuilderContractMultiplesFn<C>> {
+    fn clone(&self) -> Self {
+        self.as_ref().clone_box()
+    }
+}
+
+impl<C: Contract> std::fmt::Debug for dyn PageBuilderContractMultiplesFn<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PageBuilderContractMultiplesFn")
+    }
+}

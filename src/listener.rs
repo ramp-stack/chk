@@ -32,6 +32,8 @@ impl Listener {
         mut builder: Box<dyn PageBuilder>,
         is_root: bool,
     ) -> Self {
+        println!("Created listener");
+
         let page_type = builder.build(ctx, theme);
 
         let page = if is_root {
@@ -72,12 +74,8 @@ impl Listener {
 }
 
 impl OnEvent for Listener {
-    fn on_event(
-        &mut self,
-        ctx: &mut Context,
-        _sized: &SizedTree,
-        event: Box<dyn Event>,
-    ) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event> ) -> Vec<Box<dyn Event>> {
+        // println!("This page is listening...");
         if event.downcast_ref::<TickEvent>().is_some() {
             if self.builder.poll(ctx) {
                 self.update(ctx, self.next.clone(), self.flow_len);
