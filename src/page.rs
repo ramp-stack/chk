@@ -10,7 +10,7 @@ use pelican_ui::utils::ValidationFn;
 
 use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
-use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder, ReviewItemGetter, SuccessGetter, FlowBuilder};
+use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
 use air::Instance;
 use air::names::Id;
@@ -29,33 +29,18 @@ pub use root::*;
 mod stack;
 pub use stack::*;
 
-#[derive(Debug, Component, Clone)]
-pub struct Screen(Stack, pub Box<dyn AppPage>, #[skip] Box<dyn PageBuilder>, #[skip] Option<NavFn>, #[skip] usize, #[skip] Theme);
-impl AppPage for Screen {}
-impl OnEvent for Screen {}
-
-impl Screen {
-    pub fn new(ctx: &mut Context, theme: &Theme, mut page_builder: Box<dyn PageBuilder>) -> Self {
-        Screen(Stack::default(), ((page_builder)()).build(ctx, theme), page_builder, None, 1, theme.clone())
-    }
-
-    pub fn update(&mut self, ctx: &mut Context, new_len: usize, new_fn: Option<NavFn>) {
-        let theme = &self.5;
-        self.3 = new_fn.clone();
-        self.4 = new_len;
-        let mut page_type = (self.2)();
-        if let Some(l) = page_type.length() { *l = self.4; }
-        if let Some(nav) = page_type.nav_fn() {
-            *nav = self.3.clone();
-        }
-        self.1 = page_type.build(ctx, theme);
-    }
-
-    pub fn new_builder(theme: &crate::Theme, page_builder: Box<dyn PageBuilder>) -> Box<dyn ScreenBuilder> {
-        let theme = theme.clone();
-        Box::new(move |ctx: &mut Context| Screen::new(ctx, &theme.clone(), page_builder.clone())) as Box<dyn ScreenBuilder>
-    }
+#[derive(Debug, Clone)]
+pub enum Page {
+    Static(PageType),
+    Refreshing(Box<dyn PageBuilder>)
 }
+
+pub trait PageBuilder: Debug + dyn_clone::DynClone {
+    fn poll(&mut self, ctx: &mut Context) -> bool;
+    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType;
+}
+
+dyn_clone::clone_trait_object!(PageBuilder);
 
 #[derive(Clone, Debug)]
 pub enum PageType {
@@ -172,6 +157,11 @@ impl PageType {
             PageType::Success{on_submit, ..} => on_submit.as_mut(),
             _ => None
         }
+    }
+
+    pub fn update(&mut self, ctx: &mut Context, theme: &Theme, new_len: usize, new_fn: Option<NavFn>) {
+        if let Some(l) = self.length() { *l = new_len; }
+        if let Some(nav) = self.nav_fn() { *nav = new_fn.clone(); }
     }
 
     pub fn build(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {

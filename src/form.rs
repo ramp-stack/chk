@@ -7,7 +7,7 @@ use pelican_ui::navigation::{NavigationEvent, Flow as PelicanFlow, FlowContainer
 use pelican_ui::components::SearchBar;
 use pelican_ui::utils::ValidationFn;
 
-use crate::{Review, Success, PageBuilder, FlowWrapper};
+use crate::{Page, Review, Success, PageBuilder, FlowWrapper};
 use crate::items::{EnumItem, Input, ListItem, Action, Display};
 use crate::closure::{FormSubmit, FormClosure, ValidityFn, FnMutClone};
 
@@ -86,7 +86,7 @@ impl Form {
 #[derive(Debug, Clone)]
 pub enum FormComplete {
     // Home,
-    Next(Box<dyn PageBuilder>),
+    Next(Page),
     Return(Box<dyn pelican_ui::Callback>),
     None,
 }
@@ -103,7 +103,11 @@ impl FormComplete {
                 ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| (function.clone())(ctx, &theme.clone())));
             },
             FormComplete::Next(page) => {
-                let flow = FlowWrapper::new(PelicanFlow::new(vec![(page()).build(ctx, &theme)]));
+                let page = match page {
+                    Page::Static(p) => p.build(ctx, &theme),
+                    Page::Refreshing(p) => p.build(ctx, &theme).build(ctx, &theme),
+                };
+                let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
                 ctx.emit(NavigationEvent::restart(flow));
             },  
             FormComplete::None => {}

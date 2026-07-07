@@ -38,7 +38,7 @@ impl StackPage {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(ctx: &mut Context, theme: &Theme, title: String, items: Vec<Box<dyn Drawable>>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> Self {
-        let icon = header.map(|(i, mut f)| (i, (f)(ctx, theme).build(ctx)));
+        let icon = header.map(|(i, mut f)| (i, (f)(ctx, theme).build(ctx, theme)));
         let (header, bumper) = match bumper {
             Bumper::Custom {label, action, secondary} => {
                 let on_click = match next {

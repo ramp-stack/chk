@@ -9,10 +9,9 @@ use pelican_ui::event::{Event, TickEvent};
 
 use crate::form::{Form, State, FormComplete};
 use crate::items::Input;
-use crate::page::{EditPage, PageType, FormPage, ReviewPage, SuccessPage};
-use crate::closure::{FormSubmit, NavFn, ScreenBuilder, PageBuilder};
-use crate::page::Screen;
-use crate::{Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
+use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
+use crate::closure::{FormSubmit, NavFn};
+use crate::{Listener, PageBuilder, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
 use air::Instance;
 use crate::profiles::Profile;
 
@@ -21,12 +20,9 @@ use std::cell::RefCell;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, Default)]
-pub struct Flow(Vec<Box<dyn ScreenBuilder>>);
+pub struct Flow(pub Vec<Page>);
 impl Flow{
-    pub fn new(theme: &Theme, pages: Vec<Box<dyn PageBuilder>>) -> Self {
-        let pages = pages.into_iter().map(|p| Screen::new_builder(theme, p)).collect::<Vec<_>>();
-        Flow(pages)
-    }
+    pub fn new(builders: Vec<Page>) -> Self {Flow(builders)}
 
     pub fn action_target(theme: &Theme, action: &str, past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
         let action_caps = action.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action[c.len_utf8()..]).unwrap_or_default();
@@ -51,17 +47,14 @@ impl Flow{
             Offset::Center
         );
 
-        Self::new(theme, vec![
-            Box::new(move || prompt.clone()),
-            Box::new(move || complete.clone()),
-        ])
+        Flow(vec![Page::Static(prompt), Page::Static(complete)])
     }
 
     pub fn from_form(form: Form) -> Self {
         match form {
             Form::Flow {theme, inputs, on_submit, review, success} => {
                 let theme = theme.clone();
-                let mut pages: Vec<Box<dyn ScreenBuilder>> = vec![];
+                let mut pages: Vec<Page> = vec![];
 
                 let t = theme.clone();
                 let submit = review.is_none().then(|| on_submit.clone());
@@ -75,27 +68,17 @@ impl Flow{
 
                 inputs.into_iter().rev().map(|input| {
                     let submit = submit.take();
-                    let page = Box::new(move || PageType::form(&input.title(), input.build(), input.validation(), submit.clone())) as Box<dyn PageBuilder>;
-                    Screen::new_builder(&theme, page)
-                }).collect::<Vec<Box<dyn ScreenBuilder>>>().into_iter().rev().for_each(|s| pages.push(s));
+                    Page::Static(PageType::form(&input.title(), input.build(), input.validation(), submit.clone()))
+                }).collect::<Vec<Page>>().into_iter().rev().for_each(|s| pages.push(s));
 
                 if let Some(review) = review {
-                    let review = Box::new(move || {
-                        let review = review.clone();
-                        PageType::review(&review.title, review.getter, on_submit.clone())
-                    }) as Box<dyn PageBuilder>;
-
-                    pages.push(Screen::new_builder(&theme, review));
+                    let review = Page::Static(PageType::review(&review.title, review.getter, on_submit.clone()));
+                    pages.push(review);
                 }
 
                 if let Some(success) = success {
-                    let success = Box::new(move || {
-                        println!("Built sucess");
-                        let submit = submit.take();
-                        let success = success.clone();
-                        PageType::success(&success.title, success.getter, submit.clone())
-                    }) as Box<dyn PageBuilder>;
-                    pages.push(Screen::new_builder(&theme, success));
+                    let success = Page::Static(PageType::success(&success.title, success.getter, submit.clone()));
+                    pages.push(success);
                 }
 
                 Flow(pages)
@@ -104,21 +87,21 @@ impl Flow{
                 let theme = theme;
                 let validations = inputs.iter().map(|i| i.validation()).collect::<Vec<_>>();
                 let items = inputs.into_iter().map(|i| i.build()).collect::<Vec<_>>();
-                let page = Box::new(move || PageType::edit(&title, items.clone(), display.clone(), validations.clone(), on_save.clone())) as Box<dyn PageBuilder>;
-                Flow(vec![Screen::new_builder(&theme, page)])
+                let page = Page::Static(PageType::edit(&title, items.clone(), display.clone(), validations.clone(), on_save.clone()));
+                Flow(vec![page])
             }
         }
     }
 
-    pub(crate) fn build(&mut self, ctx: &mut Context) -> Box<dyn Callback> {
-        let flow = self.build_as_flow(ctx);
+    pub(crate) fn build(&mut self, ctx: &mut Context, theme: &Theme) -> Box<dyn Callback> {
+        let flow = self.build_as_flow(ctx, theme);
 
         Box::new(move |ctx: &mut Context, _: &Theme| {
             ctx.emit(NavigationEvent::push(flow.clone()));
         })
     }
 
-    pub(crate) fn build_as_flow(&mut self, ctx: &mut Context) -> FlowWrapper {
+    pub(crate) fn build_as_flow(&mut self, ctx: &mut Context, theme: &Theme) -> FlowWrapper {
         let mut new: Vec<Box<dyn AppPage>> = vec![];
         let length = self.0.len();
         if self.0.is_empty() { return FlowWrapper::new(PelicanFlow::new(vec![])) }
@@ -129,18 +112,37 @@ impl Flow{
 
         pages.into_iter().rev().for_each(|mut page| {
             // let callback = (i == 0).then_some(self.1.clone()).flatten(); 
-            let mut page: Screen = (page)(ctx);
-            page.update(ctx, length, next_fn.take());
-            new.push(Box::new(page));
+            match page {
+                Page::Static(mut page) => {
+                    page.update(ctx, theme, length, next_fn.take());
+                    new.push(page.build(ctx, theme));
+                },
+                Page::Refreshing(page_builder) => {
+                    let mut listener = Listener::new(ctx, theme, page_builder, false);
+                    listener.update(ctx, next_fn.take(), length);
+                    new.push(Box::new(listener));
+                }
+            }
+            
             next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {
                 // if let Some(cb) = callback.clone() { (cb.clone())(ctx) } // on_submit
                 ctx.emit(NavigationEvent::Next);
             }))));
         });
 
-        let mut first = (first)(ctx);
-        if !new.is_empty() { first.update(ctx, length, next_fn.clone()); }
-        new.push(Box::new(first));
+        match first {
+            Page::Static(mut page) => {
+                page.update(ctx, theme, length, next_fn.take());
+                new.push(page.build(ctx, theme));
+            },
+            Page::Refreshing(page_builder) => {
+                let mut first = Listener::new(ctx, theme, page_builder, false);
+                if !new.is_empty() { first.update(ctx, next_fn.clone(), length); }
+                new.push(Box::new(first));
+            }
+        }
+
+        
         new.reverse();
 
         FlowWrapper::new(PelicanFlow::new(new.clone()))
@@ -153,42 +155,51 @@ pub struct FlowWrapper(Stack, PelicanFlow, #[skip] Vec<State>);
 impl OnEvent for FlowWrapper {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {        
         if event.downcast_ref::<TickEvent>().is_some() {
-            if let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>().as_mut() && let Some(page) = screen.1.downcast_mut::<ReviewPage>() {
+            let mut screen = self.1.current.as_mut().unwrap();
+            if let Some(listener) = screen.downcast_mut::<Listener>() {
+                *screen = listener.page.clone();
+            }
+
+            if let Some(page) = screen.downcast_mut::<ReviewPage>() {
                 page.on_change(self.2.clone());
-            } else if let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>().as_mut() && let Some(page) = screen.1.downcast_mut::<SuccessPage>() {
+            } else if let Some(page) = screen.downcast_mut::<SuccessPage>() {
                 page.on_change(ctx, self.2.clone());
             } else {
                 let index = self.1.index;
-                self.2 = Vec::new();
-                if self.1.stored.is_empty() && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() {
-                    if let Some(page) = screen.1.downcast_mut::<FormPage>() {
-                        page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                self.2.clear();
+
+                if self.1.stored.is_empty() {
+                    if let Some(page) = screen.downcast_mut::<FormPage>() {
+                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
                         page.on_change(self.2.clone());
-                    } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
-                        page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                    } else if let Some(page) = screen.downcast_mut::<EditPage>() {
+                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
                         page.on_change(self.2.clone());
                     }
                 }
 
-                for (i, each) in self.1.stored.iter_mut().enumerate() {
-                    if i == index && let Some(screen) = self.1.current.as_mut().unwrap().downcast_mut::<Screen>() {
-                        if let Some(page) = screen.1.downcast_mut::<FormPage>() {
-                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                for (i, stored) in self.1.stored.iter_mut().enumerate() {
+                    if i == index {
+                        if let Some(page) = screen.downcast_mut::<FormPage>() {
+                            page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
                             page.on_change(self.2.clone());
-                        } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
-                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
+                        } else if let Some(page) = screen.downcast_mut::<EditPage>() {
+                            page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
                             page.on_change(self.2.clone());
                         }
                     }
 
-                    if let Some(screen) = each.downcast_mut::<Screen>() {
-                        if let Some(page) = screen.1.downcast_mut::<FormPage>() {
-                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
-                            page.on_change(self.2.clone());
-                        } else if let Some(page) = screen.1.downcast_mut::<EditPage>() {
-                            page.1.content.children().iter().for_each(|child| Input::store_in(child, &mut self.2));
-                            page.on_change(self.2.clone());
-                        }
+                    let mut screen = stored;
+                    if let Some(listener) = screen.downcast_mut::<Listener>() {
+                        *screen = listener.page.clone();
+                    }
+
+                    if let Some(page) = screen.downcast_mut::<FormPage>() {
+                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
+                        page.on_change(self.2.clone());
+                    } else if let Some(page) = screen.downcast_mut::<EditPage>() {
+                        page.1.content.children().iter().for_each(|c| Input::store_in(c, &mut self.2));
+                        page.on_change(self.2.clone());
                     }
                 }
             }

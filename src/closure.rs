@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 use pelican_ui::{Context, theme::{Icons}};
-use crate::page::{Screen, PageType};
+use crate::page::{PageType};
 use crate::{ListItem, FormStorage, Display};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
@@ -97,50 +97,50 @@ impl std::fmt::Debug for NavFn {
     }
 }
 
-pub trait PageBuilder: FnMut() -> PageType + 'static {
-    fn clone_box(&self) -> Box<dyn PageBuilder>;
-}
+// pub trait PageBuilder: FnMut() -> PageType + 'static {
+//     fn clone_box(&self) -> Box<dyn PageBuilder>;
+// }
 
-impl<F> PageBuilder for F where F: FnMut() -> PageType + Clone + 'static {
-    fn clone_box(&self) -> Box<dyn PageBuilder> {
-        Box::new(self.clone())
-    }
-}
+// impl<F> PageBuilder for F where F: FnMut() -> PageType + Clone + 'static {
+//     fn clone_box(&self) -> Box<dyn PageBuilder> {
+//         Box::new(self.clone())
+//     }
+// }
 
-impl Clone for Box<dyn PageBuilder> {
-    fn clone(&self) -> Self {
-        self.as_ref().clone_box()
-    }
-}
+// impl Clone for Box<dyn PageBuilder> {
+//     fn clone(&self) -> Self {
+//         self.as_ref().clone_box()
+//     }
+// }
 
-impl std::fmt::Debug for dyn PageBuilder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PageBuilder")
-    }
-}
+// impl std::fmt::Debug for dyn PageBuilder {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "PageBuilder")
+//     }
+// }
 
 
-pub trait ScreenBuilder: FnMut(&mut Context) -> Screen + 'static {
-    fn clone_box(&self) -> Box<dyn ScreenBuilder>;
-}
+// pub trait ScreenBuilder: FnMut(&mut Context) -> Screen + 'static {
+//     fn clone_box(&self) -> Box<dyn ScreenBuilder>;
+// }
 
-impl<F> ScreenBuilder for F where F: FnMut(&mut Context) -> Screen + Clone + 'static {
-    fn clone_box(&self) -> Box<dyn ScreenBuilder> {
-        Box::new(self.clone())
-    }
-}
+// impl<F> ScreenBuilder for F where F: FnMut(&mut Context) -> Screen + Clone + 'static {
+//     fn clone_box(&self) -> Box<dyn ScreenBuilder> {
+//         Box::new(self.clone())
+//     }
+// }
 
-impl Clone for Box<dyn ScreenBuilder> {
-    fn clone(&self) -> Self {
-        self.as_ref().clone_box()
-    }
-}
+// impl Clone for Box<dyn ScreenBuilder> {
+//     fn clone(&self) -> Self {
+//         self.as_ref().clone_box()
+//     }
+// }
 
-impl std::fmt::Debug for dyn ScreenBuilder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ScreenBuilder")
-    }
-}
+// impl std::fmt::Debug for dyn ScreenBuilder {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "ScreenBuilder")
+//     }
+// }
 
 pub trait SuccessClosure: FnMut(&mut Context) -> [String; 3] + 'static {
     fn clone_box(&self) -> Box<dyn SuccessClosure>;

@@ -17,6 +17,7 @@ use air::names::Name;
 use air::Instance;
 use crate::profiles::Profile;
 
+use crate::Page;
 use crate::form::State;
 use crate::flow::Flow;
 use crate::ListItemGetter;
@@ -331,7 +332,7 @@ impl ListItem {
         let has_flow = flow.is_some();
         let closure = Box::new(move |ctx: &mut Context, theme: &Theme| {
             // (on_click.clone())(ctx, theme);
-            if let Some(mut f) = flow.clone() {(f.build(ctx))(ctx, theme);}
+            if let Some(mut f) = flow.clone() {(f.build(ctx, theme))(ctx, theme);}
         });
 
         PelicanListItem::new(theme, avatar.clone(), 
@@ -392,7 +393,7 @@ impl Action {
     pub fn scan_qr(theme: &Theme, instructions: &str) -> Self {
         let instructions = instructions.to_string();
         Action::Flow {
-            flow: Flow::new(theme, vec![Box::new(move || crate::PageType::scan_qr(&instructions.clone(), None))]),
+            flow: Flow::new(vec![Page::Static(crate::PageType::scan_qr(&instructions.clone(), None))]),
         }
     }
 
@@ -404,17 +405,17 @@ impl Action {
         Action::Flow { flow }
     }
 
-    pub fn block(theme: &Theme, profile: Instance<Profile>) -> Self {
+    pub fn block(theme: &Theme, mut profile: Instance<Profile>) -> Self {
         let theme = theme.clone();
-        let avatar = profile.pending().avatar.clone();
-        let username = profile.pending().username.clone();
+        let avatar = profile.load_pending().avatar.clone();
+        let username = profile.load_pending().username.clone();
         Action::flow(Flow::action_target(&theme, "block", "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
     }
 
-    pub fn unblock(theme: &Theme, profile: Instance<Profile>) -> Self {
+    pub fn unblock(theme: &Theme, mut profile: Instance<Profile>) -> Self {
         let theme = theme.clone();
-        let avatar = profile.pending().avatar.clone();
-        let username = profile.pending().username.clone();
+        let avatar = profile.load_pending().avatar.clone();
+        let username = profile.load_pending().username.clone();
         Action::flow(Flow::action_target(&theme, "unblock", "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
     }
 
@@ -444,7 +445,7 @@ impl Action {
 
             Action::Flow {flow} => {
                 let mut flow = flow.clone();
-                Box::new(move |ctx: &mut Context, theme: &Theme| {flow.build(ctx)(ctx, theme);})
+                Box::new(move |ctx: &mut Context, theme: &Theme| {flow.build(ctx, theme)(ctx, theme);})
             }
 
             Action::Paste => {
@@ -460,13 +461,14 @@ impl Action {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut instance = ctx.create::<crate::messages::ChatRoom>(air::Id::random());
-                    let profile = Profile::from_name(ctx, recipient);
-                    instance.apply(crate::messages::AddMember(recipient, profile.pending().username.to_string()));
+                    let mut profile = Profile::from_name(ctx, recipient);
+                    instance.apply(crate::messages::AddMember(recipient, profile.load_pending().username.to_string()));
                     instance.share(recipient);
                     println!("Created room with members {:?}", recipient);
 
-                    let mut flow = Flow::new(&theme, vec![Box::new(move || crate::PageType::messaging(instance.clone()))]);
-                    flow.build(ctx)(ctx, theme);
+                    // NOT STATIC
+                    let mut flow = Flow::new(vec![Page::Static(crate::PageType::messaging(instance.clone()))]);
+                    flow.build(ctx, theme)(ctx, theme);
                 })
             }
 

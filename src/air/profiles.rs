@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SetUsernameInit(pub String);
 impl Reactant<Profile> for SetUsernameInit {
-    type Result = ();
+    type Output = ();
 
     fn id() -> Id {Id::hash("SetUsernameInit")}
 
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
         if !profile.init {
             profile.init = true;
             profile.username = self.0.to_string();
@@ -32,11 +32,11 @@ impl Reactant<Profile> for SetUsernameInit {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeUsername(pub String);
 impl Reactant<Profile> for ChangeUsername {
-    type Result = ();
+    type Output = ();
 
     fn id() -> Id {Id::hash("ChangeUsername")}
 
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
         profile.username = self.0.to_string();
     }
 }
@@ -44,11 +44,11 @@ impl Reactant<Profile> for ChangeUsername {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeNotes(pub String);
 impl Reactant<Profile> for ChangeNotes {
-    type Result = ();
+    type Output = ();
 
     fn id() -> Id {Id::hash("ChangeNotes")}
 
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
         profile.notes = self.0.to_string();
     }
 }
@@ -56,11 +56,11 @@ impl Reactant<Profile> for ChangeNotes {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeAvatar(pub AvatarContent);
 impl Reactant<Profile> for ChangeAvatar {
-    type Result = ();
+    type Output = ();
 
     fn id() -> Id {Id::hash("ChangeAvatar")}
 
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Result {
+    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
         profile.avatar = self.0.clone();
     }
 }
@@ -115,8 +115,8 @@ impl Profile {
 
     pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<Instance<Profile>> {
         ctx.list::<Profile>().iter_mut().find_map(|profile| {
-            if profile.pending().name == Some(name) {
-                Some(profile.clone())
+            if profile.1.load_pending().name == Some(name) {
+                Some(profile.1.clone())
             } else {
                 None
             }

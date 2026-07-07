@@ -36,7 +36,7 @@ impl RootPage {
         
         let header_icon = header.map(|(s, flow)| {
             let mut flow = flow.clone();
-            (s, Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>) 
+            (s, Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>) 
         });
 
         let header = Header::home(theme, &title, header_icon);
@@ -45,12 +45,12 @@ impl RootPage {
 
         let second = bumper_b.as_mut().map(|(t, flow)| {
             let mut flow = flow.clone();
-            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
+            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
         });
 
         let first = bumper_a.as_mut().map(|(t, flow)| {
             let mut flow = flow.clone();
-            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx))(ctx, theme)) as Box<dyn Callback>)
+            (t.to_string(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
         });
 
         let bumper = match first.is_some() || second.is_some() {

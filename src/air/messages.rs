@@ -52,11 +52,11 @@ impl std::fmt::Display for MemberExists {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AddMember(pub Name, pub String);
 impl Reactant<ChatRoom> for AddMember {
-    type Result = Result<(), MemberExists>;
+    type Output = Result<(), MemberExists>;
 
     fn id() -> Id {Id::hash("AddMember")}
 
-    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Result {
+    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Output {
         if room.members.contains(&self.0) {return Err(MemberExists)}
         room.members.push(self.0);
 
@@ -83,11 +83,11 @@ impl std::fmt::Display for MessageExists {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SendMessage(pub String);
 impl Reactant<ChatRoom> for SendMessage {
-    type Result = Result<(), MessageExists>;
+    type Output = Result<(), MessageExists>;
 
     fn id() -> Id {Id::hash("SendMessage")}
 
-    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Result {
+    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Output {
         room.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: self.0});
         Ok(())
     }
@@ -96,11 +96,11 @@ impl Reactant<ChatRoom> for SendMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChangeRoomName(pub String);
 impl Reactant<ChatRoom> for ChangeRoomName {
-    type Result = ();
+    type Output = ();
 
     fn id() -> Id {Id::hash("ChangeRoomName")}
 
-    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Result {
+    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Output {
         room.name.0 = self.0.to_string();
         room.name.1 = true;
     }
@@ -135,7 +135,7 @@ impl Message {
         pelican_ui::components::Message {
             message: self.body.to_string(),
             timestamp: Timestamp::from_u64(self.timestamp),
-            author: Profile::from_name(ctx, self.author).pending().to_pel(),
+            author: Profile::from_name(ctx, self.author).load_pending().to_pel(),
         }
     }
 }

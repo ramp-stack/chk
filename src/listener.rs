@@ -7,58 +7,83 @@ use pelican_ui::event::{Event, TickEvent};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::Context;
 
-use crate::{PageTypeToAppPageFn, PageBuilderContractFn, PageType};
+use crate::{PageBuilder, NavFn, PageTypeToAppPageFn, PageBuilderContractFn, PageType};
 
 use air::{Contract, Instance};
 use std::cmp::PartialEq;
 
 #[derive(Debug, Component, Clone)]
-pub struct Listener<C: Contract + PartialEq> {
+pub struct Listener {
     layout: Stack,
-    page: Box<dyn AppPage>,
-    #[skip] instance: Instance<C>,
-    #[skip] contract: C,
-    #[skip] builder: Box<dyn PageTypeToAppPageFn>,
-    #[skip] page_type: Box<dyn PageBuilderContractFn<C>>,
+    pub page: Box<dyn AppPage>,
+    #[skip] builder: Box<dyn PageBuilder>,
     #[skip] theme: Theme,
+    #[skip] is_root: bool,
+    #[skip] next: Option<NavFn>,
+    #[skip] flow_len: usize,
 }
 
-impl<C: Contract + PartialEq> AppPage for Listener<C> {}
+impl AppPage for Listener {}
 
-impl<C: Contract + PartialEq> OnEvent for Listener<C> {
-    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+impl Listener {
+    pub fn new(
+        ctx: &mut Context,
+        theme: &Theme,
+        mut builder: Box<dyn PageBuilder>,
+        is_root: bool,
+    ) -> Self {
+        let page_type = builder.build(ctx, theme);
+
+        let page = if is_root {
+            page_type.build_root(ctx, theme)
+        } else {
+            page_type.build(ctx, theme)
+        };
+
+        Self {
+            layout: Stack::default(),
+            page,
+            builder,
+            theme: theme.clone(),
+            is_root,
+            next: None,
+            flow_len: 0,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        ctx: &mut Context,
+        next: Option<NavFn>,
+        length: usize,
+    ) {
+        let mut page_type = self.builder.build(ctx, &self.theme);
+        page_type.update(ctx, &self.theme, length, next.clone());
+
+        self.page = if self.is_root {
+            page_type.build_root(ctx, &self.theme)
+        } else {
+            page_type.build(ctx, &self.theme)
+        };
+
+        self.next = next;
+        self.flow_len = length;
+    }
+}
+
+impl OnEvent for Listener {
+    fn on_event(
+        &mut self,
+        ctx: &mut Context,
+        _sized: &SizedTree,
+        event: Box<dyn Event>,
+    ) -> Vec<Box<dyn Event>> {
         if event.downcast_ref::<TickEvent>().is_some() {
-            let new_contract = self.profile.pending().clone();
-            if self.contract != new_contract {
-                self.contract = new_contract;
-                let page_type = (self.page_type)(ctx, self.contract.clone());
-                self.page = (self.builder)(ctx, &self.theme, page_type);
+            if self.builder.poll(ctx) {
+                self.update(ctx, self.next.clone(), self.flow_len);
             }
         }
 
         vec![event]
-    }
-}
-
-impl<C: Contract + PartialEq> Listener<C> {
-    pub fn new(
-        ctx: &mut Context, 
-        theme: &Theme, 
-        instance: Instance<C>, 
-        contract: C, 
-        mut page_type: impl PageBuilderContractFn<C> + Clone + 'static, 
-        mut builder: impl PageTypeToAppPageFn + Clone + 'static, 
-    ) -> Self {
-        let pt = page_type(ctx, contract.clone());
-        let page = builder(ctx, theme, pt);
-        Listener {
-            layout: Stack::default(),
-            page,
-            instance,
-            contract,
-            builder: Box::new(builder),
-            page_type: Box::new(page_type),
-            theme: theme.clone()
-        }
     }
 }
