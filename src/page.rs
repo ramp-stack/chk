@@ -46,8 +46,13 @@ impl Page {
         Page::Refreshing(Box::new(ContractUpdatesMultiples::new(ctx, builder)))
     }
 
-    pub fn profile(profile: &mut Instance<Profile>) -> Self {
-        Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+    pub fn profile(ctx: &mut Context, theme: &Theme, profile: &mut Instance<Profile>) -> Self {
+        let my_name = profile.load_pending().name.unwrap();
+        let is_me = my_name == ctx.me();
+        match is_me {
+            true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
+            false => Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+        }
     }
 
     pub fn messaging(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
@@ -121,15 +126,26 @@ impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
 pub struct ContractUpdatesMultiples<C: Contract + PartialEq>(Box<dyn PageBuilderContractMultiplesFn<C>>, Vec<C>);
 impl<C: Contract + PartialEq> ContractUpdatesMultiples<C> {
     pub fn new(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        let new = ctx.instances::<C>().iter_mut().map(|(_, c)| c.load_pending().clone()).collect::<Vec<_>>();
+        let mut instances = ctx.instances::<C>();
+        let mut instances = instances.iter_mut().collect::<Vec<_>>();
+        instances.sort_by_key(|(id, _)| *id);
+        let new = instances.into_iter().map(|(_, instance)| instance.load_pending().clone()).collect::<Vec<_>>();
+
         ContractUpdatesMultiples(Box::new(builder), new)
     }
 }
 impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = ctx.instances::<C>().iter_mut().map(|(_, c)| c.load_pending().clone()).collect::<Vec<_>>();
+        let mut instances = ctx.instances::<C>();
+        let mut instances = instances.iter_mut().collect::<Vec<_>>();
+        instances.sort_by_key(|(id, _)| *id);
+        let current = instances.into_iter().map(|(_, instance)| instance.load_pending().clone()).collect::<Vec<_>>();
+
         let has_changed = current != self.1;
-        if has_changed {self.1 = current;}
+        if has_changed {
+            println!("Updated");
+            self.1 = current;
+        }
         has_changed
     }
 

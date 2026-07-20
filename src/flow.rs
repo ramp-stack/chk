@@ -135,27 +135,15 @@ impl OnEvent for FlowWrapper {
             self.2.clear();
 
             if self.1.stored.is_empty() {
-                Self::handle_page(
-                    self.1.current.as_mut().unwrap().as_mut(),
-                    ctx,
-                    &mut self.2,
-                );
+                Self::handle_page(self.1.current.as_mut().unwrap().as_mut(), ctx, &mut self.2);
             }
 
             for (i, stored) in self.1.stored.iter_mut().enumerate() {
                 if i == index {
-                    Self::handle_page(
-                        self.1.current.as_mut().unwrap().as_mut(),
-                        ctx,
-                        &mut self.2,
-                    );
+                    Self::handle_page(self.1.current.as_mut().unwrap().as_mut(), ctx, &mut self.2);
                 }
 
-                Self::handle_page(
-                    stored.as_mut(),
-                    ctx,
-                    &mut self.2,
-                );
+                Self::handle_page(stored.as_mut(), ctx, &mut self.2 );
             }
         }
         vec![event]
@@ -179,14 +167,10 @@ impl FlowWrapper {
         } else if let Some(page) = page.downcast_mut::<SuccessPage>() {
             page.on_change(ctx, inputs.clone());
         } else if let Some(page) = page.downcast_mut::<FormPage>() {
-            page.1.content.children()
-                .iter()
-                .for_each(|c| Input::store_in(c, inputs));
+            page.1.content.children().iter().for_each(|c| Input::store_in(c, inputs));
             page.on_change(inputs.clone());
         } else if let Some(page) = page.downcast_mut::<EditPage>() {
-            page.1.content.children()
-                .iter()
-                .for_each(|c| Input::store_in(c, inputs));
+            page.1.content.children().iter().for_each(|c| Input::store_in(c, inputs));
             page.on_change(inputs.clone());
         }
     }

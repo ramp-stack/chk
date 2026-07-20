@@ -86,7 +86,7 @@ macro_rules! run {
                 Rc::new(RefCell::new(($chkapp)(ctx)));
 
             let assets = include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources");
-            let theme: Theme = app.borrow().theme().to_pelican(Assets::new(assets));
+            let theme: Theme = app.borrow().theme().to_pelican(Assets::new(vec![assets]));
             let roots: Vec<RootInfo> = app.borrow().roots(ctx, &theme);
             let roots = roots.into_iter()
                 .map(|root| root.0)

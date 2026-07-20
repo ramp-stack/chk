@@ -97,18 +97,15 @@ impl SuccessPage {
     }
 
     pub fn on_change(&mut self, ctx: &mut Context, new: Vec<State>) {
-        if !self.4 {
-            self.4 = true;
-            use pelican_ui::colors;
-            use pelican_ui::components::Icon;
-            if let Some(on_submit) = &mut self.5 {(on_submit)(ctx, &new);}
-            let theme = self.3.clone();
-            let (icon, description) = (self.2)(new);
-            self.1.content = Content::new(Offset::Center, drawables![
-                Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0),
-                ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
-            ], Box::new(|_, _| true));
-        }
+        use pelican_ui::colors;
+        use pelican_ui::components::Icon;
+        if let Some(on_submit) = &mut self.5 {(on_submit)(ctx, &new);}
+        let theme = self.3.clone();
+        let (icon, description) = (self.2)(new);
+        self.1.content = Content::new(Offset::Center, drawables![
+            Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0),
+            ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None)
+        ], Box::new(|_, _| true));
     }
 }
 
@@ -141,7 +138,7 @@ impl MessagesPage {
             (false, Some(profile)) => {
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut profile = profile.clone();
-                    (Flow::new(vec![Page::profile(&mut profile)]).build(ctx, theme))(ctx, theme);
+                    (Flow::new(vec![Page::profile(ctx, theme, &mut profile)]).build(ctx, theme))(ctx, theme);
                 }) as Box<dyn Callback>
             }
             _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
@@ -210,7 +207,7 @@ impl GroupMessageInfoPage {
             let mut p = profile.clone();
             let deref = profile.load_pending();
             if deref.name.unwrap() != ctx.me() {
-                let view_contact = Flow::new(vec![Page::profile(&mut p)]);
+                let view_contact = Flow::new(vec![Page::profile(ctx, &theme, &mut p)]);
                 Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
             } else {None}
         }).collect::<Vec<crate::ListItem>>();
@@ -223,19 +220,6 @@ impl GroupMessageInfoPage {
 
 pub struct ProfilePage;
 impl ProfilePage {
-    pub fn new(ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>) -> Box<dyn AppPage> {
-        let my_name = profile.load_pending().name.unwrap();
-        let is_me = my_name == ctx.me();
-        match is_me {
-            true => ProfilePage::editing(theme, is_me, profile).build_root(ctx, theme),
-            false => ProfilePage::view_only(ctx, theme, profile, is_me)
-        }
-    }
-
-    pub fn view_only(ctx: &mut Context, theme: &Theme, mut p: Instance<Profile>, is_me: bool) -> Box<dyn AppPage> {
-        Box::new(Listener::new(ctx, theme, Page::profile(&mut p).builder().unwrap(), false))
-    }
-
     pub fn editing(theme: &Theme, is_me: bool, mut profile: Instance<Profile>) -> PageType {
         let mut p = profile.clone();
         let closure = Box::new(move |ctx: &mut Context, objects: &Vec<State>| {

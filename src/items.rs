@@ -169,7 +169,7 @@ pub enum Display {
     Icon {icon: Icons},
     Image {image: String, size: (f32, f32)},
     Cta {label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem>},
-    Table {label: String, items: Vec<TableItem>},
+    Table {label: String, items: Vec<TableItem>, actions: Option<Vec<ActionItem>>},
     Currency {amount: Box<dyn NumberGetter>, instructions: String},
     Number {number: Box<dyn NumberGetter>, instructions: String},
     List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
@@ -207,8 +207,8 @@ impl Display {
         Display::Cta {label: label.to_string(), data: data.map(|s| s.to_string()), instructions: instructions.to_string(), actions}
     }
 
-    pub fn table(label: &str, items: Vec<TableItem>) -> Self {
-        Display::Table {label: label.to_string(), items}
+    pub fn table(label: &str, items: Vec<TableItem>, actions: Option<Vec<ActionItem>>) -> Self {
+        Display::Table {label: label.to_string(), items, actions}
     }
 
     pub fn qr_code(data: &str, instructions: &str) -> Self {
@@ -247,7 +247,13 @@ impl Display {
                     ActionData {label: label.to_string(), active: active.clone(), icon: *icon, on_click}
                 }).collect::<Vec<ActionData>>()),
             )],
-            Display::Table {label, items} => drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), None)],
+            Display::Table {label, items, actions} => {
+                let actions = actions.clone().map(|a| a.iter().map(|ActionItem(action, label, active, icon)| {
+                    let on_click: Box<dyn Callback> = action.get();
+                    ActionData {label: label.to_string(), active: active.clone(), icon: *icon, on_click}
+                }).collect::<Vec<ActionData>>());
+                drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), actions)]
+            },
             Display::Currency {amount, instructions} => drawables![NumericalInput::display_currency(theme, amount.clone(), instructions)],
             Display::Number {number, instructions} => drawables![NumericalInput::display_number(theme, number.clone(), instructions)],
             Display::List {label, items, instructions, ..} => {
