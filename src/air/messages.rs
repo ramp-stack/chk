@@ -41,7 +41,9 @@ impl Contract for ChatRoom {
                 self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: message});
             },
             ChatRoomAction::Share(recipient) => {
-                self.members.push(recipient);
+                if !self.members.contains(&recipient) {
+                    self.members.push(recipient);
+                }
             }
         }
         

@@ -122,7 +122,7 @@ impl MessagesPage {
         let room_data = room.pending().clone();
         let my_name = ctx.me();
 
-        let mut profiles = room_data.members.clone().into_iter().filter(|n| *n != my_name)
+        let mut profiles = room_data.members.clone().into_iter()
             .map(|n| Profile::from_name(ctx, n)).collect::<Vec<_>>();
 
         let deref_profiles = profiles.iter_mut()
@@ -149,7 +149,8 @@ impl MessagesPage {
             }) as Box<dyn Callback>,
         };
 
-        let header = Header::messaging(ctx, theme, pel_profiles, flow_len, info);
+        let title = room_data.name(ctx);
+        let header = Header::messaging(ctx, theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
         let bumper = PelicanBumper::input(theme, "Message...",  move |_ctx: &mut Context, val: &mut String| {
@@ -187,8 +188,8 @@ impl PageBuilder for ViewMessages {
     fn poll(&mut self, ctx: &mut Context) -> bool {
         let current = (*self.0.pending()).clone();
         // println!("Messages len {} and new {}", self.1.messages.len(), current.messages.len());
-        // let profiles = current.members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
-        let has_changed = current != self.1; // || profiles != self.2;
+        let profiles = current.members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
+        let has_changed = current != self.1 || profiles != self.2;
         if has_changed {self.1 = current;}
         has_changed
     }
