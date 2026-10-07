@@ -7,7 +7,7 @@ use crate::form::{State, FormValidState, FormComplete};
 use pelican_ui::theme::Theme;
 use pelican_ui::navigation::AppPage;
 
-use air::{Contract, Instance};
+use maverick_os::air::{Contract, Instance};
 
 use std::rc::Rc;
 use std::cell::RefCell;

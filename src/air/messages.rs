@@ -1,9 +1,7 @@
 use pelican_ui::Context;
 use pelican_ui::utils::Timestamp;
 
-use air::names::{Id, Name};
-use air::{Metadata, Contract, Reactants, Reactant};
-use air::Instance;
+use maverick_os::air::{Id, Name, Metadata, Contract, Instance};
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -14,29 +12,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::profiles::Profile;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChatRoom {
     pub members: Vec<Name>,
     pub messages: Vec<Message>,
     pub id: Id,
 }
 
-impl ChatRoom {
-    pub fn name(&self, ctx: &mut Context) -> String {
-        if self.members.len() > 2 {
-            "Group message".to_string()
-        } else {
-            let members = self.members.iter().filter(|m| **m != ctx.me()).collect::<Vec<_>>();
-            let mut profile = Profile::from_name(ctx, *members[0]);
-            profile.load_pending().username.to_string()
-        }
-    }
-}
-
 impl Contract for ChatRoom {
     type Init = Id;
+    type Message = ChatRoomAction;
+    type Result = usize;
 
-    fn id() -> Id {Id::hash("ChatRoom2.10")}
+    fn id() -> Id {Id::hash("ChatRoom")}
 
     fn init(init: Self::Init, metadata: Metadata) -> Self {
         ChatRoom {
@@ -46,55 +34,47 @@ impl Contract for ChatRoom {
         }
     }
 
-    fn reactants() -> Reactants<ChatRoom> {
-        Reactants::default().add::<SendMessage>().add::<AddMember>()
+    // Send message
+    fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
+        match message {
+            ChatRoomAction::SendMessage(message) => {
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: message});
+            },
+            ChatRoomAction::Share(recipient) => {
+                self.members.push(recipient);
+            }
+        }
+        
+        self.messages.len()
     }
 }
 
-#[allow(unused)]
-#[derive(Debug, Clone)]
-pub struct MemberExists;
-impl std::error::Error for MemberExists {}
-impl std::fmt::Display for MemberExists {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{:?}", self)}
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AddMember(pub Name);
-impl Reactant<ChatRoom> for AddMember {
-    type Output = Result<(), MemberExists>;
-
-    fn id() -> Id {Id::hash("AddMember")}
-
-    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Output {
-        if room.members.contains(&self.0) {return Err(MemberExists)}
-        room.members.push(self.0);
-        Ok(())
+impl ChatRoom {
+    pub fn name(&self, ctx: &mut Context) -> String {
+        if self.members.len() > 2 {
+            "Group message".to_string()
+        } else {
+            let members = self.members.iter().collect::<Vec<_>>();
+            
+            members.first().map(|p| {
+                let mut profile = Profile::from_name(ctx, **p);
+                if **p == ctx.me() {
+                    format!("{} (You)", profile.pending().username)
+                } else {
+                    profile.pending().username.to_string()
+                }
+            }).unwrap_or("Orange User".to_string())
+        }
     }
 }
 
-#[allow(unused)]
-#[derive(Debug, Clone)]
-pub struct MessageExists(Id);
-impl std::error::Error for MessageExists {}
-impl std::fmt::Display for MessageExists {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "{:?}", self)}
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub enum ChatRoomAction {
+    SendMessage(String),
+    Share(Name)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SendMessage(pub String);
-impl Reactant<ChatRoom> for SendMessage {
-    type Output = Result<(), MessageExists>;
-
-    fn id() -> Id {Id::hash("SendMessage")}
-
-    fn apply(self, room: &mut ChatRoom, metadata: Metadata) -> Self::Output {
-        room.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: self.0});
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct Message {
     pub author: Name,
     pub body: String,
@@ -123,7 +103,7 @@ impl Message {
         pelican_ui::components::Message {
             message: self.body.to_string(),
             timestamp: Timestamp::from_u64(self.timestamp),
-            author: Profile::from_name(ctx, self.author).load_pending().to_pel(),
+            author: Profile::from_name(ctx, self.author).pending().to_pel(),
         }
     }
 }

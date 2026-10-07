@@ -7,15 +7,14 @@ use pelican_ui::navigation::{NavigationEvent, Flow as PelicanFlow, FlowContainer
 use pelican_ui::components::SearchBar;
 use pelican_ui::utils::ValidationFn;
 
-use crate::{Page, Review, Success, PageBuilder, FlowWrapper};
+use crate::{Flow, Page, Review, Success, PageBuilder, FlowWrapper};
 use crate::items::{EnumItem, Input, ListItem, Action, Display};
 use crate::closure::{FormSubmit, FormClosure, ValidityFn, FnMutClone};
 
-use air::names::Name;
+use maverick_os::air::Name;
 
 use std::collections::HashMap;
 use std::fmt::Debug;
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
@@ -26,7 +25,6 @@ pub enum State {
     Search(Vec<Name>),
     ScanCode(Option<String>),
 }
-
 
 #[derive(Clone, Debug)]
 pub enum NumberVariant {
@@ -76,7 +74,6 @@ impl Form {
     }
 }
 
-
 // When a form is completed, this is what can happen
 
 // 1. Navigate to a new page
@@ -103,11 +100,12 @@ impl FormComplete {
                 ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| (function.clone())(ctx, &theme.clone())));
             },
             FormComplete::Next(page) => {
-                let page = match page {
-                    Page::Static(p) => p.build(ctx, &theme),
-                    Page::Refreshing(p) => p.build(ctx, &theme).build(ctx, &theme),
-                };
-                let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
+                let flow = Flow::new(vec![page.clone()]).build_as_flow(ctx, theme);
+                // let page = match page {
+                //     Page::Static(p) => p.build(ctx, &theme),
+                //     Page::Refreshing(p) => p.build(ctx, &theme).build(ctx, &theme),
+                // };
+                // let flow = FlowWrapper::new(PelicanFlow::new(vec![page]));
                 ctx.emit(NavigationEvent::restart(flow));
             },  
             FormComplete::None => {}

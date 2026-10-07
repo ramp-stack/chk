@@ -13,8 +13,7 @@ use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
 use crate::closure::{PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
-use air::{Instance, Contract};
-use air::names::Id;
+use maverick_os::air::{Instance, Contract, Id};
 
 use crate::messages::ChatRoom;
 use crate::profiles::Profile;
@@ -47,7 +46,7 @@ impl Page {
     }
 
     pub fn profile(ctx: &mut Context, theme: &Theme, profile: &mut Instance<Profile>) -> Self {
-        let my_name = profile.load_pending().name.unwrap();
+        let my_name = profile.pending().name.unwrap();
         let is_me = my_name == ctx.me();
         match is_me {
             true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
@@ -104,12 +103,12 @@ impl Page {
 pub struct ContractUpdates<C: Contract + PartialEq>(Box<dyn PageBuilderContractFn<C>>, Instance<C>, C);
 impl<C: Contract + PartialEq> ContractUpdates<C> {
     pub fn new(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        ContractUpdates(Box::new(builder), contract.clone(), contract.load_pending().clone())
+        ContractUpdates(Box::new(builder), contract.clone(), (*contract.pending()).clone())
     }
 }
 impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = self.1.load_pending().clone();
+        let current = (*self.1.pending()).clone();
         let has_changed = current != self.2;
         if has_changed {self.2 = current;}
         has_changed
@@ -126,20 +125,20 @@ impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
 pub struct ContractUpdatesMultiples<C: Contract + PartialEq>(Box<dyn PageBuilderContractMultiplesFn<C>>, Vec<C>);
 impl<C: Contract + PartialEq> ContractUpdatesMultiples<C> {
     pub fn new(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        let mut instances = ctx.instances::<C>();
+        let mut instances = ctx.list::<C>();
         let mut instances = instances.iter_mut().collect::<Vec<_>>();
         instances.sort_by_key(|(id, _)| *id);
-        let new = instances.into_iter().map(|(_, instance)| instance.load_pending().clone()).collect::<Vec<_>>();
+        let new = instances.into_iter().map(|(_, instance)| (*instance.pending()).clone()).collect::<Vec<_>>();
 
         ContractUpdatesMultiples(Box::new(builder), new)
     }
 }
 impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let mut instances = ctx.instances::<C>();
+        let mut instances = ctx.list::<C>();
         let mut instances = instances.iter_mut().collect::<Vec<_>>();
         instances.sort_by_key(|(id, _)| *id);
-        let current = instances.into_iter().map(|(_, instance)| instance.load_pending().clone()).collect::<Vec<_>>();
+        let current = instances.into_iter().map(|(_, instance)| (*instance.pending()).clone()).collect::<Vec<_>>();
 
         let has_changed = current != self.1;
         if has_changed {
@@ -150,7 +149,7 @@ impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
     }
 
     fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let new = ctx.instances::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
+        let new = ctx.list::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
         (self.0)(ctx, theme, new)
     }
 }

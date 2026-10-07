@@ -9,7 +9,7 @@ use pelican_ui::Context;
 
 use crate::{PageBuilder, NavFn, PageTypeToAppPageFn, PageBuilderContractFn, PageType};
 
-use air::{Contract, Instance};
+use maverick_os::air::{Contract, Instance};
 use std::cmp::PartialEq;
 
 #[derive(Debug, Component, Clone)]

@@ -12,7 +12,7 @@ use crate::items::Input;
 use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, NavFn};
 use crate::{Listener, PageBuilder, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
-use air::Instance;
+use maverick_os::air::Instance;
 use crate::profiles::Profile;
 
 use std::rc::Rc;
