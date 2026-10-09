@@ -467,7 +467,7 @@ impl Action {
                     println!("created..");
                     instance.send(crate::messages::ChatRoomAction::Share(recipient));
                     println!("Added recipient to list");
-                    // instance.share(recipient);
+                    instance.share(recipient);
                     println!("Shared with recipient");
                     println!("Created room with members {:?}", recipient);
 

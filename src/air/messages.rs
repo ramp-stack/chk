@@ -53,19 +53,19 @@ impl Contract for ChatRoom {
 
 impl ChatRoom {
     pub fn name(&self, ctx: &mut Context) -> String {
-        if self.members.len() > 2 {
-            "Group message".to_string()
-        } else {
-            let members = self.members.iter().collect::<Vec<_>>();
-            
-            members.first().map(|p| {
-                let mut profile = Profile::from_name(ctx, **p);
-                if **p == ctx.me() {
-                    format!("{} (You)", profile.pending().username)
-                } else {
-                    profile.pending().username.to_string()
-                }
-            }).unwrap_or("Orange User".to_string())
+        if self.members.len() > 2 { return "Group message".into(); }
+
+        let member = match self.members.len() == 1 {
+            true => self.members[0],
+            false => *self.members.iter().find(|p| **p != ctx.me()).unwrap()
+        };
+
+        let profile = Profile::from_name(ctx, member);
+        let username = &profile.pending().username;
+
+        match member == ctx.me() {
+            true => format!("{username} (You)"),
+            false => username.to_string()
         }
     }
 }

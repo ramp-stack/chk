@@ -123,10 +123,13 @@ impl MessagesPage {
         let my_name = ctx.me();
 
         let mut profiles = room_data.members.clone().into_iter()
-            .map(|n| Profile::from_name(ctx, n)).collect::<Vec<_>>();
+            .map(|n| Profile::from_name(ctx, n))
+            .filter(|p| p.pending().name != Some(my_name))
+            .collect::<Vec<_>>();
 
         let deref_profiles = profiles.iter_mut()
-            .map(|p| (*p.pending()).clone()).collect::<Vec<Profile>>();
+            .map(|p| (*p.pending()).clone())
+            .collect::<Vec<Profile>>();
 
         let is_group = deref_profiles.len() > 1;
 
@@ -241,7 +244,7 @@ impl ProfilePage {
         let mut avatar = profile.clone();
         let mut username = profile.clone();
         let mut notes = profile.clone();
-        let p = profile.pending();
+        let p = (*profile.pending()).clone();
         let my_name = p.name.unwrap();
         let title = if is_me {"My profile"} else {"Edit profile"};
         let display = if is_me {vec![
@@ -253,7 +256,12 @@ impl ProfilePage {
             ]),
         ]} else {vec![]};
         
-        PageType::edit_and_display(title, 
+        PageType::edit_and_display(title, None,
+            // Some((Icons::AddUser, Box::new(move |ctx: &mut Context, theme: &Theme| {
+            //     let p = profile.clone(); // CREATE NEW
+            //     let t = theme.clone();
+            //     Flow::new(vec![Page::Static(ProfilePage::editing(&t.clone(), true, p.clone()))])
+            // }))),
             vec![
                 FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
                     let current = avatar.pending().avatar.get_image().unwrap_or_default();

@@ -2,7 +2,7 @@ use ramp::prism;
 
 use pelican_ui::event::{OnEvent, Event, TickEvent};
 use pelican_ui::drawable::{Component, Drawable};
-use pelican_ui::Context;
+use pelican_ui::{Context, Callback};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
@@ -10,7 +10,7 @@ use pelican_ui::theme::Theme;
 use pelican_ui::utils::ValidationFn;
 use pelican_ui::drawable::SizedTree;
 
-use crate::{FormItem, State};
+use crate::{FormItem, State, FlowBuilder, Icons};
 use crate::items::{Input, Display};
 use crate::closure::FormSubmit;
 
@@ -29,8 +29,13 @@ impl OnEvent for EditPage {
 }
 impl AppPage for EditPage {}
 impl EditPage {
-    pub fn new(theme: &Theme, title: String, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
-        let header = Header::stack(theme, &title, None);
+    pub fn new(theme: &Theme, title: String, mut header: Option<(Icons, Box<dyn FlowBuilder>)>, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
+        let header = header.as_mut().map(|(icon, flow)| {
+            let mut flow = flow.clone();
+            (icon.clone(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
+        });
+
+        let header = Header::stack(theme, &title, header);
         let mut content = input.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<_>>();
         display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
 
@@ -47,8 +52,13 @@ impl EditPage {
         EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![], false)
     }
 
-    pub fn edit_and_display(theme: &Theme, title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
-        let header = Header::stack(theme, &title, None);
+    pub fn edit_and_display(theme: &Theme, title: String, mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        let header = header.as_mut().map(|(icon, flow)| {
+            let mut flow = flow.clone();
+            (icon.clone(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
+        });
+
+        let header = Header::stack(theme, &title, header);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
         let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
@@ -67,8 +77,13 @@ impl EditPage {
         EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![], false)
     }
 
-    pub fn root(theme: &Theme, title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
-        let header = Header::home(theme, &title, None);
+    pub fn root(theme: &Theme, title: String, mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        let header = header.as_mut().map(|(icon, flow)| {
+            let mut flow = flow.clone();
+            (icon.clone(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
+        });
+
+        let header = Header::home(theme, &title, header);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
         let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
