@@ -176,6 +176,12 @@ impl MessagesPage {
 
         MessagesPage { layout: Stack::default(), page }
     }
+
+    pub(crate) fn take_input_from(&mut self, old: &mut Self) {
+        if let Some(bumper) = old.page.bumper.take() {
+            self.page.bumper = Some(bumper);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
