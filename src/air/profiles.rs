@@ -1,9 +1,7 @@
 use pelican_ui::Context;
 use pelican_ui::components::avatar::AvatarContent;
 
-use air::Instance;
-use air::names::{Id, Name};
-use air::{Metadata, Contract, Reactants, Reactant};
+use maverick_os::air::{Metadata, Contract, Id, Name, Instance};
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -14,59 +12,8 @@ use rand::{seq::SliceRandom, Rng};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SetUsernameInit(pub String);
-impl Reactant<Profile> for SetUsernameInit {
-    type Output = ();
 
-    fn id() -> Id {Id::hash("SetUsernameInit")}
-
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
-        if !profile.init {
-            profile.init = true;
-            profile.username = self.0.to_string();
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ChangeUsername(pub String);
-impl Reactant<Profile> for ChangeUsername {
-    type Output = ();
-
-    fn id() -> Id {Id::hash("ChangeUsername")}
-
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
-        profile.username = self.0.to_string();
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ChangeNotes(pub String);
-impl Reactant<Profile> for ChangeNotes {
-    type Output = ();
-
-    fn id() -> Id {Id::hash("ChangeNotes")}
-
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
-        profile.notes = self.0.to_string();
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ChangeAvatar(pub AvatarContent);
-impl Reactant<Profile> for ChangeAvatar {
-    type Output = ();
-
-    fn id() -> Id {Id::hash("ChangeAvatar")}
-
-    fn apply(self, profile: &mut Profile, metadata: Metadata) -> Self::Output {
-        profile.avatar = self.0.clone();
-    }
-}
-
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Profile {
     pub name: Option<Name>,
     pub username: String,
@@ -77,8 +24,10 @@ pub struct Profile {
 
 impl Contract for Profile {
     type Init = Name;
+    type Message = ProfileAction;
+    type Result = ();
 
-    fn id() -> Id {Id::hash("Profile0.2")}
+    fn id() -> Id {Id::hash("Profile")}
 
     fn init(init: Self::Init, metadata: Metadata) -> Self {
         Profile {
@@ -90,9 +39,29 @@ impl Contract for Profile {
         }
     }
 
-    fn reactants() -> Reactants<Profile> {
-        Reactants::default().add::<ChangeUsername>().add::<ChangeNotes>().add::<ChangeAvatar>().add::<SetUsernameInit>()
+    fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
+        match message {
+            ProfileAction::ChangeUsername(content) => self.username = content.to_string(),
+            ProfileAction::ChangeNotes(content) => self.notes = content.to_string(),
+            ProfileAction::ChangeAvatar(content) => self.avatar = content.clone(),
+            ProfileAction::SetUsernameInit(content) => {
+                if !self.init {
+                    self.init = true;
+                    self.username = content.to_string();
+                }
+            }
+        }
+
+        ()
     }
+}
+
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub enum ProfileAction {
+    ChangeUsername(String),
+    ChangeNotes(String),
+    ChangeAvatar(AvatarContent),
+    SetUsernameInit(String)
 }
 
 impl Profile {
@@ -100,7 +69,7 @@ impl Profile {
         // ctx.register::<Profile>();
         // std::thread::sleep(std::time::Duration::from_secs(1));
         let mut profile = ctx.create::<Profile>(name);
-        profile.apply(SetUsernameInit(Username::new()));
+        profile.send(ProfileAction::SetUsernameInit(Username::new()));
         profile
     }
 
@@ -115,7 +84,7 @@ impl Profile {
 
     pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<Instance<Profile>> {
         ctx.list::<Profile>().iter_mut().find_map(|profile| {
-            if profile.1.load_pending().name == Some(name) {
+            if profile.1.pending().name == Some(name) {
                 Some(profile.1.clone())
             } else {
                 None

@@ -13,8 +13,7 @@ use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
 use crate::closure::{PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
-use air::{Instance, Contract};
-use air::names::Id;
+use maverick_os::air::{Instance, Contract, Id};
 
 use crate::messages::ChatRoom;
 use crate::profiles::Profile;
@@ -47,7 +46,7 @@ impl Page {
     }
 
     pub fn profile(ctx: &mut Context, theme: &Theme, profile: &mut Instance<Profile>) -> Self {
-        let my_name = profile.load_pending().name.unwrap();
+        let my_name = profile.pending().name.unwrap();
         let is_me = my_name == ctx.me();
         match is_me {
             true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
@@ -104,12 +103,12 @@ impl Page {
 pub struct ContractUpdates<C: Contract + PartialEq>(Box<dyn PageBuilderContractFn<C>>, Instance<C>, C);
 impl<C: Contract + PartialEq> ContractUpdates<C> {
     pub fn new(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        ContractUpdates(Box::new(builder), contract.clone(), contract.load_pending().clone())
+        ContractUpdates(Box::new(builder), contract.clone(), (*contract.pending()).clone())
     }
 }
 impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = self.1.load_pending().clone();
+        let current = (*self.1.pending()).clone();
         let has_changed = current != self.2;
         if has_changed {self.2 = current;}
         has_changed
@@ -126,31 +125,27 @@ impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
 pub struct ContractUpdatesMultiples<C: Contract + PartialEq>(Box<dyn PageBuilderContractMultiplesFn<C>>, Vec<C>);
 impl<C: Contract + PartialEq> ContractUpdatesMultiples<C> {
     pub fn new(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        let mut instances = ctx.instances::<C>();
+        let mut instances = ctx.list::<C>();
         let mut instances = instances.iter_mut().collect::<Vec<_>>();
         instances.sort_by_key(|(id, _)| *id);
-        let new = instances.into_iter().map(|(_, instance)| instance.load_pending().clone()).collect::<Vec<_>>();
+        let new = instances.into_iter().map(|(_, instance)| (*instance.pending()).clone()).collect::<Vec<_>>();
 
         ContractUpdatesMultiples(Box::new(builder), new)
     }
 }
 impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let mut instances = ctx.instances::<C>();
-        let mut instances = instances.iter_mut().collect::<Vec<_>>();
+        let mut list = ctx.list::<C>();
+        let mut instances = list.iter_mut().collect::<Vec<_>>();
         instances.sort_by_key(|(id, _)| *id);
-        let current = instances.into_iter().map(|(_, instance)| instance.load_pending().clone()).collect::<Vec<_>>();
-
-        let has_changed = current != self.1;
-        if has_changed {
-            println!("Updated");
-            self.1 = current;
-        }
-        has_changed
+        let current = instances.into_iter().map(|(_, i)| (*i.pending()).clone()).collect::<Vec<_>>();
+        let changed = current != self.1;
+        if changed { self.1 = current; }
+        changed
     }
 
     fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let new = ctx.instances::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
+        let new = ctx.list::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
         (self.0)(ctx, theme, new)
     }
 }
@@ -167,7 +162,7 @@ dyn_clone::clone_trait_object!(PageBuilder);
 pub enum PageType {
     Root {title: String, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>},
     Both{title: String, display: Vec<Display>, inputs: Vec<Input>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
-    EditAndDisplay {title: String, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>, flow_len: usize},
+    EditAndDisplay {title: String, header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>, flow_len: usize},
     Display{title: String, items: Vec<Display>, offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>, flow_len: usize},
     Input{title: String, item: Input, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, flow_len: usize, next: Option<NavFn>},
     Form{title: String, item: Input, flow_len: usize, next: Option<NavFn>, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>},
@@ -202,8 +197,8 @@ impl PageType {
         PageType::Edit { title: title.to_string(), input, display, validations, on_save, flow_len: 1}
     }
 
-    pub fn edit_and_display(title: &str, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
-        PageType::EditAndDisplay { title: title.to_string(), items, display, on_save, flow_len: 1}
+    pub fn edit_and_display(title: &str, header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        PageType::EditAndDisplay { title: title.to_string(), header, items, display, on_save, flow_len: 1}
     }
 
     pub fn review(title: &str, getter: Box<dyn ReviewItemGetter>, on_submit: Box<dyn FormSubmit>) -> Self {
@@ -285,8 +280,8 @@ impl PageType {
             PageType::Display{title, items, offset, header, bumper, next, flow_len} => Box::new(StackPage::display(ctx, theme, title.to_string(), items.to_vec(), *offset, header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Input{title, item, header, bumper, next, flow_len} => Box::new(StackPage::input(ctx, theme, title.to_string(), item.clone(), header.clone(), bumper.clone(), next.clone(), *flow_len)),
             PageType::Form{title, item, next, flow_len, validate, on_submit} => Box::new(FormPage::new(theme, title.to_string(), item.clone(), next.clone(), *flow_len, validate.clone(), on_submit.clone())),
-            PageType::Edit{title, input, display, validations, on_save, flow_len: _} => Box::new(EditPage::new(theme, title.to_string(), input.clone(), display.clone(), validations.clone(), on_save.clone())),
-            PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::edit_and_display(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
+            PageType::Edit{title, input, display, validations, on_save, flow_len: _} => Box::new(EditPage::new(theme, title.to_string(), None, input.clone(), display.clone(), validations.clone(), on_save.clone())),
+            PageType::EditAndDisplay{title, header, items, display, on_save, flow_len: _} => Box::new(EditPage::edit_and_display(theme, title.to_string(), header.clone(), items.clone(), display.clone(), on_save.clone())),
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len, on_submit} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len, on_submit.clone())),
             PageType::Messaging{room, flow_len} => Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len)),
@@ -307,7 +302,7 @@ impl PageType {
             PageType::Success{..} |
             PageType::Messaging{..} => panic!("Not an accepted root type"),
 
-            PageType::EditAndDisplay{title, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), items.clone(), display.clone(), on_save.clone())),
+            PageType::EditAndDisplay{title, header, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), header.clone(), items.clone(), display.clone(), on_save.clone())),
         }
     }
 }

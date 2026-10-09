@@ -82,15 +82,12 @@ macro_rules! run {
         use $crate::__private::*;
 
         ramp::run!([$($service),*], move |ctx: &mut Context| {
-            let app: Rc<RefCell<dyn App>> =
-                Rc::new(RefCell::new(($chkapp)(ctx)));
+            let app: Rc<RefCell<dyn App>> = Rc::new(RefCell::new(($chkapp)(ctx)));
 
             let assets = include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources");
             let theme: Theme = app.borrow().theme().to_pelican(Assets::new(vec![assets]));
             let roots: Vec<RootInfo> = app.borrow().roots(ctx, &theme);
-            let roots = roots.into_iter()
-                .map(|root| root.0)
-                .collect::<Vec<PelicanRootInfo>>();
+            let roots = roots.into_iter().map(|root| root.0).collect::<Vec<PelicanRootInfo>>();
 
             let app = Rc::clone(&app);
             let on_event = Box::new(move |ctx: &mut Context, event: Box<dyn Event>| {

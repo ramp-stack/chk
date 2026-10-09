@@ -11,16 +11,15 @@ use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::MessageGroups;
 
-use crate::messages::{ChatRoom, Message, SendMessage};
-use crate::profiles::{Profile, ChangeNotes, ChangeUsername, ChangeAvatar};
+use crate::messages::{ChatRoom, Message, ChatRoomAction};
+use crate::profiles::{Profile, ProfileAction};
 use crate::{Page, PageBuilder, ActionItem, PageType, FormItem, Bumper, Listener};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
 use crate::items::{Action, Display, AvatarPurpose};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
-use air::Instance;
-use air::names::{Id, Name};
+use maverick_os::air::{Id, Name, Instance};
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -120,14 +119,17 @@ impl AppPage for MessagesPage {}
 
 impl MessagesPage {
     pub fn new(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, flow_len: usize ) -> Self {
-        let room_data = room.load_pending().clone();
+        let room_data = room.pending().clone();
         let my_name = ctx.me();
 
-        let mut profiles = room_data.members.clone().into_iter().filter(|n| *n != my_name)
-            .map(|n| Profile::from_name(ctx, n)).collect::<Vec<_>>();
+        let mut profiles = room_data.members.clone().into_iter()
+            .map(|n| Profile::from_name(ctx, n))
+            .filter(|p| p.pending().name != Some(my_name))
+            .collect::<Vec<_>>();
 
         let deref_profiles = profiles.iter_mut()
-            .map(|p| p.load_pending().clone()).collect::<Vec<Profile>>();
+            .map(|p| (*p.pending()).clone())
+            .collect::<Vec<Profile>>();
 
         let is_group = deref_profiles.len() > 1;
 
@@ -135,27 +137,29 @@ impl MessagesPage {
             .map(|p| p.to_pel()).collect::<Vec<_>>();
 
         let info = match (is_group, profiles.first().cloned()) {
+            (false, None) => None,
             (false, Some(profile)) => {
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut profile = profile.clone();
                     (Flow::new(vec![Page::profile(ctx, theme, &mut profile)]).build(ctx, theme))(ctx, theme);
-                }) as Box<dyn Callback>
+                }) as Box<dyn Callback>)
             }
-            _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
+            (true, _) => Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                 let profiles = profiles.clone();
                 let t = theme.clone();
                 (Flow::new(vec![
                     Page::Static(GroupMessageInfoPage::new(ctx, &t, profiles.clone()))
                 ]).build(ctx, theme))(ctx, theme);
-            }) as Box<dyn Callback>,
+            }) as Box<dyn Callback>),
         };
 
-        let header = Header::messaging(ctx, theme, pel_profiles, flow_len, info);
+        let title = room_data.name(ctx);
+        let header = Header::messaging(ctx, theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
         let bumper = PelicanBumper::input(theme, "Message...",  move |_ctx: &mut Context, val: &mut String| {
             if !val.is_empty() {
-                room_taken.apply(SendMessage(val.to_string()));
+                room_taken.send(ChatRoomAction::SendMessage(val.to_string()));
             }
         });
 
@@ -172,6 +176,12 @@ impl MessagesPage {
 
         MessagesPage { layout: Stack::default(), page }
     }
+
+    pub(crate) fn take_input_from(&mut self, old: &mut Self) {
+        if let Some(bumper) = old.page.bumper.take() {
+            self.page.bumper = Some(bumper);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -179,21 +189,26 @@ pub struct ViewMessages(Instance<ChatRoom>, ChatRoom, Vec<Profile>);
 
 impl ViewMessages {
     pub fn new(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
-        let profiles = room.load_pending().members.iter().map(|m| Profile::from_name(ctx, *m).load_pending().clone()).collect::<Vec<_>>();
-        ViewMessages(room.clone(), room.load_pending().clone(), profiles)
+        let profiles = room.pending().members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
+        ViewMessages(room.clone(), (*room.pending()).clone(), profiles)
     }
 }
 
 impl PageBuilder for ViewMessages {
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = self.0.load_pending().clone();
-        let profiles = current.members.iter().map(|m| Profile::from_name(ctx, *m).load_pending().clone()).collect::<Vec<_>>();
+        let current = (*self.0.pending()).clone();
+        // println!("Messages len {} and new {}", self.1.messages.len(), current.messages.len());
+        let profiles = current.members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
         let has_changed = current != self.1 || profiles != self.2;
-        if has_changed {self.1 = current;}
+        if has_changed {
+            self.1 = current;
+            self.2 = profiles;
+        }
         has_changed
     }
 
-    fn build(&mut self, _ctx: &mut Context, _theme: &Theme) -> PageType {
+    fn build(&mut self, ctx: &mut Context, _theme: &Theme) -> PageType {
+        println!("Building ViewMessages");
         PageType::messaging(self.0.clone())
     }
 }
@@ -205,7 +220,7 @@ impl GroupMessageInfoPage {
         let theme = theme.clone();
         let items = profiles.clone().into_iter().flat_map(|mut profile| {
             let mut p = profile.clone();
-            let deref = profile.load_pending();
+            let deref = profile.pending();
             if deref.name.unwrap() != ctx.me() {
                 let view_contact = Flow::new(vec![Page::profile(ctx, &theme, &mut p)]);
                 Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
@@ -225,13 +240,13 @@ impl ProfilePage {
         let closure = Box::new(move |ctx: &mut Context, objects: &Vec<State>| {
             println!("Saving profile");
             if let Some(State::Text(result)) = objects.get(1) {
-                p.apply(ChangeUsername(result.to_string()));
+                p.send(ProfileAction::ChangeUsername(result.to_string()));
             }
             if let Some(State::Text(result)) = objects.get(2) {
-                p.apply(ChangeNotes(result.to_string()));
+                p.send(ProfileAction::ChangeNotes(result.to_string()));
             }
             if let Some(State::Avatar(result)) = objects.get(0) {
-                p.apply(ChangeAvatar(result.clone()));
+                p.send(ProfileAction::ChangeAvatar(result.clone()));
             }
             FormComplete::None
         }) as Box<dyn FormSubmit>;
@@ -239,7 +254,7 @@ impl ProfilePage {
         let mut avatar = profile.clone();
         let mut username = profile.clone();
         let mut notes = profile.clone();
-        let p = profile.load_pending();
+        let p = (*profile.pending()).clone();
         let my_name = p.name.unwrap();
         let title = if is_me {"My profile"} else {"Edit profile"};
         let display = if is_me {vec![
@@ -251,10 +266,15 @@ impl ProfilePage {
             ]),
         ]} else {vec![]};
         
-        PageType::edit_and_display(title, 
+        PageType::edit_and_display(title, None,
+            // Some((Icons::AddUser, Box::new(move |ctx: &mut Context, theme: &Theme| {
+            //     let p = profile.clone(); // CREATE NEW
+            //     let t = theme.clone();
+            //     Flow::new(vec![Page::Static(ProfilePage::editing(&t.clone(), true, p.clone()))])
+            // }))),
             vec![
                 FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
-                    let current = avatar.load_pending().avatar.get_image().unwrap_or_default();
+                    let current = avatar.pending().avatar.get_image().unwrap_or_default();
                     match current == a {
                         true => FormValidState::Valid,
                         false => FormValidState::Invalid,
@@ -262,13 +282,13 @@ impl ProfilePage {
                 }),
                 FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
                     match a.as_str() {
-                        a if a == &username.load_pending().username => FormValidState::Valid,
+                        a if a == &username.pending().username => FormValidState::Valid,
                         "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
                         _ => FormValidState::Invalid,
                     }
                 }),
                 FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
-                    match notes.load_pending().notes == a {
+                    match notes.pending().notes == a {
                         true => FormValidState::Valid,
                         false => FormValidState::Invalid,
                     }
@@ -288,7 +308,7 @@ pub struct ProfileView;
 impl ProfileView {
     pub fn new(ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>) -> PageType {
         let p = profile.clone();
-        let profile = profile.load_pending().clone();
+        let profile = profile.pending().clone();
         let saved = p.clone();
 
         let is_me = profile.name.unwrap() == ctx.me();
@@ -298,7 +318,7 @@ impl ProfileView {
             vec![
                 Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
                 Display::actions(vec![
-                    ActionItem::new(Action::None, "Bitcoin", Icons::Bitcoin),
+                    // ActionItem::new(Action::None, "Bitcoin", Icons::Bitcoin),
                     ActionItem::new(Action::message(my_name), "Message", Icons::Messages),
                     ActionItem::new(Action::unblock(&theme, p.clone()), "Block", Icons::Block),
                 ], true),

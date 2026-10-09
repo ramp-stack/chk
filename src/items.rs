@@ -13,8 +13,7 @@ use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGr
 use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 
 use std::sync::Arc;
-use air::names::Name;
-use air::Instance;
+use maverick_os::air::{Name, Instance, Id};
 use crate::profiles::Profile;
 
 use crate::Page;
@@ -410,15 +409,15 @@ impl Action {
 
     pub fn block(theme: &Theme, mut profile: Instance<Profile>) -> Self {
         let theme = theme.clone();
-        let avatar = profile.load_pending().avatar.clone();
-        let username = profile.load_pending().username.clone();
+        let avatar = profile.pending().avatar.clone();
+        let username = profile.pending().username.clone();
         Action::flow(Flow::action_target(&theme, "block", "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
     }
 
     pub fn unblock(theme: &Theme, mut profile: Instance<Profile>) -> Self {
         let theme = theme.clone();
-        let avatar = profile.load_pending().avatar.clone();
-        let username = profile.load_pending().username.clone();
+        let avatar = profile.pending().avatar.clone();
+        let username = profile.pending().username.clone();
         Action::flow(Flow::action_target(&theme, "unblock", "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
     }
 
@@ -463,9 +462,13 @@ impl Action {
             Action::Message {name} => {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    let mut instance = ctx.create::<crate::messages::ChatRoom>(air::Id::random());
-                    instance.apply(crate::messages::AddMember(recipient));
+                    println!("Creating a room here");
+                    let mut instance = ctx.create::<crate::messages::ChatRoom>(Id::random());
+                    println!("created..");
+                    instance.send(crate::messages::ChatRoomAction::Share(recipient));
+                    println!("Added recipient to list");
                     instance.share(recipient);
+                    println!("Shared with recipient");
                     println!("Created room with members {:?}", recipient);
 
                     // NOT STATIC

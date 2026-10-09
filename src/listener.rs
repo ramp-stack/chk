@@ -7,9 +7,9 @@ use pelican_ui::event::{Event, TickEvent};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::Context;
 
-use crate::{PageBuilder, NavFn, PageTypeToAppPageFn, PageBuilderContractFn, PageType};
+use crate::{MessagesPage, PageBuilder, NavFn, PageTypeToAppPageFn, PageBuilderContractFn, PageType};
 
-use air::{Contract, Instance};
+use maverick_os::air::{Contract, Instance};
 use std::cmp::PartialEq;
 
 #[derive(Debug, Component, Clone)]
@@ -62,12 +62,17 @@ impl Listener {
         let mut page_type = self.builder.build(ctx, &self.theme);
         page_type.update(ctx, &self.theme, length, next.clone());
 
-        self.page = if self.is_root {
+        let mut page = if self.is_root {
             page_type.build_root(ctx, &self.theme)
         } else {
             page_type.build(ctx, &self.theme)
         };
 
+        if let (Some(new), Some(old)) = (page.downcast_mut::<MessagesPage>(), self.page.downcast_mut::<MessagesPage>()) {
+            new.take_input_from(old);
+        }
+
+        self.page = page;
         self.next = next;
         self.flow_len = length;
     }
