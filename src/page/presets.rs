@@ -137,19 +137,20 @@ impl MessagesPage {
             .map(|p| p.to_pel()).collect::<Vec<_>>();
 
         let info = match (is_group, profiles.first().cloned()) {
+            (false, None) => None,
             (false, Some(profile)) => {
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut profile = profile.clone();
                     (Flow::new(vec![Page::profile(ctx, theme, &mut profile)]).build(ctx, theme))(ctx, theme);
-                }) as Box<dyn Callback>
+                }) as Box<dyn Callback>)
             }
-            _ => Box::new(move |ctx: &mut Context, theme: &Theme| {
+            (true, _) => Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                 let profiles = profiles.clone();
                 let t = theme.clone();
                 (Flow::new(vec![
                     Page::Static(GroupMessageInfoPage::new(ctx, &t, profiles.clone()))
                 ]).build(ctx, theme))(ctx, theme);
-            }) as Box<dyn Callback>,
+            }) as Box<dyn Callback>),
         };
 
         let title = room_data.name(ctx);
@@ -193,7 +194,10 @@ impl PageBuilder for ViewMessages {
         // println!("Messages len {} and new {}", self.1.messages.len(), current.messages.len());
         let profiles = current.members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
         let has_changed = current != self.1 || profiles != self.2;
-        if has_changed {self.1 = current;}
+        if has_changed {
+            self.1 = current;
+            self.2 = profiles;
+        }
         has_changed
     }
 
