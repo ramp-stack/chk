@@ -142,12 +142,32 @@ impl FormValidState {
 }
 
 #[derive(Debug, Clone)]
+pub enum FormAction {
+    Paste,
+    ScanQRCode(Theme, String),
+    Custom(String, Option<String>, Icons, Action)
+}
+
+impl FormAction {
+    pub fn scan_qr_code(theme: &Theme, instructions: &str) -> Self {
+        FormAction::ScanQRCode(theme.clone(), instructions.to_string())
+    }
+
+    pub fn get(&self) -> (String, Option<String>, Icons, Action) {
+        match self {
+            FormAction::Paste => ("Paste clipboard".to_string(), Some("Pasted".to_string()), Icons::Paste, Action::Paste),
+            FormAction::ScanQRCode(theme, instructions) => ("Scan QR code".to_string(), None, Icons::QrCode, Action::scan_qr(theme, instructions)),
+            FormAction::Custom(l, al, i, a) => (l.to_string(), al.clone(), *i, a.clone())
+        }
+    }
+}
+#[derive(Debug, Clone)]
 pub enum FormItem {
-    Text(String, Box<dyn FormClosure>, Option<Vec<(String, Option<String>, Icons, Action)>>, Box<dyn ValidityFn>),
-    TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<(String, Option<String>, Icons, Action)>>, Box<dyn ValidityFn>),
+    Text(String, String, Box<dyn FormClosure>, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
+    TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
-    Search(String, Vec<(ListItem, Name)>, Option<Vec<(String, Option<String>, Icons, Action)>>),
+    Search(String, String, Vec<(ListItem, Name)>, Option<Vec<FormAction>>),
     ScanQR(String, String, Option<(String, Icons, Action)>),
     Avatar(String, AvatarContent, Box<dyn ValidityFn>),
     AvatarWithPreset(String, AvatarContent, Box<dyn ValidityFn>),
@@ -156,12 +176,12 @@ pub enum FormItem {
 pub struct FormStorage(pub HashMap<String, String>);
 
 impl FormItem {
-    pub fn text(text: &str, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
+    pub fn text(text: &str, request: &str, actions: Option<Vec<FormAction>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
-        FormItem::Text(text.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
+        FormItem::Text(text.to_string(), request.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
     }
 
-    pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, valid: impl ValidityFn + 'static) -> Self {
+    pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<FormAction>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
         FormItem::TextWithPreset(text.to_string(), preset.to_string(), Box::new(move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}), actions, Box::new(valid))
     }
@@ -177,8 +197,8 @@ impl FormItem {
         FormItem::Enum(label.to_string(), items)
     }
 
-    pub fn search(title: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
-        FormItem::Search(title.to_string(), items, actions)
+    pub fn search(title: &str, search: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<FormAction>>) -> Self {
+        FormItem::Search(title.to_string(), search.to_string(), items, actions)
     }
 
     pub fn avatar(title: &str, valid: impl ValidityFn + 'static) -> Self {
@@ -208,7 +228,7 @@ impl FormItem {
 
     pub fn validation(&self) -> Box<dyn ValidationFn> {
         match self {
-            FormItem::Text(_, _, _, validation) | FormItem::TextWithPreset(_, _, _, _, validation) => {
+            FormItem::Text(_, _, _, _, validation) | FormItem::TextWithPreset(_, _, _, _, validation) => {
                 use pelican_ui::components::TextInput;
 
                 let validation = validation.clone();
@@ -236,7 +256,7 @@ impl FormItem {
                     }
                 })
             },
-            FormItem::Search(_, _, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
+            FormItem::Search(_, _, _, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                 if let Some(searchbar) = children[0].as_any_mut().downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
             }),
             FormItem::Avatar(_, _, validation) | FormItem::AvatarWithPreset(_, _, validation) => {
@@ -257,13 +277,15 @@ impl FormItem {
 
     pub fn build(&self) -> Input {
         match self {
-            FormItem::Text(title, _, actions, _) => {
-                let title = title.clone();
-                Input::text(&title, false, None, actions.clone())
+            FormItem::Text(_, request, _, actions, _) => {
+                let request = request.clone();
+                let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get()).collect::<Vec<_>>());
+                Input::text(&request, false, None, actions)
             },
             FormItem::TextWithPreset(title, preset, _, actions, _) => {
                 let title = title.clone();
-                Input::text(&title, true, Some(preset.to_string()), actions.clone())
+                let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get()).collect::<Vec<_>>());
+                Input::text(&title, true, Some(preset.to_string()), actions)
             },
             FormItem::Number(_, variant, _) => {
                 match variant {
@@ -276,8 +298,9 @@ impl FormItem {
             FormItem::Enum(_, items) => {
                 Input::enumerator(items.clone())
             },
-            FormItem::Search(_, items, actions) => {
-                Input::search(items.clone(), actions.clone())
+            FormItem::Search(_, search, items, actions) => {
+                let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get()).collect::<Vec<_>>());
+                Input::search(search, items.clone(), actions)
             },
             FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(instructions, alt.clone()),
             FormItem::Avatar(_, _, _) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),

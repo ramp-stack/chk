@@ -30,7 +30,7 @@ pub enum Input {
     Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
-    Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>},
+    Search {label: String, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>},
     QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
 }
 
@@ -63,8 +63,8 @@ impl Input {
         Input::Avatar {content, flair, action}
     }
 
-    pub fn search(items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
-        Input::Search {items, actions}
+    pub fn search(label: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
+        Input::Search {label: label.to_string(), items, actions}
     }
 
     pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
@@ -107,7 +107,7 @@ impl Input {
                 drawables
             },
             Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, false, AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
-            Input::Search {items, actions} => drawables![SearchBar::new(theme, 
+            Input::Search {label, items, actions} => drawables![SearchBar::new(theme, label, 
                 items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
                 if let Some(a) = actions.as_ref() && !a.is_empty() {
                     Some(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, active, icon, action)| {
@@ -462,16 +462,10 @@ impl Action {
             Action::Message {name} => {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    println!("Creating a room here");
                     let mut instance = ctx.create::<crate::messages::ChatRoom>(Id::random());
-                    println!("created..");
                     instance.send(crate::messages::ChatRoomAction::Share(recipient));
-                    println!("Added recipient to list");
                     instance.share(recipient);
-                    println!("Shared with recipient");
-                    println!("Created room with members {:?}", recipient);
-
-                    // NOT STATIC
+                    
                     let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
                     flow.build(ctx, theme)(ctx, theme);
                 })
