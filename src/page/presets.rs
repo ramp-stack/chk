@@ -157,11 +157,15 @@ impl MessagesPage {
         let header = Header::messaging(ctx, theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
-        let bumper = PelicanBumper::input(theme, "Message...",  move |_ctx: &mut Context, val: &mut String| {
-            if !val.is_empty() {
-                room_taken.send(ChatRoomAction::SendMessage(val.to_string()));
-            }
-        });
+        let bumper = PelicanBumper::input(theme, 
+            "Message...", 
+            move |_ctx: &mut Context, val: &mut String| {
+                if !val.is_empty() {
+                    room_taken.send(ChatRoomAction::SendMessage(val.to_string()));
+                }
+            }, 
+            move |_ctx: &mut Context, val: &mut String| val.is_empty()
+    );
 
         let messages = room_data.messages.iter()
             .map(|message| message.to_pel(ctx)).collect::<Vec<_>>();
