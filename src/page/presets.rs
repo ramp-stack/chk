@@ -9,7 +9,7 @@ use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, P
 use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::MessageGroups;
+use pelican_ui::components::{MessageGroups, SendStickerEvent, Sticker};
 
 use crate::messages::{ChatRoom, Message, ChatRoomAction};
 use crate::profiles::{Profile, ProfileAction};
@@ -112,9 +112,17 @@ impl SuccessPage {
 pub struct MessagesPage {
     layout: Stack,
     page: PelicanPage,
+    #[skip] room: Instance<ChatRoom>,
 }
 
-impl OnEvent for MessagesPage {}
+impl OnEvent for MessagesPage {
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        if let Some(SendStickerEvent(sticker)) = event.downcast_ref::<SendStickerEvent>() {
+            self.room.send(ChatRoomAction::SendSticker(sticker.clone()));
+        }
+        vec![event]
+    }
+}
 impl AppPage for MessagesPage {}
 
 impl MessagesPage {
@@ -178,7 +186,7 @@ impl MessagesPage {
 
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        MessagesPage { layout: Stack::default(), page }
+        MessagesPage { layout: Stack::default(), page, room }
     }
 
     pub(crate) fn take_input_from(&mut self, old: &mut Self) {

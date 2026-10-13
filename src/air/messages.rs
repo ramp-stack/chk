@@ -1,5 +1,7 @@
 use pelican_ui::Context;
 use pelican_ui::utils::Timestamp;
+use pelican_ui::components::{MessageGroups};
+pub use pelican_ui::components::{MessageContent, Sticker};
 
 use maverick_os::air::{Id, Name, Metadata, Contract, Instance};
 
@@ -38,13 +40,16 @@ impl Contract for ChatRoom {
     fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
         match message {
             ChatRoomAction::SendMessage(message) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: message});
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message)});
             },
             ChatRoomAction::Share(recipient) => {
                 if !self.members.contains(&recipient) {
                     self.members.push(recipient);
                 }
-            }
+            },
+            ChatRoomAction::SendSticker(sticker) => {
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker)});
+            },
         }
         
         self.messages.len()
@@ -73,13 +78,14 @@ impl ChatRoom {
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ChatRoomAction {
     SendMessage(String),
-    Share(Name)
+    SendSticker(Sticker),
+    Share(Name),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct Message {
+    pub body: MessageContent,
     pub author: Name,
-    pub body: String,
     pub timestamp: u64,
 }
 
@@ -103,7 +109,7 @@ impl Message {
 
     pub fn to_pel(&self, ctx: &mut Context) -> pelican_ui::components::Message {
         pelican_ui::components::Message {
-            message: self.body.to_string(),
+            body: self.body.clone(),
             timestamp: Timestamp::from_u64(self.timestamp),
             author: Profile::from_name(ctx, self.author).pending().to_pel(),
         }
