@@ -65,11 +65,7 @@ impl<C: Contract + PartialEq> Watcher for ListWatch<C> {
     type Output = Vec<Instance<C>>;
 
     fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = Self::state(&Self::current(ctx));
-        if current != self.snapshot {
-            println!("{} changed: {:?}", std::any::type_name::<C>(), current);
-        }
-        current != self.snapshot
+        Self::state(&Self::current(ctx)) != self.snapshot
     }
 
     fn get(&mut self, ctx: &mut Context) -> Vec<Instance<C>> {
@@ -103,7 +99,6 @@ impl_watcher_for_tuple!(A, B);
 impl_watcher_for_tuple!(A, B, C);
 impl_watcher_for_tuple!(A, B, C, D);
 
-/// A page builder that rebuilds whenever its watcher reports a change.
 #[derive(Clone)]
 pub struct Watching<W: Watcher, F> {
     watcher: W,

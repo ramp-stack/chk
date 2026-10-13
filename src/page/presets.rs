@@ -10,14 +10,16 @@ use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Sticker};
+use pelican_ui::navigation::{NavigationEvent};
+use pelican_ui::utils::Timestamp;
 
-use crate::messages::{ChatRoom, Message, ChatRoomAction};
+use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
 use crate::profiles::{Profile, ProfileAction};
 use crate::blocking::Block;
 use crate::{Page, PageBuilder, ActionItem, PageType, FormItem, Bumper, Listener};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
-use crate::items::{Action, Display, AvatarPurpose};
+use crate::items::{Action, Display, AvatarPurpose, TableItem};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
 use maverick_os::air::{Id, Name, Instance};
@@ -205,8 +207,14 @@ impl MessagesPage {
             (Some(username), _) => PelicanBumper::alert(theme, &format!("You blocked {}.", username))
         };
 
-        let messages = room_data.messages.iter()
-            .map(|message| message.to_pel(ctx)).collect::<Vec<_>>();
+        let messages = room_data.messages.iter().map(|message| {
+            let room = room.clone();
+            let tapped = message.clone();
+            message.to_pel(ctx, move |ctx: &mut Context, theme: &Theme| {
+                let details = MessageDetails::new(ctx, theme, room.clone(), tapped.clone());
+                (Flow::new(vec![Page::Static(details)]).build(ctx, theme))(ctx, theme);
+            })
+        }).collect::<Vec<_>>();
 
         let content = Content::new(
             Offset::End,
@@ -225,6 +233,30 @@ impl MessagesPage {
                 self.page.bumper = Some(bumper);
             }
         }
+    }
+}
+
+pub struct MessageDetails;
+impl MessageDetails {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, message: Message) -> PageType {
+        let is_mine = message.author == ctx.me();
+        let bubble = message.to_pel(ctx, |_: &mut Context, _: &Theme| {});
+
+        let m = message.clone();
+        let bumper = Bumper::custom("Delete Message", Action::custom(move |ctx: &mut Context, _: &Theme| {
+            room.send(ChatRoomAction::DeleteMessage(m.clone()));
+            ctx.emit(NavigationEvent::Pop);
+        }));
+
+        let title = match is_mine {
+            true => "Sent message",
+            false => "Received message",
+        };
+
+        PageType::display(&title, vec![
+            Display::messages(ctx, theme, vec![bubble]),
+        ], None, bumper, Offset::Start)
     }
 }
 

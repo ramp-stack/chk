@@ -1,4 +1,4 @@
-use pelican_ui::Context;
+use pelican_ui::{Context, theme::Theme};
 use pelican_ui::utils::Timestamp;
 use pelican_ui::components::{MessageGroups};
 pub use pelican_ui::components::{MessageContent, Sticker, Gif};
@@ -45,14 +45,23 @@ impl Contract for ChatRoom {
                 }
             },
             ChatRoomAction::SendMessage(message) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message)});
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message), id: Id::random(), deleted: false});
             },
             ChatRoomAction::SendSticker(sticker) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker)});
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker), id: Id::random(), deleted: false});
             },
             ChatRoomAction::SendGif(gif) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Gif(gif)});
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Gif(gif), id: Id::random(), deleted: false});
             },
+            ChatRoomAction::DeleteMessage(message) => {
+                // if is_mine {
+                self.messages.retain(|m| *m != message);
+                // } else {
+                //     if let Some(msg) = self.messages.iter_mut().find(|m| m.id == message.id) {
+                //         msg.deleted = true;
+                //     }
+                // }
+            }
         }
         
         self.messages.len()
@@ -61,29 +70,22 @@ impl Contract for ChatRoom {
 
 impl ChatRoom {
     pub fn create(ctx: &mut Context, recipients: Vec<Name>) -> Instance<ChatRoom> {
-        let (_, mut instance) = (recipients.len() == 1).then(|| {
-            ctx.list::<ChatRoom>()
-                .into_iter()
-                .find(|(_, chat)| {
-                    let chat = chat.pending();
-                    chat.members.len() <= 2
-                        && chat.members.contains(&recipients[0])
-                        && chat.members.contains(&ctx.me())
-                })
-        }).flatten().unwrap_or_else(|| {
-            let id = Id::random();
-            let mut room = ctx.create::<ChatRoom>(id);
+        let is_dm = recipients.len() <= 1;
+        let id = match is_dm {
+            true => Id::hash(&recipients[0]),
+            false => Id::random(),
+        };
 
-            for recipient in recipients {
-                room.share(recipient);
-                room.send(ChatRoomAction::Share(recipient));
-            }
+        let mut room = ctx.create::<ChatRoom>(id);
 
-            (id, room)
-        });
+        for recipient in recipients {
+            room.share(recipient);
+            room.send(ChatRoomAction::Share(recipient));
+        }
 
-        instance
+        room
     }
+    
     pub fn name(&self, ctx: &mut Context) -> String {
         if self.members.len() > 2 { return "Group message".into(); }
 
@@ -108,6 +110,7 @@ pub enum ChatRoomAction {
     SendMessage(String),
     SendSticker(Sticker),
     SendGif(Gif),
+    DeleteMessage(Message),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
@@ -115,6 +118,8 @@ pub struct Message {
     pub body: MessageContent,
     pub author: Name,
     pub timestamp: u64,
+    pub deleted: bool,
+    pub id: Id,
 }
 
 impl Message {
@@ -135,11 +140,12 @@ impl Message {
     //     Message {author, body, timestamp}
     // }
 
-    pub fn to_pel(&self, ctx: &mut Context) -> pelican_ui::components::Message {
+    pub fn to_pel(&self, ctx: &mut Context, on_click: impl FnMut(&mut Context, &Theme) + Clone + 'static) -> pelican_ui::components::Message {
         pelican_ui::components::Message {
             body: self.body.clone(),
             timestamp: Timestamp::from_u64(self.timestamp),
             author: Profile::from_name(ctx, self.author).pending().to_pel(),
+            on_click: Box::new(on_click),
         }
     }
 }

@@ -12,6 +12,7 @@ pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup, ActionData};
 use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 use pelican_ui::interface::system::KeyboardPages;
+use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
 use std::sync::Arc;
 use maverick_os::air::{Name, Instance, Id};
 use crate::profiles::{Profile, ProfileAction};
@@ -176,7 +177,8 @@ pub enum Display {
     List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
     Avatar {content: AvatarContent, purpose: AvatarPurpose},
-    Actions {actions: Vec<ActionItem>, as_icons: bool}
+    Actions {actions: Vec<ActionItem>, as_icons: bool},
+    Messages {messages: MessageGroups},
 }
 
 impl Display {
@@ -237,6 +239,10 @@ impl Display {
         Display::Actions {actions, as_icons}
     }
 
+    pub fn messages(ctx: &mut Context, theme: &Theme, messages: Vec<PelicanMessage>) -> Self {
+        Display::Messages {messages: MessageGroups::new(ctx, theme, messages, false, false)}
+    }
+
     pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Display::Icon {icon} => drawables![Icon::new(theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0)],
@@ -286,7 +292,8 @@ impl Display {
                         }).collect::<Vec<ActionData>>())]
                     }
                 }
-            }
+            },
+            Display::Messages {messages} => drawables![messages.clone()],
             _ => return None
         })
     }
