@@ -228,34 +228,34 @@ impl MessagesPage {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ViewMessages(Instance<ChatRoom>, ChatRoom, Vec<Profile>);
+// #[derive(Debug, Clone)]
+// pub struct ViewMessages(Instance<ChatRoom>, ChatRoom, Vec<Profile>);
 
-impl ViewMessages {
-    pub fn new(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
-        let profiles = room.pending().members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
-        ViewMessages(room.clone(), (*room.pending()).clone(), profiles)
-    }
-}
+// impl ViewMessages {
+//     pub fn new(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
+//         let profiles = room.pending().members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
+//         ViewMessages(room.clone(), (*room.pending()).clone(), profiles)
+//     }
+// }
 
-impl PageBuilder for ViewMessages {
-    fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = (*self.0.pending()).clone();
-        // println!("Messages len {} and new {}", self.1.messages.len(), current.messages.len());
-        let profiles = current.members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
-        let has_changed = current != self.1 || profiles != self.2;
-        if has_changed {
-            self.1 = current;
-            self.2 = profiles;
-        }
-        has_changed
-    }
+// impl PageBuilder for ViewMessages {
+//     fn poll(&mut self, ctx: &mut Context) -> bool {
+//         let current = (*self.0.pending()).clone();
+//         // println!("Messages len {} and new {}", self.1.messages.len(), current.messages.len());
+//         let profiles = current.members.iter().map(|m| (*Profile::from_name(ctx, *m).pending()).clone()).collect::<Vec<_>>();
+//         let has_changed = current != self.1 || profiles != self.2;
+//         if has_changed {
+//             self.1 = current;
+//             self.2 = profiles;
+//         }
+//         has_changed
+//     }
 
-    fn build(&mut self, ctx: &mut Context, _theme: &Theme) -> PageType {
-        println!("Building ViewMessages");
-        PageType::messaging(self.0.clone())
-    }
-}
+//     fn build(&mut self, ctx: &mut Context, _theme: &Theme) -> PageType {
+//         println!("Building ViewMessages");
+//         PageType::messaging(self.0.clone())
+//     }
+// }
 
 pub struct GroupMessageInfoPage;
 impl GroupMessageInfoPage {

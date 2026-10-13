@@ -32,7 +32,7 @@ impl Contract for Block {
         Block {
             blocker: metadata.signer,
             blocked: init,
-            is_blocked: true
+            is_blocked: true,
         }
     }
 
@@ -69,7 +69,7 @@ impl Block {
         let me = ctx.me();
         ctx.list::<Block>().iter().any(|(_, b)| {
             let block = b.pending();
-            block.blocker == me && block.blocked == name
+            block.blocker == me && block.blocked == name && block.is_blocked
         })
     }
 
@@ -77,7 +77,7 @@ impl Block {
         let me = ctx.me();
         ctx.list::<Block>().iter().any(|(_, b)| {
             let block = b.pending();
-            block.blocker == name && block.blocked == me
+            block.blocker == name && block.blocked == me && block.is_blocked
         })
     }
 }

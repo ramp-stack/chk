@@ -7,6 +7,7 @@ use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 use std::fmt::Debug;
 use pelican_ui::utils::ValidationFn;
+use crate::blocking::Block;
 
 use crate::Listener;
 use crate::form::FormItem;
@@ -28,6 +29,9 @@ mod root;
 pub use root::*;
 mod stack;
 pub use stack::*;
+mod watch;
+pub use watch::*;
+
 
 #[derive(Debug, Clone)]
 pub enum Page {
@@ -36,13 +40,18 @@ pub enum Page {
 }
 
 impl Page {
-    pub fn contract_updates<C: Contract + PartialEq>(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        let updater = ContractUpdates::new(contract, builder);
-        Page::Refreshing(Box::new(updater))
+    pub fn watching<W: Watcher>(watcher: W, builder: impl FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static) -> Self {
+        Page::Refreshing(Box::new(Watching::new(watcher, builder)))
     }
 
-    pub fn updates_list_changes<C: Contract + PartialEq>(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        Page::Refreshing(Box::new(ContractUpdatesMultiples::new(ctx, builder)))
+    pub fn contract_updates<C: Contract + PartialEq>(contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
+        let builder: Box<dyn PageBuilderContractFn<C>> = Box::new(builder);
+        Page::watching(Watch::contract(contract), builder)
+    }
+
+    pub fn updates_list_changes<C: Contract + PartialEq>(_ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
+        let builder: Box<dyn PageBuilderContractMultiplesFn<C>> = Box::new(builder);
+        Page::watching(Watch::list::<C>(), builder)
     }
 
     pub fn profile(ctx: &mut Context, theme: &Theme, profile: &mut Instance<Profile>) -> Self {
@@ -51,13 +60,25 @@ impl Page {
         match is_me {
             true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
             false => {
-                Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+                Page::watching(
+                    (Watch::contract(profile.clone()), Watch::list::<Block>()),
+                    |ctx: &mut Context, theme: &Theme, (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
+                        chk::ProfileView::new(ctx, theme, profile)
+                    },
+                )
+                // |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
             }
         }
     }
 
-    pub fn messaging(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
-        Page::Refreshing(Box::new(chk::ViewMessages::new(ctx, room)))
+    pub fn messaging(_ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
+        Page::watching(
+            (Watch::contract(room.clone()), Watch::list::<Block>()),
+            |_ctx: &mut Context, _theme: &Theme, (room, blocks): (Instance<ChatRoom>, Vec<Instance<Block>>)| {
+                println!("rebuilding messages, blocks: {:?}", blocks.iter().map(|b| b.pending().clone()).collect::<Vec<_>>());
+                PageType::messaging(room)
+            },
+        )
     }
 
     pub fn builder(&self) -> Option<Box<dyn PageBuilder>> {
@@ -100,58 +121,6 @@ impl Page {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct ContractUpdates<C: Contract + PartialEq>(Box<dyn PageBuilderContractFn<C>>, Instance<C>, C);
-impl<C: Contract + PartialEq> ContractUpdates<C> {
-    pub fn new(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        ContractUpdates(Box::new(builder), contract.clone(), (*contract.pending()).clone())
-    }
-}
-impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
-    fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = (*self.1.pending()).clone();
-        let has_changed = current != self.2;
-        if has_changed {self.2 = current;}
-        has_changed
-    }
-
-    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let contract = self.1.clone();
-        (self.0)(ctx, theme, contract)
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct ContractUpdatesMultiples<C: Contract + PartialEq>(Box<dyn PageBuilderContractMultiplesFn<C>>, Vec<C>);
-impl<C: Contract + PartialEq> ContractUpdatesMultiples<C> {
-    pub fn new(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        let mut instances = ctx.list::<C>();
-        let mut instances = instances.iter_mut().collect::<Vec<_>>();
-        instances.sort_by_key(|(id, _)| *id);
-        let new = instances.into_iter().map(|(_, instance)| (*instance.pending()).clone()).collect::<Vec<_>>();
-
-        ContractUpdatesMultiples(Box::new(builder), new)
-    }
-}
-impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
-    fn poll(&mut self, ctx: &mut Context) -> bool {
-        let mut list = ctx.list::<C>();
-        let mut instances = list.iter_mut().collect::<Vec<_>>();
-        instances.sort_by_key(|(id, _)| *id);
-        let current = instances.into_iter().map(|(_, i)| (*i.pending()).clone()).collect::<Vec<_>>();
-        let changed = current != self.1;
-        if changed { self.1 = current; }
-        changed
-    }
-
-    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let new = ctx.list::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
-        (self.0)(ctx, theme, new)
-    }
-}
-
 
 pub trait PageBuilder: Debug + dyn_clone::DynClone {
     fn poll(&mut self, ctx: &mut Context) -> bool;
