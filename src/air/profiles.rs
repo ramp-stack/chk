@@ -19,8 +19,6 @@ pub struct Profile {
     pub username: String,
     pub notes: String,
     pub avatar: AvatarContent,
-    pub i_blocked: bool,
-    pub blocked: Vec<Name>,
     init: bool,
 }
 
@@ -37,8 +35,6 @@ impl Contract for Profile {
             username: "Orange Profile".to_string(),
             notes: String::new(),
             avatar: AvatarContent::default(),
-            blocked: Vec::new(),
-            i_blocked: false,
             init: false,
         }
     }
@@ -54,9 +50,6 @@ impl Contract for Profile {
                     self.username = content.to_string();
                 }
             },
-            ProfileAction::IBlocked(x) => self.i_blocked = x,
-            ProfileAction::Block(name) => self.blocked.push(name),
-            ProfileAction::Unblock(name) => {self.blocked.retain(|blocked| blocked != &name);},
         }
 
         ()
@@ -69,9 +62,6 @@ pub enum ProfileAction {
     ChangeNotes(String),
     ChangeAvatar(AvatarContent),
     SetUsernameInit(String),
-    Block(Name),
-    Unblock(Name),
-    IBlocked(bool),
 }
 
 impl Profile {

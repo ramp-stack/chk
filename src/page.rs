@@ -50,7 +50,9 @@ impl Page {
         let is_me = my_name == ctx.me();
         match is_me {
             true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
-            false => Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+            false => {
+                Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+            }
         }
     }
 

@@ -39,13 +39,13 @@ impl Contract for ChatRoom {
     // Send message
     fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
         match message {
-            ChatRoomAction::SendMessage(message) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message)});
-            },
             ChatRoomAction::Share(recipient) => {
                 if !self.members.contains(&recipient) {
                     self.members.push(recipient);
                 }
+            },
+            ChatRoomAction::SendMessage(message) => {
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message)});
             },
             ChatRoomAction::SendSticker(sticker) => {
                 self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker)});
@@ -75,8 +75,8 @@ impl ChatRoom {
             let mut room = ctx.create::<ChatRoom>(id);
 
             for recipient in recipients {
-                room.send(ChatRoomAction::Share(recipient));
                 room.share(recipient);
+                room.send(ChatRoomAction::Share(recipient));
             }
 
             (id, room)
@@ -102,12 +102,10 @@ impl ChatRoom {
     }
 }
 
-/// Actions are sent by their position in this list, so new ones go at the
-/// end. Moving one would change what actions already sent mean.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ChatRoomAction {
-    SendMessage(String),
     Share(Name),
+    SendMessage(String),
     SendSticker(Sticker),
     SendGif(Gif),
 }

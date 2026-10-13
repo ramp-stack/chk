@@ -15,6 +15,7 @@ use pelican_ui::interface::system::KeyboardPages;
 use std::sync::Arc;
 use maverick_os::air::{Name, Instance, Id};
 use crate::profiles::{Profile, ProfileAction};
+use crate::blocking::{Block, BlockAction};
 
 use crate::Page;
 use crate::form::State;
@@ -473,16 +474,16 @@ impl Action {
             Action::Block {name} => {
                 let name = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    Profile::me(ctx).send(ProfileAction::Block(name.clone()));
-                    Profile::from_name(ctx, name.clone()).send(ProfileAction::IBlocked(true));
+                    let mut block = Block::create(ctx, name.clone());
+                    block.send(BlockAction::Block);
                 })
             }
 
             Action::Unblock {name} => {
                 let name = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    Profile::me(ctx).send(ProfileAction::Unblock(name.clone()));
-                    Profile::from_name(ctx, name.clone()).send(ProfileAction::IBlocked(false));
+                    let mut block = Block::create(ctx, name.clone());
+                    block.send(BlockAction::Unblock);
                 })
             }
 

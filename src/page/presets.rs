@@ -13,6 +13,7 @@ use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Stic
 
 use crate::messages::{ChatRoom, Message, ChatRoomAction};
 use crate::profiles::{Profile, ProfileAction};
+use crate::blocking::Block;
 use crate::{Page, PageBuilder, ActionItem, PageType, FormItem, Bumper, Listener};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
@@ -139,11 +140,25 @@ impl MessagesPage {
             .filter(|p| p.pending().name != Some(my_name))
             .collect::<Vec<_>>();
 
-        let blocked = if profiles.len() == 1 {
-            let blocked = Profile::me(ctx).pending().blocked.clone();
+        let did_i_block = if profiles.len() == 1 {
             let profile = profiles[0].pending();
-            profile.name.filter(|name| blocked.contains(name)).and(Some(profile.username.clone()))
-        } else { None };
+            Block::did_i_block(ctx, profile.name.unwrap())
+                .then_some(profile.username.to_string())
+        } else {None};
+
+        let am_i_blocked = if profiles.len() == 1 {
+            let profile = profiles[0].pending();
+            Block::am_i_blocked(ctx, profile.name.unwrap())
+                .then_some(profile.username.to_string())
+        } else {None};
+
+        let is_blocked = did_i_block.is_some() || am_i_blocked.is_some();
+
+        // let blocked = if profiles.len() == 1 {
+        //     let blocked = Profile::me(ctx).pending().blocked.clone();
+        //     let profile = profiles[0].pending();
+        //     profile.name.filter(|name| blocked.contains(name)).and(Some(profile.username.clone()))
+        // } else { None };
 
         let deref_profiles = profiles.iter_mut()
             .map(|p| (*p.pending()).clone())
@@ -176,8 +191,8 @@ impl MessagesPage {
 
         let mut room_taken = room.clone();
         
-        let bumper = match blocked {
-            None => PelicanBumper::input(theme, 
+        let bumper = match (did_i_block, am_i_blocked) {
+            (None, None) => PelicanBumper::input(theme, 
                 "Message...", 
                 move |_ctx: &mut Context, val: &mut String| {
                     if !val.is_empty() {
@@ -186,7 +201,8 @@ impl MessagesPage {
                 }, 
                 move |_ctx: &mut Context, val: &mut String| val.is_empty()
             ),
-            Some(ref username) => PelicanBumper::alert(theme, &format!("You blocked {}.", username))
+            (_, Some(username)) => PelicanBumper::alert(theme, &format!("{} blocked you.", username)),
+            (Some(username), _) => PelicanBumper::alert(theme, &format!("You blocked {}.", username))
         };
 
         let messages = room_data.messages.iter()
@@ -200,7 +216,7 @@ impl MessagesPage {
 
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        MessagesPage { layout: Stack::default(), page, room, is_blocked: blocked.is_some() }
+        MessagesPage { layout: Stack::default(), page, room, is_blocked }
     }
 
     pub(crate) fn take_input_from(&mut self, old: &mut Self) {
@@ -346,7 +362,7 @@ impl ProfileView {
         let is_me = profile_name == my_name;
         let about_me = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
         
-        let is_blocked = !is_me && profile.i_blocked;
+        let is_blocked = !is_me && Block::did_i_block(ctx, profile.name.unwrap());
         
         let block_action = match is_blocked {
             true => ActionItem::new(Action::unblock(&theme, p.clone()), "Unblock", Icons::Unblock),
