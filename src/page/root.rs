@@ -19,6 +19,7 @@ impl Root {
     pub fn custom(page: Page) -> Self {
         Root(page)
     }
+    
 }
 
 #[derive(Debug, Component, Clone)]
@@ -62,3 +63,4 @@ impl RootPage {
         RootPage(Stack::default(), page)
     }
 }
+

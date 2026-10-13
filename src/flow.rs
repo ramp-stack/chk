@@ -24,16 +24,17 @@ pub struct Flow(pub Vec<Page>);
 impl Flow{
     pub fn new(builders: Vec<Page>) -> Self {Flow(builders)}
 
-    pub fn action_target(theme: &Theme, action: &str, past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
-        let action_caps = action.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action[c.len_utf8()..]).unwrap_or_default();
+    pub fn action_target(theme: &Theme, action: (&str, Action), past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
+        let (action_str, action) = action;
+        let action_caps = action_str.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]).unwrap_or_default();
 
         let prompt = PageType::display(&format!("{} user", action_caps), 
             vec![
                 Display::avatar(avatar.clone(), purpose.clone()),
-                Display::confirmation_message(&format!("Are you sure you want to {} {}", action, target.clone())),
+                Display::confirmation_message(&format!("Are you sure you want to {} {}", action_str, target.clone())),
             ], 
             None, 
-            Bumper::double(&action_caps, Action::None, "Cancel", Action::None), 
+            Bumper::double(&action_caps, action, "Cancel", Action::None), 
             Offset::Center
         );
 

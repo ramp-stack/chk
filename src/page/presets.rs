@@ -113,6 +113,7 @@ pub struct MessagesPage {
     layout: Stack,
     page: PelicanPage,
     #[skip] room: Instance<ChatRoom>,
+    #[skip] is_blocked: bool,
 }
 
 impl OnEvent for MessagesPage {
@@ -137,6 +138,12 @@ impl MessagesPage {
             .map(|n| Profile::from_name(ctx, n))
             .filter(|p| p.pending().name != Some(my_name))
             .collect::<Vec<_>>();
+
+        let blocked = if profiles.len() == 1 {
+            let blocked = Profile::me(ctx).pending().blocked.clone();
+            let profile = profiles[0].pending();
+            profile.name.filter(|name| blocked.contains(name)).and(Some(profile.username.clone()))
+        } else { None };
 
         let deref_profiles = profiles.iter_mut()
             .map(|p| (*p.pending()).clone())
@@ -168,15 +175,19 @@ impl MessagesPage {
         let header = Header::messaging(ctx, theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
-        let bumper = PelicanBumper::input(theme, 
-            "Message...", 
-            move |_ctx: &mut Context, val: &mut String| {
-                if !val.is_empty() {
-                    room_taken.send(ChatRoomAction::SendMessage(val.to_string()));
-                }
-            }, 
-            move |_ctx: &mut Context, val: &mut String| val.is_empty()
-    );
+        
+        let bumper = match blocked {
+            None => PelicanBumper::input(theme, 
+                "Message...", 
+                move |_ctx: &mut Context, val: &mut String| {
+                    if !val.is_empty() {
+                        room_taken.send(ChatRoomAction::SendMessage(val.to_string()));
+                    }
+                }, 
+                move |_ctx: &mut Context, val: &mut String| val.is_empty()
+            ),
+            Some(ref username) => PelicanBumper::alert(theme, &format!("You blocked {}.", username))
+        };
 
         let messages = room_data.messages.iter()
             .map(|message| message.to_pel(ctx)).collect::<Vec<_>>();
@@ -189,12 +200,14 @@ impl MessagesPage {
 
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        MessagesPage { layout: Stack::default(), page, room }
+        MessagesPage { layout: Stack::default(), page, room, is_blocked: blocked.is_some() }
     }
 
     pub(crate) fn take_input_from(&mut self, old: &mut Self) {
-        if let Some(bumper) = old.page.bumper.take() {
-            self.page.bumper = Some(bumper);
+        if !self.is_blocked && !old.is_blocked {
+            if let Some(bumper) = old.page.bumper.take() {
+                self.page.bumper = Some(bumper);
+            }
         }
     }
 }
@@ -324,18 +337,29 @@ impl ProfileView {
     pub fn new(ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>) -> PageType {
         let p = profile.clone();
         let profile = profile.pending().clone();
+        let profile_name = profile.name.unwrap();
         let saved = p.clone();
 
-        let is_me = profile.name.unwrap() == ctx.me();
-        let my_name = profile.name.unwrap();
+        let my_profile = Profile::me(ctx);
+        let my_profile = my_profile.pending().clone();
+        let my_name = ctx.me();
+        let is_me = profile_name == my_name;
         let about_me = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
+        
+        let is_blocked = !is_me && profile.i_blocked;
+        
+        let block_action = match is_blocked {
+            true => ActionItem::new(Action::unblock(&theme, p.clone()), "Unblock", Icons::Unblock),
+            false => ActionItem::new(Action::block(&theme, p.clone()), "Block", Icons::Block),
+        };
+
         PageType::display(&profile.username,
             vec![
                 Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
                 Display::actions(vec![
                     // ActionItem::new(Action::None, "Bitcoin", Icons::Bitcoin),
-                    ActionItem::new(Action::message(my_name), "Message", Icons::Messages),
-                    ActionItem::new(Action::unblock(&theme, p.clone()), "Block", Icons::Block),
+                    ActionItem::new(Action::message(profile_name), "Message", Icons::Messages),
+                    block_action
                 ], true),
                 Display::cta("About me", None, about_me, vec![]),
                 Display::cta("Orange name", None, &my_name.to_string(), vec![

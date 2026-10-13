@@ -60,6 +60,30 @@ impl Contract for ChatRoom {
 }
 
 impl ChatRoom {
+    pub fn create(ctx: &mut Context, recipients: Vec<Name>) -> Instance<ChatRoom> {
+        let (_, mut instance) = (recipients.len() == 1).then(|| {
+            ctx.list::<ChatRoom>()
+                .into_iter()
+                .find(|(_, chat)| {
+                    let chat = chat.pending();
+                    chat.members.len() <= 2
+                        && chat.members.contains(&recipients[0])
+                        && chat.members.contains(&ctx.me())
+                })
+        }).flatten().unwrap_or_else(|| {
+            let id = Id::random();
+            let mut room = ctx.create::<ChatRoom>(id);
+
+            for recipient in recipients {
+                room.send(ChatRoomAction::Share(recipient));
+                room.share(recipient);
+            }
+
+            (id, room)
+        });
+
+        instance
+    }
     pub fn name(&self, ctx: &mut Context) -> String {
         if self.members.len() > 2 { return "Group message".into(); }
 

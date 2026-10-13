@@ -14,12 +14,13 @@ use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 use pelican_ui::interface::system::KeyboardPages;
 use std::sync::Arc;
 use maverick_os::air::{Name, Instance, Id};
-use crate::profiles::Profile;
+use crate::profiles::{Profile, ProfileAction};
 
 use crate::Page;
 use crate::form::State;
 use crate::flow::Flow;
 use crate::ListItemGetter;
+use crate::messages::ChatRoom;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
@@ -356,23 +357,12 @@ pub enum Action {
     Copy { data: String },
     Message { name: Name },
     ChooseSearch { name: Name },
+    Block {name: Name},
+    Unblock {name: Name}
 }
 
 impl PartialEq for Action {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Action::Share { .. }, Action::Share { .. })
-                | (Action::SelectImage, Action::SelectImage)
-                | (Action::Custom { .. }, Action::Custom { .. })
-                | (Action::None, Action::None)
-                | (Action::Flow { .. }, Action::Flow { .. })
-                | (Action::Paste, Action::Paste)
-                | (Action::Copy { .. }, Action::Copy { .. })
-                | (Action::Message { .. }, Action::Message { .. })
-                | (Action::ChooseSearch { .. }, Action::ChooseSearch { .. })
-        )
-    }
+    fn eq(&self, other: &Self) -> bool {true}
 }
 
 impl Action {
@@ -409,16 +399,20 @@ impl Action {
 
     pub fn block(theme: &Theme, mut profile: Instance<Profile>) -> Self {
         let theme = theme.clone();
-        let avatar = profile.pending().avatar.clone();
-        let username = profile.pending().username.clone();
-        Action::flow(Flow::action_target(&theme, "block", "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
+        let profile = profile.pending();
+        let avatar = profile.avatar.clone();
+        let username = profile.username.clone();
+        let name = profile.name.unwrap().clone();
+        Action::flow(Flow::action_target(&theme, ("block", Action::Block {name}), "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
     }
 
     pub fn unblock(theme: &Theme, mut profile: Instance<Profile>) -> Self {
         let theme = theme.clone();
-        let avatar = profile.pending().avatar.clone();
-        let username = profile.pending().username.clone();
-        Action::flow(Flow::action_target(&theme, "unblock", "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
+        let profile = profile.pending();
+        let avatar = profile.avatar.clone();
+        let username = profile.username.clone();
+        let name = profile.name.unwrap().clone();
+        Action::flow(Flow::action_target(&theme, ("unblock", Action::Unblock {name}), "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
     }
 
     pub fn message(name: Name) -> Self {
@@ -462,9 +456,7 @@ impl Action {
             Action::Message {name} => {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    let mut instance = ctx.create::<crate::messages::ChatRoom>(Id::random());
-                    instance.send(crate::messages::ChatRoomAction::Share(recipient));
-                    instance.share(recipient);
+                    let mut instance = ChatRoom::create(ctx, vec![recipient]);
                     
                     let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
                     flow.build(ctx, theme)(ctx, theme);
@@ -475,6 +467,22 @@ impl Action {
                 let name = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     ctx.emit(SearchbarEvent::Select(name.clone()))
+                })
+            }
+
+            Action::Block {name} => {
+                let name = name.clone();
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    Profile::me(ctx).send(ProfileAction::Block(name.clone()));
+                    Profile::from_name(ctx, name.clone()).send(ProfileAction::IBlocked(true));
+                })
+            }
+
+            Action::Unblock {name} => {
+                let name = name.clone();
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    Profile::me(ctx).send(ProfileAction::Unblock(name.clone()));
+                    Profile::from_name(ctx, name.clone()).send(ProfileAction::IBlocked(false));
                 })
             }
 
