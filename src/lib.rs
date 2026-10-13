@@ -1,6 +1,6 @@
 #![doc(html_logo_url = "https://raw.githubusercontent.com/ramp-stack/chk/main/logo.png")]
 
-pub use pelican_ui::{Context, utils::{Timestamp, Assets}, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
+pub use pelican_ui::{Context, components::set_giphy_api_key, utils::{Timestamp, Assets}, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
 pub use ramp::prism::IS_MOBILE;
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;

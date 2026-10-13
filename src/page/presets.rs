@@ -9,7 +9,7 @@ use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, P
 use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::{MessageGroups, SendStickerEvent, Sticker};
+use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Sticker};
 
 use crate::messages::{ChatRoom, Message, ChatRoomAction};
 use crate::profiles::{Profile, ProfileAction};
@@ -119,6 +119,9 @@ impl OnEvent for MessagesPage {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(SendStickerEvent(sticker)) = event.downcast_ref::<SendStickerEvent>() {
             self.room.send(ChatRoomAction::SendSticker(sticker.clone()));
+        }
+        if let Some(SendGifEvent(gif)) = event.downcast_ref::<SendGifEvent>() {
+            self.room.send(ChatRoomAction::SendGif(gif.clone()));
         }
         vec![event]
     }

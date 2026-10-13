@@ -11,7 +11,7 @@ use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup, ActionData};
 use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
-
+use pelican_ui::interface::system::KeyboardPages;
 use std::sync::Arc;
 use maverick_os::air::{Name, Instance, Id};
 use crate::profiles::Profile;
@@ -74,7 +74,7 @@ impl Input {
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text {show_label, label, preset, actions} => {
-                let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
+                let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None, KeyboardPages::EMOJI)];
                 if let Some(a) = actions.as_ref()
                     && !a.is_empty() {
                         items.push(Box::new(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, active, icon, action)| {

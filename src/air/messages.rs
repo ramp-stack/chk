@@ -1,7 +1,7 @@
 use pelican_ui::Context;
 use pelican_ui::utils::Timestamp;
 use pelican_ui::components::{MessageGroups};
-pub use pelican_ui::components::{MessageContent, Sticker};
+pub use pelican_ui::components::{MessageContent, Sticker, Gif};
 
 use maverick_os::air::{Id, Name, Metadata, Contract, Instance};
 
@@ -50,6 +50,9 @@ impl Contract for ChatRoom {
             ChatRoomAction::SendSticker(sticker) => {
                 self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker)});
             },
+            ChatRoomAction::SendGif(gif) => {
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Gif(gif)});
+            },
         }
         
         self.messages.len()
@@ -75,11 +78,14 @@ impl ChatRoom {
     }
 }
 
+/// Actions are sent by their position in this list, so new ones go at the
+/// end. Moving one would change what actions already sent mean.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ChatRoomAction {
     SendMessage(String),
-    SendSticker(Sticker),
     Share(Name),
+    SendSticker(Sticker),
+    SendGif(Gif),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
