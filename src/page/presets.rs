@@ -12,6 +12,7 @@ use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Sticker};
 use pelican_ui::navigation::{NavigationEvent};
 use pelican_ui::utils::Timestamp;
+use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
 
 use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
 use crate::profiles::{Profile, ProfileAction};
@@ -120,12 +121,17 @@ pub struct MessagesPage {
 }
 
 impl OnEvent for MessagesPage {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(SendStickerEvent(sticker)) = event.downcast_ref::<SendStickerEvent>() {
             self.room.send(ChatRoomAction::SendSticker(sticker.clone()));
-        }
-        if let Some(SendGifEvent(gif)) = event.downcast_ref::<SendGifEvent>() {
+        } else if let Some(SendGifEvent(gif)) = event.downcast_ref::<SendGifEvent>() {
             self.room.send(ChatRoomAction::SendGif(gif.clone()));
+        } else if let Some(SendPhotoEvent(photo)) = event.downcast_ref::<SendPhotoEvent>() {
+            self.room.send(ChatRoomAction::SendPhoto(photo.clone()));
+        } else if let Some(SendVideoEvent(video)) = event.downcast_ref::<SendVideoEvent>() {
+            let members = self.room.pending().members.clone();
+            let video = video.share(ctx, &members);
+            self.room.send(ChatRoomAction::SendVideo(video));
         }
         vec![event]
     }
@@ -207,7 +213,7 @@ impl MessagesPage {
             (Some(username), _) => PelicanBumper::alert(theme, &format!("You blocked {}.", username))
         };
 
-        let messages = room_data.messages.iter().map(|message| {
+        let messages = room_data.messages(my_name).map(|message| {
             let room = room.clone();
             let tapped = message.clone();
             message.to_pel(ctx, move |ctx: &mut Context, theme: &Theme| {

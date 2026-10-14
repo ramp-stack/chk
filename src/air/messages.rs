@@ -2,6 +2,8 @@ use pelican_ui::{Context, theme::Theme};
 use pelican_ui::utils::Timestamp;
 use pelican_ui::components::{MessageGroups};
 pub use pelican_ui::components::{MessageContent, Sticker, Gif};
+pub use pelican_ui::components::{Photo, Video, VideoClip};
+use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
 
 use maverick_os::air::{Id, Name, Metadata, Contract, Instance};
 
@@ -17,7 +19,7 @@ use crate::profiles::Profile;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ChatRoom {
     pub members: Vec<Name>,
-    pub messages: Vec<Message>,
+    messages: Vec<Message>,
     pub id: Id,
 }
 
@@ -45,23 +47,38 @@ impl Contract for ChatRoom {
                 }
             },
             ChatRoomAction::SendMessage(message) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message), id: Id::random(), deleted: false});
+                let id = Id::hash(&(metadata.signer, metadata.timestamp));
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Text(message), id, hidden_from: Vec::new()});
             },
             ChatRoomAction::SendSticker(sticker) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker), id: Id::random(), deleted: false});
+                let id = Id::hash(&(metadata.signer, metadata.timestamp));
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Sticker(sticker), id, hidden_from: Vec::new()});
             },
             ChatRoomAction::SendGif(gif) => {
-                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Gif(gif), id: Id::random(), deleted: false});
+                let id = Id::hash(&(metadata.signer, metadata.timestamp));
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Gif(gif), id, hidden_from: Vec::new()});
+            },
+            ChatRoomAction::SendPhoto(photo) => {
+                let id = Id::hash(&(metadata.signer, metadata.timestamp));
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Photo(photo), id, hidden_from: Vec::new()});
+            },
+            ChatRoomAction::SendVideo(video) => {
+                let id = Id::hash(&(metadata.signer, metadata.timestamp));
+                self.messages.push(Message{author: metadata.signer, timestamp: metadata.timestamp, body: MessageContent::Video(video), id, hidden_from: Vec::new()});
             },
             ChatRoomAction::DeleteMessage(message) => {
-                // if is_mine {
-                self.messages.retain(|m| *m != message);
-                // } else {
-                //     if let Some(msg) = self.messages.iter_mut().find(|m| m.id == message.id) {
-                //         msg.deleted = true;
-                //     }
-                // }
+                if let Some(i) = self.messages.iter().position(|m| *m == message) {
+                    let message = &mut self.messages[i];
+                    if message.author == metadata.signer {
+                        // Your own message: removed for everyone.
+                        self.messages.remove(i);
+                    } else if !message.hidden_from.contains(&metadata.signer) {
+                        // Someone else's: hidden only for whoever deleted it.
+                        message.hidden_from.push(metadata.signer);
+                    }
+                }
             }
+            
         }
         
         self.messages.len()
@@ -102,6 +119,10 @@ impl ChatRoom {
             false => username.to_string()
         }
     }
+
+    pub fn messages(&self, me: Name) -> impl Iterator<Item = &Message> {
+        self.messages.iter().filter(move |m| !m.hidden_from.contains(&me))
+    }
 }
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
@@ -110,6 +131,8 @@ pub enum ChatRoomAction {
     SendMessage(String),
     SendSticker(Sticker),
     SendGif(Gif),
+    SendPhoto(Photo), 
+    SendVideo(Video),
     DeleteMessage(Message),
 }
 
@@ -118,7 +141,7 @@ pub struct Message {
     pub body: MessageContent,
     pub author: Name,
     pub timestamp: u64,
-    pub deleted: bool,
+    pub hidden_from: Vec<Name>,
     pub id: Id,
 }
 
