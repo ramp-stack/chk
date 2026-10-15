@@ -16,7 +16,7 @@ use crate::closure::{PageBuilderContractFn, PageBuilderContractMultiplesFn, Form
 
 use maverick_os::air::{Instance, Contract, Id};
 
-use crate::messages::ChatRoom;
+use crate::messages::{ChatRoom, Photo, Video};
 use crate::profiles::Profile;
 
 mod edit;
@@ -31,6 +31,10 @@ mod stack;
 pub use stack::*;
 mod watch;
 pub use watch::*;
+mod media;
+pub use media::*;
+mod video;
+pub use video::*;
 
 
 #[derive(Debug, Clone)]
@@ -141,6 +145,8 @@ pub enum PageType {
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize, on_submit: Option<Box<dyn FormSubmit>>},
     Messaging{room: Instance<ChatRoom>, flow_len: usize},
+    Photo{photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)>},
+    Video{video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)>},
 }
 
 impl PageType {
@@ -184,6 +190,17 @@ impl PageType {
         PageType::Messaging{ room, flow_len: 1 }
     }
 
+    /// A photo shown as big as the screen allows.
+    pub fn photo(photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+        PageType::Photo{ photo, header }
+    }
+
+    /// A video played right in the page, with play/pause and a bar to move
+    /// through it. It starts playing as soon as it's shown.
+    pub fn video(video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+        PageType::Video{ video, header }
+    }
+
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
         PageType::input("Scan QR code", Input::qr_code_scanner(instructions, alt), None, crate::Bumper::None)
     }
@@ -203,6 +220,8 @@ impl PageType {
         match self {
             PageType::Root{..} |
             PageType::Messaging{..} |
+            PageType::Photo{..} |
+            PageType::Video{..} |
             PageType::Edit{..} |
             PageType::EditAndDisplay {..} |
             PageType::Success{..} => None,
@@ -217,6 +236,8 @@ impl PageType {
     pub fn length(&mut self) -> Option<&mut usize> {
         match self {
             PageType::Messaging{..} |
+            PageType::Photo{..} |
+            PageType::Video{..} |
             PageType::Root{..} => None,
             PageType::Edit{flow_len, ..} |
             PageType::Display{flow_len, ..} |
@@ -256,6 +277,8 @@ impl PageType {
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len, on_submit} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len, on_submit.clone())),
             PageType::Messaging{room, flow_len} => Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len)),
+            PageType::Photo{photo, header} => Box::new(PhotoPage::new(ctx, theme, photo.clone(), header.clone())),
+            PageType::Video{video, header} => Box::new(VideoPage::new(ctx, theme, video.clone(), header.clone())),
         }
     }
 
@@ -271,7 +294,9 @@ impl PageType {
             PageType::Form{..} |
             PageType::Review{..} |
             PageType::Success{..} |
-            PageType::Messaging{..} => panic!("Not an accepted root type"),
+            PageType::Messaging{..} |
+            PageType::Photo{..} |
+            PageType::Video{..} => panic!("Not an accepted root type"),
 
             PageType::EditAndDisplay{title, header, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), header.clone(), items.clone(), display.clone(), on_save.clone())),
         }

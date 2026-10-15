@@ -19,6 +19,7 @@ pub mod page;
 pub use page::*;
 pub mod air;
 pub use air::*;
+mod player;
 
 pub struct RootInfo(pub PelicanRootInfo);
 impl RootInfo {

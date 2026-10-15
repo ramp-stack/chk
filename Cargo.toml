@@ -24,3 +24,10 @@ anyanymap = "1.0.2"
 include_dir = "0.7.4"
 maverick_os = {path = "../maverick_os"}
 rand = "0.8"
+
+# Playing videos in the app (not on the web, where they can't be decoded).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openh264 = "0.9"
+mp4 = "0.14"
+symphonia = { version = "0.6", default-features = false, features = ["isomp4", "aac"] }
+cpal = "0.18"
