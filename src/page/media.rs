@@ -9,8 +9,8 @@ use pelican_ui::display::Bin;
 use pelican_ui::interface::general::Header;
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Color, Icons};
-use pelican_ui::colors;
-use pelican_ui::components::{Rectangle, Icon, Task, Photo};
+use pelican_ui::{Task, colors};
+use pelican_ui::components::{Rectangle, Icon, Photo};
 use pelican_ui::components::text::{Text, TextSize, TextStyle};
 use pelican_ui::image::{self, RgbaImage, imageops::FilterType};
 

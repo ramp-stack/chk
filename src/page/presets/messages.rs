@@ -7,10 +7,8 @@ use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent};
+use pelican_ui::components::{MessageGroups, SendEvent};
 use pelican_ui::navigation::{NavigationEvent};
-use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
-
 use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
 use crate::profiles::Profile;
 use crate::blocking::Block;
@@ -31,16 +29,17 @@ pub struct MessagesPage {
 
 impl OnEvent for MessagesPage {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(SendStickerEvent(sticker)) = event.downcast_ref::<SendStickerEvent>() {
-            self.room.send(ChatRoomAction::SendSticker(sticker.clone()));
-        } else if let Some(SendGifEvent(gif)) = event.downcast_ref::<SendGifEvent>() {
-            self.room.send(ChatRoomAction::SendGif(gif.clone()));
-        } else if let Some(SendPhotoEvent(photo)) = event.downcast_ref::<SendPhotoEvent>() {
-            self.room.send(ChatRoomAction::SendPhoto(photo.clone()));
-        } else if let Some(SendVideoEvent(video)) = event.downcast_ref::<SendVideoEvent>() {
-            let members = self.room.pending().members.clone();
-            let video = video.share(ctx, &members);
-            self.room.send(ChatRoomAction::SendVideo(video));
+        if let Some(send) = event.downcast_ref::<SendEvent>() {
+            match send {
+                SendEvent::Sticker(sticker) => {self.room.send(ChatRoomAction::SendSticker(sticker.clone()));},
+                SendEvent::Gif(gif) => {self.room.send(ChatRoomAction::SendGif(gif.clone()));},
+                SendEvent::Photo(photo) => {self.room.send(ChatRoomAction::SendPhoto(photo.clone()));},
+                SendEvent::Video(video) => {
+                    let members = self.room.pending().members.clone();
+                    let video = video.share(ctx, &members);
+                    self.room.send(ChatRoomAction::SendVideo(video));
+                }
+            }
         }
         vec![event]
     }

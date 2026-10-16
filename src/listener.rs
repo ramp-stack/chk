@@ -29,19 +29,14 @@ impl Listener {
         mut builder: Box<dyn PageBuilder>,
         is_root: bool,
     ) -> Self {
-        println!("Created listener");
-
         let page_type = builder.build(ctx, theme);
-
-        let page = if is_root {
-            page_type.build_root(theme)
-        } else {
-            page_type.build(ctx, theme)
-        };
 
         Self {
             layout: Stack::default(),
-            page,
+            page: match is_root {
+                true => page_type.build_root(theme),
+                false => page_type.build(ctx, theme),
+            },
             builder,
             theme: theme.clone(),
             is_root,
@@ -50,19 +45,13 @@ impl Listener {
         }
     }
 
-    pub fn update(
-        &mut self,
-        ctx: &mut Context,
-        next: Option<NavFn>,
-        length: usize,
-    ) {
+    pub fn update(&mut self, ctx: &mut Context, next: Option<NavFn>, length: usize) {
         let mut page_type = self.builder.build(ctx, &self.theme);
         page_type.update(length, next.clone());
 
-        let mut page = if self.is_root {
-            page_type.build_root(&self.theme)
-        } else {
-            page_type.build(ctx, &self.theme)
+        let mut page = match self.is_root {
+            true => page_type.build_root(&self.theme),
+            false => page_type.build(ctx, &self.theme)
         };
 
         if let (Some(new), Some(old)) = (page.downcast_mut::<MessagesPage>(), self.page.downcast_mut::<MessagesPage>()) {
@@ -78,10 +67,8 @@ impl Listener {
 impl OnEvent for Listener {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event> ) -> Vec<Box<dyn Event>> {
         // println!("This page is listening...");
-        if event.downcast_ref::<TickEvent>().is_some() {
-            if self.builder.poll(ctx) {
-                self.update(ctx, self.next.clone(), self.flow_len);
-            }
+        if event.downcast_ref::<TickEvent>().is_some() && self.builder.poll(ctx) {
+            self.update(ctx, self.next.clone(), self.flow_len);
         }
 
         vec![event]
