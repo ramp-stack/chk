@@ -11,9 +11,7 @@ use crate::form::{Form, State, FormComplete};
 use crate::items::Input;
 use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, NavFn};
-use crate::{Listener, PageBuilder, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
-use maverick_os::air::Instance;
-use crate::profiles::Profile;
+use crate::{Listener, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -24,14 +22,14 @@ pub struct Flow(pub Vec<Page>);
 impl Flow{
     pub fn new(builders: Vec<Page>) -> Self {Flow(builders)}
 
-    pub fn action_target(theme: &Theme, action: (&str, Action), past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
+    pub fn action_target(action: (&str, Action), past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
         let (action_str, action) = action;
         let action_caps = action_str.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]).unwrap_or_default();
 
         let prompt = PageType::display(&format!("{} user", action_caps), 
             vec![
                 Display::avatar(avatar.clone(), purpose.clone()),
-                Display::confirmation_message(&format!("Are you sure you want to {} {}", action_str, target.clone())),
+                Display::confirmation_message(&format!("Are you sure you want to {} {}", action_str, target)),
             ], 
             None, 
             Bumper::double(&action_caps, action, "Cancel", Action::None), 
@@ -84,8 +82,7 @@ impl Flow{
 
                 Flow(pages)
             },
-            Form::Page {theme, title, inputs, display, on_save} => {
-                let theme = theme;
+            Form::Page {title, inputs, display, on_save} => {
                 let validations = inputs.iter().map(|i| i.validation()).collect::<Vec<_>>();
                 let items = inputs.into_iter().map(|i| i.build()).collect::<Vec<_>>();
                 let page = Page::Static(PageType::edit(&title, items.clone(), display.clone(), validations.clone(), on_save.clone()));
@@ -108,10 +105,10 @@ impl Flow{
         if self.0.is_empty() { return FlowWrapper::new(PelicanFlow::new(vec![])) }
 
         let mut pages = self.0.clone();
-        let mut first = pages.remove(0);
+        let first = pages.remove(0);
         let mut next_fn: Option<NavFn> = None;
 
-        pages.into_iter().rev().for_each(|mut page| {
+        pages.into_iter().rev().for_each(|page| {
             // let callback = (i == 0).then_some(self.1.clone()).flatten(); 
             new.push(page.build(ctx, theme, next_fn.take(), length));
             next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {

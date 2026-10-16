@@ -1,18 +1,9 @@
 use pelican_ui::Context;
-use pelican_ui::utils::Timestamp;
-use pelican_ui::components::{MessageGroups};
 pub use pelican_ui::components::{MessageContent, Sticker, Gif};
 
 use maverick_os::air::{Id, Name, Metadata, Contract, Instance};
 
-use std::collections::BTreeMap;
-use std::convert::Infallible;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
-
-use crate::profiles::Profile;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Block {
@@ -37,14 +28,10 @@ impl Contract for Block {
     }
 
     // Send message
-    fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
+    fn apply(&mut self, message: Self::Message, _metadata: Metadata) -> Self::Result {
         match message {
-            BlockAction::Block => {
-                self.is_blocked = true;
-            },
-            BlockAction::Unblock => {
-                self.is_blocked = false;
-            },
+            BlockAction::Block => self.is_blocked = true,
+            BlockAction::Unblock => self.is_blocked = false,
         }
         
         ()
@@ -59,7 +46,7 @@ impl Block {
             let block = block.pending();
             block.blocker == ctx.me() && block.blocked == name
         }).map(|(_, b)| b).unwrap_or_else(|| {
-            let mut block = ctx.create::<Block>(name);
+            let block = ctx.create::<Block>(name);
             block.share(name);
             block
         })

@@ -1,16 +1,9 @@
 use pelican_ui::{Context, theme::Theme};
 use pelican_ui::utils::Timestamp;
-use pelican_ui::components::{MessageGroups};
 pub use pelican_ui::components::{MessageContent, Sticker, Gif};
 pub use pelican_ui::components::{Photo, Video, VideoClip};
-use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
 
 use maverick_os::air::{Id, Name, Metadata, Contract, Instance};
-
-use std::collections::BTreeMap;
-use std::convert::Infallible;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 

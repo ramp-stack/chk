@@ -2,14 +2,14 @@ use pelican_ui::Context;
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::drawable::Drawable;
 use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::navigation::{NavigationEvent, Flow as PelicanFlow, FlowContainer, AppPage};
+use pelican_ui::navigation::NavigationEvent;
 
 use pelican_ui::components::SearchBar;
 use pelican_ui::utils::ValidationFn;
 
-use crate::{Flow, Page, Review, Success, PageBuilder, FlowWrapper};
+use crate::{Flow, Page, Review, Success};
 use crate::items::{EnumItem, Input, ListItem, Action, Display};
-use crate::closure::{FormSubmit, FormClosure, ValidityFn, FnMutClone};
+use crate::closure::{FormSubmit, FormClosure, ValidityFn};
 
 use maverick_os::air::Name;
 
@@ -44,7 +44,6 @@ pub enum Form {
         on_submit: Box<dyn FormSubmit>, 
     }, 
     Page {
-        theme: Theme,
         title: String,
         inputs: Vec<FormItem>,
         display: Vec<Display>,
@@ -63,13 +62,12 @@ impl Form {
         }
     }
 
-    pub fn page(theme: &Theme, title: &str, inputs: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+    pub fn page(title: &str, inputs: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
         Form::Page {
             title: title.to_string(),
             inputs,
             display,
             on_save,
-            theme: theme.clone(),
         }
     }
 }
@@ -144,19 +142,19 @@ impl FormValidState {
 #[derive(Debug, Clone)]
 pub enum FormAction {
     Paste,
-    ScanQRCode(Theme, String),
+    ScanQRCode(String),
     Custom(String, Option<String>, Icons, Action)
 }
 
 impl FormAction {
-    pub fn scan_qr_code(theme: &Theme, instructions: &str) -> Self {
-        FormAction::ScanQRCode(theme.clone(), instructions.to_string())
+    pub fn scan_qr_code(instructions: &str) -> Self {
+        FormAction::ScanQRCode(instructions.to_string())
     }
 
     pub fn get(&self) -> (String, Option<String>, Icons, Action) {
         match self {
             FormAction::Paste => ("Paste clipboard".to_string(), Some("Pasted".to_string()), Icons::Paste, Action::Paste),
-            FormAction::ScanQRCode(theme, instructions) => ("Scan QR code".to_string(), None, Icons::QrCode, Action::scan_qr(theme, instructions)),
+            FormAction::ScanQRCode(instructions) => ("Scan QR code".to_string(), None, Icons::QrCode, Action::scan_qr(instructions)),
             FormAction::Custom(l, al, i, a) => (l.to_string(), al.clone(), *i, a.clone())
         }
     }
@@ -169,8 +167,8 @@ pub enum FormItem {
     Enum(String, Vec<EnumItem>),
     Search(String, String, Vec<(ListItem, Name)>, Option<Vec<FormAction>>),
     ScanQR(String, String, Option<(String, Icons, Action)>),
-    Avatar(String, AvatarContent, Box<dyn ValidityFn>),
-    AvatarWithPreset(String, AvatarContent, Box<dyn ValidityFn>),
+    Avatar(String, AvatarContent, Action, Box<dyn ValidityFn>),
+    AvatarWithPreset(String, AvatarContent, Action, Box<dyn ValidityFn>),
 }
 
 pub struct FormStorage(pub HashMap<String, String>);
@@ -201,12 +199,12 @@ impl FormItem {
         FormItem::Search(title.to_string(), search.to_string(), items, actions)
     }
 
-    pub fn avatar(title: &str, valid: impl ValidityFn + 'static) -> Self {
-        FormItem::Avatar(title.to_string(), AvatarContent::default(), Box::new(valid))
+    pub fn avatar(title: &str, action: Action, valid: impl ValidityFn + 'static) -> Self {
+        FormItem::Avatar(title.to_string(), AvatarContent::default(), action, Box::new(valid))
     }
 
-    pub fn avatar_with_preset(title: &str, avatar: AvatarContent, valid: impl ValidityFn + 'static) -> Self {
-        FormItem::AvatarWithPreset(title.to_string(), avatar, Box::new(valid))
+    pub fn avatar_with_preset(title: &str, avatar: AvatarContent, action: Action, valid: impl ValidityFn + 'static) -> Self {
+        FormItem::AvatarWithPreset(title.to_string(), avatar, action, Box::new(valid))
     }
 
     pub fn scan_qr_code(title: &str, instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
@@ -259,7 +257,7 @@ impl FormItem {
             FormItem::Search(_, _, _, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
                 if let Some(searchbar) = children[0].as_any_mut().downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
             }),
-            FormItem::Avatar(_, _, validation) | FormItem::AvatarWithPreset(_, _, validation) => {
+            FormItem::Avatar(_, _, _, validation) | FormItem::AvatarWithPreset(_, _, _, validation) => {
                 use pelican_ui::components::avatar::Avatar;
                 let validation = validation.clone();
                 Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
@@ -303,8 +301,8 @@ impl FormItem {
                 Input::search(search, items.clone(), actions)
             },
             FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(instructions, alt.clone()),
-            FormItem::Avatar(_, _, _) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
-            FormItem::AvatarWithPreset(_, avatar, _) => Input::avatar(avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(Action::None)),
+            FormItem::Avatar(_, _, action, _) => Input::avatar(AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(action.clone())),
+            FormItem::AvatarWithPreset(_, avatar, action, _) => Input::avatar(avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)), Some(action.clone())),
         }
     }
 }

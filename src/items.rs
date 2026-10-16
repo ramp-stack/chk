@@ -9,19 +9,17 @@ use pelican_ui::components::{NumberGetter, QRCodeScanner, TextInput, RadioSelect
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup, ActionData};
+use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
 use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 use pelican_ui::interface::system::KeyboardPages;
 use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
-use std::sync::Arc;
-use maverick_os::air::{Name, Instance, Id};
-use crate::profiles::{Profile, ProfileAction};
+use maverick_os::air::{Name, Instance};
+use crate::profiles::Profile;
 use crate::blocking::{Block, BlockAction};
 
 use crate::Page;
 use crate::form::State;
 use crate::flow::Flow;
-use crate::ListItemGetter;
 use crate::messages::ChatRoom;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,7 +107,7 @@ impl Input {
                 if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             },
-            Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, false, AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
+            Input::Avatar {content, flair, action} => drawables![Avatar::new(theme, content.clone(), *flair, false, AvatarSize::Xxl, action.clone().map(|a| a.get()))],
             Input::Search {label, items, actions} => drawables![SearchBar::new(theme, label, 
                 items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
                 if let Some(a) = actions.as_ref() && !a.is_empty() {
@@ -366,12 +364,11 @@ pub enum Action {
     Message { name: Name },
     ChooseSearch { name: Name },
     Block {name: Name},
-    Unblock {name: Name}
+    Unblock {name: Name},
+    PickPhoto,
 }
 
-impl PartialEq for Action {
-    fn eq(&self, other: &Self) -> bool {true}
-}
+impl PartialEq for Action {fn eq(&self, _: &Self) -> bool {true}}
 
 impl Action {
     pub fn choose_search(name: Name) -> Self {
@@ -390,10 +387,9 @@ impl Action {
         Action::SelectImage
     }
 
-    pub fn scan_qr(theme: &Theme, instructions: &str) -> Self {
-        let instructions = instructions.to_string();
+    pub fn scan_qr(instructions: &str) -> Self {
         Action::Flow {
-            flow: Flow::new(vec![Page::Static(crate::PageType::scan_qr(&instructions.clone(), None))]),
+            flow: Flow::new(vec![Page::Static(crate::PageType::scan_qr(&instructions, None))]),
         }
     }
 
@@ -405,22 +401,20 @@ impl Action {
         Action::Flow { flow }
     }
 
-    pub fn block(theme: &Theme, mut profile: Instance<Profile>) -> Self {
-        let theme = theme.clone();
+    pub fn block(profile: Instance<Profile>) -> Self {
         let profile = profile.pending();
         let avatar = profile.avatar.clone();
         let username = profile.username.clone();
         let name = profile.name.unwrap().clone();
-        Action::flow(Flow::action_target(&theme, ("block", Action::Block {name}), "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
+        Action::flow(Flow::action_target(("block", Action::Block {name}), "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
     }
 
-    pub fn unblock(theme: &Theme, mut profile: Instance<Profile>) -> Self {
-        let theme = theme.clone();
+    pub fn unblock(profile: Instance<Profile>) -> Self {
         let profile = profile.pending();
         let avatar = profile.avatar.clone();
         let username = profile.username.clone();
         let name = profile.name.unwrap().clone();
-        Action::flow(Flow::action_target(&theme, ("unblock", Action::Unblock {name}), "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
+        Action::flow(Flow::action_target(("unblock", Action::Unblock {name}), "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
     }
 
     pub fn message(name: Name) -> Self {
@@ -461,11 +455,14 @@ impl Action {
                 Box::new(move |ctx: &mut Context, _: &Theme| {ctx.set_clipboard(data.to_string())})
             }
 
+            Action::PickPhoto => {
+                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.pick_photo()})
+            }
+
             Action::Message {name} => {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    let mut instance = ChatRoom::create(ctx, vec![recipient]);
-                    
+                    let instance = ChatRoom::create(ctx, vec![recipient]);
                     let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
                     flow.build(ctx, theme)(ctx, theme);
                 })
@@ -473,14 +470,14 @@ impl Action {
 
             Action::ChooseSearch {name} => {
                 let name = name.clone();
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                Box::new(move |ctx: &mut Context, _: &Theme| {
                     ctx.emit(SearchbarEvent::Select(name.clone()))
                 })
             }
 
             Action::Block {name} => {
                 let name = name.clone();
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                Box::new(move |ctx: &mut Context, _: &Theme| {
                     let mut block = Block::create(ctx, name.clone());
                     block.send(BlockAction::Block);
                 })
@@ -488,7 +485,7 @@ impl Action {
 
             Action::Unblock {name} => {
                 let name = name.clone();
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                Box::new(move |ctx: &mut Context, _: &Theme| {
                     let mut block = Block::create(ctx, name.clone());
                     block.send(BlockAction::Unblock);
                 })

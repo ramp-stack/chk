@@ -1,38 +1,22 @@
-use ramp::prism;
-
-use pelican_ui::event::{OnEvent, Event, TickEvent};
-use pelican_ui::drawable::{Component, Drawable, SizedTree};
-use pelican_ui::{Context, Callback, drawables};
-use pelican_ui::layout::{Stack, Offset};
-use pelican_ui::canvas::Align;
-use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
-use pelican_ui::navigation::AppPage;
-use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
+use pelican_ui::Context;
+use pelican_ui::layout::Offset;
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Sticker};
-use pelican_ui::navigation::{NavigationEvent};
-use pelican_ui::utils::Timestamp;
-use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
 
-use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
 use crate::profiles::{Profile, ProfileAction};
 use crate::blocking::Block;
-use crate::{Page, PageBuilder, ActionItem, PageType, FormItem, Bumper, Listener};
+use crate::{Page, ActionItem, PageType, FormItem, Bumper};
 use crate::flow::Flow;
 use crate::form::{State, FormValidState, FormComplete};
-use crate::items::{Action, Display, AvatarPurpose, TableItem};
-use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
+use crate::items::{Action, Display, AvatarPurpose};
+use crate::closure::FormSubmit;
 
-use maverick_os::air::{Id, Name, Instance};
-
-use std::str::FromStr;
-use std::sync::Arc;
+use maverick_os::air::Instance;
 
 pub struct ProfilePage;
 impl ProfilePage {
-    pub fn editing(theme: &Theme, is_me: bool, mut profile: Instance<Profile>) -> PageType {
+    pub fn editing(is_me: bool, profile: Instance<Profile>) -> PageType {
         let mut p = profile.clone();
-        let closure = Box::new(move |ctx: &mut Context, objects: &Vec<State>| {
+        let closure = Box::new(move |_ctx: &mut Context, objects: &Vec<State>| {
             println!("Saving profile");
             if let Some(State::Text(result)) = objects.get(1) {
                 p.send(ProfileAction::ChangeUsername(result.to_string()));
@@ -46,9 +30,9 @@ impl ProfilePage {
             FormComplete::None
         }) as Box<dyn FormSubmit>;
         
-        let mut avatar = profile.clone();
-        let mut username = profile.clone();
-        let mut notes = profile.clone();
+        let avatar = profile.clone();
+        let username = profile.clone();
+        let notes = profile.clone();
         let p = (*profile.pending()).clone();
         let my_name = p.name.unwrap();
         let title = if is_me {"My profile"} else {"Edit profile"};
@@ -68,21 +52,21 @@ impl ProfilePage {
             //     Flow::new(vec![Page::Static(ProfilePage::editing(&t.clone(), true, p.clone()))])
             // }))),
             vec![
-                FormItem::avatar_with_preset("Avatar", p.avatar.clone(), move |ctx: &mut Context, a: String| {
+                FormItem::avatar_with_preset("Avatar", p.avatar.clone(), Action::PickPhoto, move |_ctx: &mut Context, a: String| {
                     let current = avatar.pending().avatar.get_image().unwrap_or_default();
                     match current == a {
                         true => FormValidState::Valid,
                         false => FormValidState::Invalid,
                     }
                 }),
-                FormItem::text_with_preset("Username", &p.username.clone(), None, move |ctx: &mut Context, a: String| {
+                FormItem::text_with_preset("Username", &p.username.clone(), None, move |_ctx: &mut Context, a: String| {
                     match a.as_str() {
                         a if a == &username.pending().username => FormValidState::Valid,
                         "" => FormValidState::InvalidWithData("Username cannot be empty".to_string()),
                         _ => FormValidState::Invalid,
                     }
                 }),
-                FormItem::text_with_preset("About me", &p.notes, None, move |ctx: &mut Context, a: String| {
+                FormItem::text_with_preset("About me", &p.notes, None, move |_ctx: &mut Context, a: String| {
                     match notes.pending().notes == a {
                         true => FormValidState::Valid,
                         false => FormValidState::Invalid,
@@ -101,14 +85,10 @@ impl ProfilePage {
 
 pub struct ProfileView;
 impl ProfileView {
-    pub fn new(ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>) -> PageType {
+    pub fn new(ctx: &mut Context, profile: Instance<Profile>) -> PageType {
         let p = profile.clone();
         let profile = profile.pending().clone();
         let profile_name = profile.name.unwrap();
-        let saved = p.clone();
-
-        let my_profile = Profile::me(ctx);
-        let my_profile = my_profile.pending().clone();
         let my_name = ctx.me();
         let is_me = profile_name == my_name;
         let about_me = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
@@ -116,8 +96,8 @@ impl ProfileView {
         let is_blocked = !is_me && Block::did_i_block(ctx, profile.name.unwrap());
         
         let block_action = match is_blocked {
-            true => ActionItem::new(Action::unblock(&theme, p.clone()), "Unblock", Icons::Unblock),
-            false => ActionItem::new(Action::block(&theme, p.clone()), "Block", Icons::Block),
+            true => ActionItem::new(Action::unblock(p.clone()), "Unblock", Icons::Unblock),
+            false => ActionItem::new(Action::block(p.clone()), "Block", Icons::Block),
         };
 
         PageType::display(&profile.username,
@@ -136,10 +116,8 @@ impl ProfileView {
                     ])), "Display QR Code", Icons::QrCode)
                 ]),
             ], 
-            Some((Icons::Edit, Box::new(move |ctx: &mut Context, theme: &Theme| {
-                let p = p.clone();
-                let t = theme.clone();
-                Flow::new(vec![Page::Static(ProfilePage::editing(&t.clone(), is_me, p.clone()))])
+            Some((Icons::Edit, Box::new(move |_ctx: &mut Context, _: &Theme| {
+                Flow::new(vec![Page::Static(ProfilePage::editing(is_me, p.clone()))])
             }))), 
             Bumper::None, Offset::Start,
         )

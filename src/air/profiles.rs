@@ -3,11 +3,6 @@ use pelican_ui::components::avatar::AvatarContent;
 
 use maverick_os::air::{Metadata, Contract, Id, Name, Instance};
 
-use std::collections::BTreeMap;
-use std::convert::Infallible;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-
 use rand::{seq::SliceRandom, Rng};
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +24,7 @@ impl Contract for Profile {
 
     fn id() -> Id {Id::hash("Profile")}
 
-    fn init(init: Self::Init, metadata: Metadata) -> Self {
+    fn init(init: Self::Init, _metadata: Metadata) -> Self {
         Profile {
             name: Some(init),
             username: "Orange Profile".to_string(),
@@ -39,7 +34,7 @@ impl Contract for Profile {
         }
     }
 
-    fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
+    fn apply(&mut self, message: Self::Message, _metadata: Metadata) -> Self::Result {
         match message {
             ProfileAction::ChangeUsername(content) => self.username = content.to_string(),
             ProfileAction::ChangeNotes(content) => self.notes = content.to_string(),

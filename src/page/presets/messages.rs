@@ -1,32 +1,25 @@
 use ramp::prism;
 
-use pelican_ui::event::{OnEvent, Event, TickEvent};
-use pelican_ui::drawable::{Component, Drawable, SizedTree};
+use pelican_ui::event::{OnEvent, Event};
+use pelican_ui::drawable::{Component, SizedTree};
 use pelican_ui::{Context, Callback, drawables};
 use pelican_ui::layout::{Stack, Offset};
-use pelican_ui::canvas::Align;
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
-use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Sticker};
+use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent};
 use pelican_ui::navigation::{NavigationEvent};
-use pelican_ui::utils::Timestamp;
 use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
 
 use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
-use crate::profiles::{Profile, ProfileAction};
+use crate::profiles::Profile;
 use crate::blocking::Block;
-use crate::{Page, PageBuilder, ActionItem, PageType, FormItem, Bumper, Listener};
+use crate::{Page, PageType, Bumper};
 use crate::flow::Flow;
-use crate::form::{State, FormValidState, FormComplete};
-use crate::items::{Action, Display, AvatarPurpose, TableItem};
-use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
+use crate::items::{Action, Display};
+use crate::closure::FlowBuilder;
 
-use maverick_os::air::{Id, Name, Instance};
-
-use std::str::FromStr;
-use std::sync::Arc;
+use maverick_os::air::Instance;
 
 #[derive(Debug, Component, Clone)]
 pub struct MessagesPage {
@@ -55,7 +48,7 @@ impl OnEvent for MessagesPage {
 impl AppPage for MessagesPage {}
 
 impl MessagesPage {
-    pub fn new(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, flow_len: usize ) -> Self {
+    pub fn new(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>, flow_len: usize ) -> Self {
         let room_data = room.pending().clone();
         let my_name = ctx.me();
 
@@ -98,20 +91,18 @@ impl MessagesPage {
             (false, Some(profile)) => {
                 Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let mut profile = profile.clone();
-                    (Flow::new(vec![Page::profile(ctx, theme, &mut profile)]).build(ctx, theme))(ctx, theme);
+                    (Flow::new(vec![Page::profile(ctx, &mut profile)]).build(ctx, theme))(ctx, theme);
                 }) as Box<dyn Callback>)
             }
             (true, _) => Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
-                let profiles = profiles.clone();
-                let t = theme.clone();
                 (Flow::new(vec![
-                    Page::Static(GroupMessageInfoPage::new(ctx, &t, profiles.clone()))
+                    Page::Static(GroupMessageInfoPage::new(ctx, profiles.clone()))
                 ]).build(ctx, theme))(ctx, theme);
             }) as Box<dyn Callback>),
         };
 
         let title = room_data.name(ctx);
-        let header = Header::messaging(ctx, theme, title, pel_profiles, flow_len, info);
+        let header = Header::messaging(theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
         
@@ -203,13 +194,12 @@ impl MessageDetails {
 pub struct GroupMessageInfoPage;
 impl GroupMessageInfoPage {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(ctx: &mut Context, theme: &Theme, profiles: Vec<Instance<Profile>>) -> PageType {
-        let theme = theme.clone();
-        let items = profiles.clone().into_iter().flat_map(|mut profile| {
+    pub fn new(ctx: &mut Context, profiles: Vec<Instance<Profile>>) -> PageType {
+        let items = profiles.clone().into_iter().flat_map(|profile| {
             let mut p = profile.clone();
             let deref = profile.pending();
             if deref.name.unwrap() != ctx.me() {
-                let view_contact = Flow::new(vec![Page::profile(ctx, &theme, &mut p)]);
+                let view_contact = Flow::new(vec![Page::profile(ctx, &mut p)]);
                 Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
             } else {None}
         }).collect::<Vec<crate::ListItem>>();

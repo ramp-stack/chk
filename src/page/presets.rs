@@ -1,32 +1,17 @@
 use ramp::prism;
 
-use pelican_ui::event::{OnEvent, Event, TickEvent};
-use pelican_ui::drawable::{Component, Drawable, SizedTree};
+use pelican_ui::event::OnEvent;
+use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::{Context, Callback, drawables};
 use pelican_ui::layout::{Stack, Offset};
 use pelican_ui::canvas::Align;
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
-use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::{MessageGroups, SendStickerEvent, SendGifEvent, Sticker};
-use pelican_ui::navigation::{NavigationEvent};
-use pelican_ui::utils::Timestamp;
-use pelican_ui::components::{SendPhotoEvent, SendVideoEvent};
+use pelican_ui::theme::Theme;
 
-use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
-use crate::profiles::{Profile, ProfileAction};
-use crate::blocking::Block;
-use crate::{Page, PageBuilder, ActionItem, PageType, FormItem, Bumper, Listener};
-use crate::flow::Flow;
-use crate::form::{State, FormValidState, FormComplete};
-use crate::items::{Action, Display, AvatarPurpose, TableItem};
-use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
-
-use maverick_os::air::{Id, Name, Instance};
-
-use std::str::FromStr;
-use std::sync::Arc;
+use crate::form::State;
+use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
 mod messages;
 pub use messages::{MessagesPage, MessageDetails};
@@ -94,7 +79,7 @@ impl ReviewPage {
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme, #[skip] bool, #[skip] Option<Box<dyn FormSubmit>>);
+pub struct SuccessPage(Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme, #[skip] Option<Box<dyn FormSubmit>>);
 impl OnEvent for SuccessPage {}
 impl AppPage for SuccessPage {}
 impl SuccessPage {
@@ -102,13 +87,13 @@ impl SuccessPage {
         let header = Header::stack_end(theme, &title);
         let bumper = Some(PelicanBumper::stack_end(theme, Some(flow_len)));
         let page = PelicanPage::new(header, Content::new(Offset::Center, vec![], Box::new(|_, _| true)), bumper);
-        SuccessPage(Stack::default(), page, getter, theme.clone(), false, on_submit.clone())
+        SuccessPage(Stack::default(), page, getter, theme.clone(), on_submit.clone())
     }
 
     pub fn on_change(&mut self, ctx: &mut Context, new: Vec<State>) {
         use pelican_ui::colors;
         use pelican_ui::components::Icon;
-        if let Some(on_submit) = &mut self.5 {(on_submit)(ctx, &new);}
+        if let Some(on_submit) = &mut self.4 {(on_submit)(ctx, &new);}
         let theme = self.3.clone();
         let (icon, description) = (self.2)(new);
         self.1.content = Content::new(Offset::Center, drawables![

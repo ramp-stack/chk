@@ -1,8 +1,5 @@
-use ramp::prism;
-use pelican_ui::event::OnEvent;
-use pelican_ui::drawable::Component;
 use pelican_ui::{Context, IS_MOBILE};
-use pelican_ui::layout::{Stack, Offset};
+use pelican_ui::layout::Offset;
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 use std::fmt::Debug;
@@ -14,7 +11,7 @@ use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
 use crate::closure::{PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
-use maverick_os::air::{Instance, Contract, Id};
+use maverick_os::air::{Instance, Contract};
 
 use crate::messages::{ChatRoom, Photo, Video};
 use crate::profiles::Profile;
@@ -58,16 +55,16 @@ impl Page {
         Page::watching(Watch::list::<C>(), builder)
     }
 
-    pub fn profile(ctx: &mut Context, theme: &Theme, profile: &mut Instance<Profile>) -> Self {
+    pub fn profile(ctx: &mut Context, profile: &mut Instance<Profile>) -> Self {
         let my_name = profile.pending().name.unwrap();
         let is_me = my_name == ctx.me();
         match is_me {
-            true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
+            true => Page::Static(ProfilePage::editing(is_me, profile.clone())),
             false => {
                 Page::watching(
                     (Watch::contract(profile.clone()), Watch::list::<Block>()),
-                    |ctx: &mut Context, theme: &Theme, (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
-                        chk::ProfileView::new(ctx, theme, profile)
+                    |ctx: &mut Context, _: &Theme, (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
+                        chk::ProfileView::new(ctx, profile)
                     },
                 )
                 // |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
@@ -103,7 +100,7 @@ impl Page {
         match self {
             Page::Static(page) => {
                 let mut page = page.clone();
-                page.update(ctx, theme, length, next_fn.take());
+                page.update(length, next_fn.take());
                 return page.build(ctx, theme);
             },
             Page::Refreshing(page_builder) => {
@@ -117,7 +114,7 @@ impl Page {
     pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             Page::Static(page) => {
-                return page.clone().build_root(ctx, theme);
+                return page.clone().build_root(theme);
             },
             Page::Refreshing(page_builder) => {
                 return Box::new(Listener::new(ctx, theme, page_builder.clone(), true));
@@ -260,7 +257,7 @@ impl PageType {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, theme: &Theme, new_len: usize, new_fn: Option<NavFn>) {
+    pub fn update(&mut self, new_len: usize, new_fn: Option<NavFn>) {
         if let Some(l) = self.length() { *l = new_len; }
         if let Some(nav) = self.nav_fn() { *nav = new_fn.clone(); }
     }
@@ -282,7 +279,7 @@ impl PageType {
         }
     }
 
-    pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
+    pub fn build_root(&self, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone())),
             PageType::Both{title, inputs, display, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), inputs.to_vec(), display.to_vec(), header.clone(), None, None)),

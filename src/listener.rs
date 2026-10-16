@@ -7,10 +7,7 @@ use pelican_ui::event::{Event, TickEvent};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::Context;
 
-use crate::{MessagesPage, PageBuilder, NavFn, PageTypeToAppPageFn, PageBuilderContractFn, PageType};
-
-use maverick_os::air::{Contract, Instance};
-use std::cmp::PartialEq;
+use crate::{MessagesPage, PageBuilder, NavFn};
 
 #[derive(Debug, Component, Clone)]
 pub struct Listener {
@@ -37,7 +34,7 @@ impl Listener {
         let page_type = builder.build(ctx, theme);
 
         let page = if is_root {
-            page_type.build_root(ctx, theme)
+            page_type.build_root(theme)
         } else {
             page_type.build(ctx, theme)
         };
@@ -60,10 +57,10 @@ impl Listener {
         length: usize,
     ) {
         let mut page_type = self.builder.build(ctx, &self.theme);
-        page_type.update(ctx, &self.theme, length, next.clone());
+        page_type.update(length, next.clone());
 
         let mut page = if self.is_root {
-            page_type.build_root(ctx, &self.theme)
+            page_type.build_root(&self.theme)
         } else {
             page_type.build(ctx, &self.theme)
         };

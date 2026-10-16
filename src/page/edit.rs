@@ -17,7 +17,7 @@ use crate::closure::FormSubmit;
 #[derive(Debug, Component, Clone)]
 pub struct EditPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Box<dyn FormSubmit>, #[skip] Vec<State>, #[skip] bool);
 impl OnEvent for EditPage {
-    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if event.downcast_ref::<TickEvent>().is_some() && self.5 {
             let mut new = vec![];
             self.1.content.children().iter().for_each(|child| Input::store_in(child, &mut new));
