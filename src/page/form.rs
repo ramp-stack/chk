@@ -1,9 +1,6 @@
-use ramp::prism;
-
-use pelican_ui::event::OnEvent;
 use pelican_ui::drawable::Component;
 use pelican_ui::{Context, Callback};
-use pelican_ui::layout::{Stack, Offset};
+use ptsd::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::Theme;
@@ -15,10 +12,13 @@ use crate::closure::{FormSubmit, NavFn};
 
 #[derive(Debug, Component, Clone)]
 pub struct FormPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Option<NavFn>, #[skip] Option<Box<dyn FormSubmit>>, #[skip] Vec<State>);
-impl OnEvent for FormPage {}
+
 impl AppPage for FormPage {}
 impl FormPage {
-    pub fn new(theme: &Theme, title: String, item: Input, next: Option<NavFn>, _flow_len: usize, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
+    pub fn new(
+        theme: &Theme, title: String, item: Input, next: Option<NavFn>, _flow_len: usize,
+        validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>,
+    ) -> Self {
         let header = Header::stack(theme, &title, None);
         let content = item.build(theme).unwrap_or_default();
         let bumper = PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);

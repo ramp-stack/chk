@@ -1,54 +1,61 @@
-use pelican_ui::{drawables, colors, Context, Callback, IS_MOBILE};
+use pelican_ui::{colors, Context, Callback};
 use pelican_ui::drawable::Drawable;
-use pelican_ui::canvas::{Align, ShapeType, Image};
+use prism::drawable::{Component, text::Align};
+use prism::events::{on_event, ChildEvent, DynEvent, Event, OnEvent, TickEvent};
+use prism::hardware::{Image, Picked};
+use ptsd::layout::Stack;
+use std::cell::RefCell;
+use std::rc::Rc;
+use prism::hardware::Data;
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::layout::Offset;
+use ptsd::layout::Offset;
 use pelican_ui::utils::{TitleSubtitle};
 use pelican_ui::components::list_item::{ListItemSection, ListItemInfoLeft, ListItem as PelicanListItem};
 use pelican_ui::components::{NumberGetter, QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput};
 use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::components::button::{SecondaryButton, QuickActions, IconButtonGroup, ActionData};
+use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
 use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
-
-use std::sync::Arc;
-use maverick_os::air::{Name, Instance, Id};
+use pelican_ui::interface::system::KeyboardPages;
+use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
+use prism::air::{Id, Name, Instance};
 use crate::profiles::Profile;
+use crate::blocking::{Block, BlockAction};
 
 use crate::Page;
 use crate::form::State;
 use crate::flow::Flow;
-use crate::ListItemGetter;
+use crate::messages::ChatRoom;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     Text {label: String, actions: Option<Vec<(String, Option<String>, Icons, Action)>>, show_label: bool, preset: Option<String>},
-    Currency {instructions: String}, //, on_edited: Box<dyn EditedFn>},
+    Currency {instructions: String},
     Number {instructions: String},
-    Date {instructions: String}, //, on_edited: Box<dyn EditedFn>},
-    Time {instructions: String}, //, on_edited: Box<dyn EditedFn>},
+    Date {instructions: String},
+    Time {instructions: String},
     Enumerator {items: Vec<EnumItem>},
     Avatar {content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>},
-    Search {items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>},
+    Search {label: String, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>},
     QRCodeScanner {instructions: String, alt: Option<(String, Icons, Action)>},
 }
 
 impl Input {
-    pub fn currency(instructions: &str) -> Self { //}, on_edited: impl FnMut(&mut Context, &mut String) + Clone + 'static) -> Self {
-        Input::Currency {instructions: instructions.to_string()} //, on_edited: Box::new(on_edited)}
+    pub fn currency(instructions: &str) -> Self {
+        Input::Currency {instructions: instructions.to_string()}
     }
 
-    pub fn date(instructions: &str) -> Self { //, on_edited: impl FnMut(&mut Context, &mut String) + Clone + 'static) -> Self {
-        Input::Date {instructions: instructions.to_string()} //, on_edited: Box::new(on_edited)}
+    pub fn date(instructions: &str) -> Self {
+        Input::Date {instructions: instructions.to_string()}
     }
 
-    pub fn time(instructions: &str) -> Self { //, on_edited: impl FnMut(&mut Context, &mut String) + Clone + 'static) -> Self {
-        Input::Time {instructions: instructions.to_string()} //, on_edited: Box::new(on_edited)}
+    pub fn time(instructions: &str) -> Self {
+        Input::Time {instructions: instructions.to_string()}
     }
 
-    pub fn number(instructions: &str) -> Self { //, on_edited: impl FnMut(&mut Context, &mut String) + Clone + 'static) -> Self {
-        Input::Number {instructions: instructions.to_string()} //, on_edited: Box::new(on_edited)}
+    pub fn number(instructions: &str) -> Self {
+        Input::Number {instructions: instructions.to_string()}
     }
 
     pub fn enumerator(items: Vec<EnumItem>) -> Self {
@@ -63,8 +70,8 @@ impl Input {
         Input::Avatar {content, flair, action}
     }
 
-    pub fn search(items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
-        Input::Search {items, actions}
+    pub fn search(label: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
+        Input::Search {label: label.to_string(), items, actions}
     }
 
     pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
@@ -74,7 +81,11 @@ impl Input {
     pub fn build(&self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text {show_label, label, preset, actions} => {
-                let mut items = drawables![TextInput::new(theme, preset.as_deref(), show_label.then_some(label), Some(&format!("Enter {}...", label.to_lowercase())), None, None)];
+                let mut items: Vec<Box<dyn Drawable>> = vec![Box::new(TextInput::new(
+                    theme, preset.as_deref(), show_label.then_some(label),
+                    Some(&format!("Enter {}...", label.to_lowercase())),
+                    None, None, KeyboardPages::EMOJI,
+                ))];
                 if let Some(a) = actions.as_ref()
                     && !a.is_empty() {
                         items.push(Box::new(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, active, icon, action)| {
@@ -85,41 +96,43 @@ impl Input {
 
                 items
             },
-            Input::Enumerator {items} => drawables![RadioSelector::new(theme, 0, items.iter().map(|item| item.get()).collect::<Vec<_>>())],
+            Input::Enumerator {items} => vec![Box::new(RadioSelector::new(theme, 0, items.iter().map(|item| item.get()).collect::<Vec<_>>()))],
             Input::Currency {instructions} => {
-                let mut drawables = drawables![NumericalInput::numerical(theme, instructions)];
-                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                let mut drawables: Vec<Box<dyn Drawable>> = vec![Box::new(NumericalInput::numerical(theme, instructions))];
+                if cfg!(any(target_os = "ios", target_os = "android")) {drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             },
             Input::Number {instructions} => {
-                let mut drawables = drawables![NumericalInput::number(theme, instructions)];
-                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                let mut drawables: Vec<Box<dyn Drawable>> = vec![Box::new(NumericalInput::number(theme, instructions))];
+                if cfg!(any(target_os = "ios", target_os = "android")) {drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             },
             Input::Date {instructions} => {
-                let mut drawables = drawables![NumericalInput::date(theme, instructions)];
-                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                let mut drawables: Vec<Box<dyn Drawable>> = vec![Box::new(NumericalInput::date(theme, instructions))];
+                if cfg!(any(target_os = "ios", target_os = "android")) {drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             },
             Input::Time {instructions} => {
-                let mut drawables = drawables![NumericalInput::time(theme, instructions)];
-                if IS_MOBILE {drawables.push(Box::new(Keypad::new(theme))); }
+                let mut drawables: Vec<Box<dyn Drawable>> = vec![Box::new(NumericalInput::time(theme, instructions))];
+                if cfg!(any(target_os = "ios", target_os = "android")) {drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             },
-            Input::Avatar {content, flair, ..} => drawables![Avatar::new(theme, content.clone(), *flair, false, AvatarSize::Xxl, Some(Box::new(|ctx: &mut Context, theme: &Theme| ctx.pick_photo())))],
-            Input::Search {items, actions} => drawables![SearchBar::new(theme, 
-                items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(), 
+            Input::Avatar {content, flair, action} => vec![Box::new(AvatarInput::new(theme, content.clone(), *flair, action.clone()))],
+            Input::Search {label, items, actions} => vec![Box::new(SearchBar::new(theme, label,
+                items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(),
                 if let Some(a) = actions.as_ref() && !a.is_empty() {
                     Some(QuickActions::new(theme, Offset::Start, a.iter().map(|(label, active, icon, action)| {
                         let on_click: Box<dyn Callback> = action.get();
                         ActionData{ label: label.to_string(), active: active.clone(), icon: *icon, on_click }
                     }).collect::<Vec<ActionData>>()))
                 } else {None}
-            )],
+            ))],
             Input::QRCodeScanner {instructions, alt} => {
-                let mut items = drawables![
-                    QRCodeScanner::new(theme, Box::new(|_ctx: &mut Context, _d: String| {})),
-                    ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)
+                let mut items: Vec<Box<dyn Drawable>> = vec![
+                    Box::new(QRCodeScanner::new(theme, Box::new(|_ctx: &mut Context, _d: String| {}))),
+                    Box::new(ExpandableText::new(
+                        theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None,
+                    )),
                 ];
                 if let Some((label, icon, action)) = alt.as_ref() {
                     items.push(Box::new(ExpandableText::new(theme, "or", TextSize::Md, TextStyle::Secondary, Align::Center, None)));
@@ -144,22 +157,22 @@ impl Input {
         }
     }
 
-    #[allow(clippy::borrowed_box)]
-    pub fn store_in(child: &Box<dyn Drawable>, state: &mut Vec<State>) {
+    pub fn state(child: &dyn Drawable) -> Option<State> {
         if let Some(input) = child.downcast_ref::<TextInput>() {
-            state.push(State::Text(input.value()));
+            Some(State::Text(input.value()))
         } else if let Some(selector) = child.downcast_ref::<RadioSelector>() {
-            state.push(State::Enumerator(selector.value()));
+            Some(State::Enumerator(selector.value()))
         } else if let Some(input) = child.downcast_ref::<NumericalInput>() {
-            state.push(State::Number(input.value()));
-        } else if let Some(avatar) = child.downcast_ref::<Avatar>() {
-            state.push(State::Avatar(avatar.content.clone()))
+            Some(State::Number(input.value()))
+        } else if let Some(avatar) = child.downcast_ref::<AvatarInput>() {
+            Some(State::Avatar(avatar.content().clone()))
         } else if let Some(searchbar) = child.downcast_ref::<SearchBar>() {
-            state.push(State::Search(searchbar.results()))
-        } else if let Some(scanner) = child.downcast_ref::<QRCodeScanner>() {
-            state.push(State::ScanCode(scanner.found()))
+            Some(State::Search(searchbar.results()))
+        } else {
+            child.downcast_ref::<QRCodeScanner>().map(|scanner| State::ScanCode(scanner.found()))
         }
     }
+
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +187,8 @@ pub enum Display {
     List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
     QRCode {data: String, instructions: String},
     Avatar {content: AvatarContent, purpose: AvatarPurpose},
-    Actions {actions: Vec<ActionItem>, as_icons: bool}
+    Actions {actions: Vec<ActionItem>, as_icons: bool},
+    Messages {messages: MessageGroups},
 }
 
 impl Display {
@@ -215,7 +229,6 @@ impl Display {
     }
 
     pub fn list(label: Option<&str>, items: Vec<ListItem>, instructions: Option<&str>) -> Self {
-        // let item_getter: Arc<Box<dyn ListItemGetter>> = Arc::new(Box::new(|ctx: &mut Context| vec![]));
         Display::List{label: label.map(|i| i.to_string()), items, instructions: instructions.map(|i| i.to_string())}
     }
 
@@ -235,38 +248,55 @@ impl Display {
         Display::Actions {actions, as_icons}
     }
 
+    pub fn messages(ctx: &mut Context, theme: &Theme, messages: Vec<PelicanMessage>) -> Self {
+        Display::Messages {messages: MessageGroups::new(ctx, theme, messages, false, false)}
+    }
+
     pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
-            Display::Icon {icon} => drawables![Icon::new(theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0)],
-            Display::Image {image, size} => drawables![Image{shape: ShapeType::Rectangle(0.0, *size, 0.0), image: theme.brand().images.get(&image.to_string()).unwrap().clone(), color: None}],
-            Display::Text {text, size, style, align} if !text.is_empty() => drawables![ExpandableText::new(theme, text, *size, *style, *align, None)],
-            Display::Cta {label, data, instructions, actions} => drawables![DataItem::text(theme, label, data.as_deref(), instructions, 
+            Display::Icon {icon} => vec![Box::new(Icon::new(theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0))],
+            Display::Image {image, size} => vec![Box::new(pelican_ui::components::AspectRatioImage::new(
+                theme.brand().images.get(image).unwrap().clone(), *size
+            ))],
+            Display::Text {text, size, style, align} if !text.is_empty() => vec![
+                Box::new(ExpandableText::new(theme, text, *size, *style, *align, None)),
+            ],
+            Display::Cta {label, data, instructions, actions} => vec![Box::new(DataItem::text(theme, label, data.as_deref(), instructions,
                 Some(actions.iter().map(|ActionItem(action, label, active, icon)| {
                     let on_click: Box<dyn Callback> = action.get();
                     ActionData {label: label.to_string(), active: active.clone(), icon: *icon, on_click}
                 }).collect::<Vec<ActionData>>()),
-            )],
+            ))],
             Display::Table {label, items, actions} => {
                 let actions = actions.clone().map(|a| a.iter().map(|ActionItem(action, label, active, icon)| {
                     let on_click: Box<dyn Callback> = action.get();
                     ActionData {label: label.to_string(), active: active.clone(), icon: *icon, on_click}
                 }).collect::<Vec<ActionData>>());
-                drawables![DataItem::table(theme, label, items.iter().map(|TableItem{title, data}| (title.clone(), data.clone())).collect(), actions)]
+                vec![Box::new(DataItem::table(
+                    theme, label,
+                    items.iter().map(|TableItem {title, data}| (title.clone(), data.clone())).collect(),
+                    actions,
+                ))]
             },
-            Display::Currency {amount, instructions} => drawables![NumericalInput::display_currency(theme, amount.clone(), instructions)],
-            Display::Number {number, instructions} => drawables![NumericalInput::display_number(theme, number.clone(), instructions)],
+            Display::Currency {amount, instructions} => vec![Box::new(NumericalInput::display_currency(theme, amount.clone(), instructions))],
+            Display::Number {number, instructions} => vec![Box::new(NumericalInput::display_number(theme, number.clone(), instructions))],
             Display::List {label, items, instructions, ..} => {
                 let items = items.into_iter().map(|i| i.build(&theme)).collect::<Vec<_>>();
-                drawables![ListItemSection::new(&theme.clone(), label.clone(), instructions.clone(), items)]
+                vec![Box::new(ListItemSection::new(&theme.clone(), label.clone(), instructions.clone(), items))]
             },
-            Display::QRCode {data, instructions} => drawables![QRCode::new(theme, data), ExpandableText::new(theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None)],
+            Display::QRCode {data, instructions} => vec![
+                Box::new(QRCode::new(theme, data)),
+                Box::new(ExpandableText::new(
+                    theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None,
+                )),
+            ],
             Display::Avatar {content, purpose} => {
                 let (style, outline) = match purpose {
                     AvatarPurpose::None => (None, false),
                     AvatarPurpose::Custom{icon, style} => (Some((*icon, *style)), true)
                 };
 
-                drawables![Avatar::new(theme, content.clone(), style, outline, AvatarSize::Xxl, None)]
+                vec![Box::new(Avatar::new(theme, content.clone(), style, outline, AvatarSize::Xxl, None))]
             }
             Display::Actions {actions, as_icons} => {
                 match as_icons {
@@ -275,16 +305,17 @@ impl Display {
                             let action: Box<dyn Callback> = action.get();
                             (*icon, action)
                         }).collect::<Vec<_>>();
-                        drawables![IconButtonGroup::new(theme, items)]
+                        vec![Box::new(IconButtonGroup::new(theme, items))]
                     },
                     false => {
-                        drawables![QuickActions::new(theme, Offset::Start, actions.into_iter().map(|ActionItem(action, label, _, icon)| {
+                        vec![Box::new(QuickActions::new(theme, Offset::Start, actions.into_iter().map(|ActionItem(action, label, _, icon)| {
                             let on_click: Box<dyn Callback> = action.get();
                             ActionData { label: label.to_string(), active: None, icon: *icon, on_click }
-                        }).collect::<Vec<ActionData>>())]
+                        }).collect::<Vec<ActionData>>()))]
                     }
                 }
-            }
+            },
+            Display::Messages {messages} => vec![Box::new(messages.clone())],
             _ => return None
         })
     }
@@ -292,11 +323,11 @@ impl Display {
 
 #[derive(Debug, Clone)]
 pub struct ListItem {
-    avatar: Option<AvatarContent>, 
-    pub title: String, 
-    subtitle: String, 
-    secondary: Option<String>, 
-    flow: Option<Flow>, 
+    avatar: Option<AvatarContent>,
+    pub title: String,
+    subtitle: String,
+    secondary: Option<String>,
+    flow: Option<Flow>,
 }
 
 impl PartialEq for ListItem {
@@ -329,17 +360,16 @@ impl ListItem {
         }
     }
 
-    pub(crate) fn build(&self, theme: &Theme) -> PelicanListItem {
+    pub fn build(&self, theme: &Theme) -> PelicanListItem {
         let ListItem {avatar, title, subtitle, secondary, flow} = self.clone();
         let has_flow = flow.is_some();
         let closure = Box::new(move |ctx: &mut Context, theme: &Theme| {
-            // (on_click.clone())(ctx, theme);
             if let Some(mut f) = flow.clone() {(f.build(ctx, theme))(ctx, theme);}
         });
 
-        PelicanListItem::new(theme, avatar.clone(), 
-            ListItemInfoLeft::new(&title, Some(&subtitle), None, None), 
-            secondary.as_ref().map(|s| TitleSubtitle::new(s, Some("Details"))), 
+        PelicanListItem::new(theme, avatar.clone(),
+            ListItemInfoLeft::new(&title, Some(&subtitle), None, None),
+            secondary.as_ref().map(|s| TitleSubtitle::new(s, Some("Details"))),
             None, has_flow.then_some(Icons::Forward), closure
         )
     }
@@ -356,24 +386,12 @@ pub enum Action {
     Copy { data: String },
     Message { name: Name },
     ChooseSearch { name: Name },
+    Block {name: Name},
+    Unblock {name: Name},
+    PickPhoto,
 }
 
-impl PartialEq for Action {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Action::Share { .. }, Action::Share { .. })
-                | (Action::SelectImage, Action::SelectImage)
-                | (Action::Custom { .. }, Action::Custom { .. })
-                | (Action::None, Action::None)
-                | (Action::Flow { .. }, Action::Flow { .. })
-                | (Action::Paste, Action::Paste)
-                | (Action::Copy { .. }, Action::Copy { .. })
-                | (Action::Message { .. }, Action::Message { .. })
-                | (Action::ChooseSearch { .. }, Action::ChooseSearch { .. })
-        )
-    }
-}
+impl PartialEq for Action {fn eq(&self, _: &Self) -> bool {true}}
 
 impl Action {
     pub fn choose_search(name: Name) -> Self {
@@ -392,10 +410,9 @@ impl Action {
         Action::SelectImage
     }
 
-    pub fn scan_qr(theme: &Theme, instructions: &str) -> Self {
-        let instructions = instructions.to_string();
+    pub fn scan_qr(instructions: &str) -> Self {
         Action::Flow {
-            flow: Flow::new(vec![Page::Static(crate::PageType::scan_qr(&instructions.clone(), None))]),
+            flow: Flow::new(vec![Page::Static(crate::PageType::scan_qr(&instructions, None))]),
         }
     }
 
@@ -407,33 +424,38 @@ impl Action {
         Action::Flow { flow }
     }
 
-    pub fn block(theme: &Theme, mut profile: Instance<Profile>) -> Self {
-        let theme = theme.clone();
-        let avatar = profile.pending().avatar.clone();
-        let username = profile.pending().username.clone();
-        Action::flow(Flow::action_target(&theme, "block", "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)))
+    pub fn block(profile: Instance<Profile>) -> Self {
+        let profile = profile.pending();
+        let avatar = profile.avatar.clone();
+        let username = profile.username.clone();
+        let name = profile.name.unwrap().clone();
+        Action::flow(Flow::action_target(
+            ("block", Action::Block {name}), "blocked", &username, avatar,
+            AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger),
+        ))
     }
 
-    pub fn unblock(theme: &Theme, mut profile: Instance<Profile>) -> Self {
-        let theme = theme.clone();
-        let avatar = profile.pending().avatar.clone();
-        let username = profile.pending().username.clone();
-        Action::flow(Flow::action_target(&theme, "unblock", "unblocked", &username, avatar, AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)))
+    pub fn unblock(profile: Instance<Profile>) -> Self {
+        let profile = profile.pending();
+        let avatar = profile.avatar.clone();
+        let username = profile.username.clone();
+        let name = profile.name.unwrap().clone();
+        Action::flow(Flow::action_target(
+            ("unblock", Action::Unblock {name}), "unblocked", &username, avatar,
+            AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success),
+        ))
     }
 
     pub fn message(name: Name) -> Self {
         Action::Message { name }
     }
 
-    // pub fn navigate(flow: Flow) -> Self {
-    //     Action::Navigate {flow}
-    // }
 
     pub fn get(&self) -> Box<dyn Callback> {
         match self {
             Action::Share {data} => {
                 let data = data.clone();
-                Box::new(move |ctx: &mut Context, _: &Theme| ctx.share_social(data.clone()))
+                Box::new(move |ctx: &mut Context, _: &Theme| ctx.hardware.share(&Data::Text(data.clone())))
             }
 
             Action::SelectImage => {
@@ -451,27 +473,24 @@ impl Action {
             }
 
             Action::Paste => {
-                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.emit(TextInputEvent::Set(ctx.get_clipboard().unwrap_or_default()));})
+                Box::new(move |ctx: &mut Context, _: &Theme| {
+                    let text = match ctx.hardware.get_clipboard() {
+                        Some(Data::Text(text)) => text,
+                        _ => String::new(),
+                    };
+                    ctx.emit(TextInputEvent::Set(text));
+                })
             }
 
             Action::Copy {data} => {
                 let data = data.to_string();
-                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.set_clipboard(data.to_string())})
+                Box::new(move |ctx: &mut Context, _: &Theme| {ctx.hardware.set_clipboard(&Data::Text(data.clone()))})
             }
 
             Action::Message {name} => {
                 let recipient = name.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    println!("Creating a room here");
-                    let mut instance = ctx.create::<crate::messages::ChatRoom>(Id::random());
-                    println!("created..");
-                    instance.send(crate::messages::ChatRoomAction::Share(recipient));
-                    println!("Added recipient to list");
-                    instance.share(recipient);
-                    println!("Shared with recipient");
-                    println!("Created room with members {:?}", recipient);
-
-                    // NOT STATIC
+                    let instance = ChatRoom::create(ctx, vec![recipient]);
                     let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
                     flow.build(ctx, theme)(ctx, theme);
                 })
@@ -479,12 +498,27 @@ impl Action {
 
             Action::ChooseSearch {name} => {
                 let name = name.clone();
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                Box::new(move |ctx: &mut Context, _: &Theme| {
                     ctx.emit(SearchbarEvent::Select(name.clone()))
                 })
             }
 
-            // Action::Navigate {flow} => flow.clone().build(),
+            Action::Block {name} => {
+                let name = name.clone();
+                Box::new(move |ctx: &mut Context, _: &Theme| {
+                    let mut block = Block::create(ctx, name.clone());
+                    block.send(BlockAction::Block);
+                })
+            }
+
+            Action::Unblock {name} => {
+                let name = name.clone();
+                Box::new(move |ctx: &mut Context, _: &Theme| {
+                    let mut block = Block::create(ctx, name.clone());
+                    block.send(BlockAction::Unblock);
+                })
+            }
+
 
             _ => Box::new(move |_ctx: &mut Context, _: &Theme| {})
         }
@@ -514,29 +548,14 @@ impl TableItem {
     }
 }
 
-#[derive(Clone)]
-pub struct EnumItem {title: String, data: String} //, callback: Box<dyn Callback>}
-impl std::fmt::Debug for EnumItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EnumItem").field("title", &self.title).field("data", &self.data).finish()
-    }
-}
-
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumItem {title: String, data: String}
 impl EnumItem {
-    pub fn new(title: &str, data: &str) -> Self { //, callback: impl FnMut(&mut Context) + Clone + 'static) -> Self {
-        EnumItem {title: title.to_string(), data: data.to_string(), } //callback: Box::new(callback)}
+    pub fn new(title: &str, data: &str) -> Self {
+        EnumItem {title: title.to_string(), data: data.to_string()}
     }
-
     fn get(&self) -> (&str, &str, Box<dyn Callback>) {
-        // let mut callback = self.callback.clone();
-        (&self.title as &str, &self.data as &str, Box::new(|_, _|{})) //Box::new(move |ctx: &mut Context| {(callback)(ctx)}) as Box<dyn FnMut(&mut Context)>)
-    }
-}
-
-impl PartialEq for EnumItem {
-    fn eq(&self, other: &Self) -> bool {
-        self.title == other.title &&
-        self.data == other.data
+        (&self.title, &self.data, Box::new(|_, _| {}))
     }
 }
 
@@ -549,5 +568,65 @@ pub enum AvatarPurpose {
 impl AvatarPurpose {
     pub fn new(icon: Icons, style: AvatarIconStyle) -> Self {
         AvatarPurpose::Custom {icon, style}
+    }
+}
+
+#[doc(hidden)]
+#[derive(Clone, Component)]
+pub struct AvatarInput {
+    layout: Stack,
+    avatar: Avatar,
+    #[skip] id: Id,
+    #[skip] picked: Rc<RefCell<Option<Picked<Image>>>>,
+}
+
+impl AvatarInput {
+    fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
+        let id = Id::random();
+        let on_click = action.map(|action| match action {
+            Action::PickPhoto => Box::new(move |ctx: &mut Context, _: &Theme| ctx.emit(PickPhoto(id)))
+                as Box<dyn Callback>,
+            action => action.get(),
+        });
+        Self {
+            layout: Stack::default(),
+            avatar: Avatar::new(theme, content, flair, false, AvatarSize::Xxl, on_click),
+            id, picked: Rc::new(RefCell::new(None)),
+        }
+    }
+    pub fn content(&self) -> &AvatarContent {&self.avatar.content}
+}
+
+impl std::fmt::Debug for AvatarInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AvatarInput").field("avatar", &self.avatar).finish()
+    }
+}
+
+#[on_event]
+impl OnEvent<PickPhoto> for AvatarInput {
+    fn on(&mut self, ctx: &mut Context, event: PickPhoto) -> Vec<Box<dyn DynEvent>> {
+        if event.0 == self.id {*self.picked.borrow_mut() = Some(ctx.hardware.pick::<Image>());}
+        vec![]
+    }
+}
+
+#[on_event]
+impl OnEvent<TickEvent> for AvatarInput {
+    fn on(&mut self, _ctx: &mut Context, event: TickEvent) -> Vec<Box<dyn DynEvent>> {
+        let result = self.picked.borrow_mut().as_mut().and_then(Picked::try_get);
+        if let Some(result) = result {
+            self.picked.borrow_mut().take();
+            if let Ok(image) = result {self.avatar.content = AvatarContent::Image(image);}
+        }
+        prism::events![event]
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PickPhoto(Id);
+impl Event for PickPhoto {
+    fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
     }
 }

@@ -1,21 +1,19 @@
-use ramp::prism;
-use pelican_ui::event::OnEvent;
-use pelican_ui::drawable::Component;
-use pelican_ui::{Context, IS_MOBILE};
-use pelican_ui::layout::{Stack, Offset};
+use pelican_ui::Context;
+use ptsd::layout::Offset;
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 use std::fmt::Debug;
 use pelican_ui::utils::ValidationFn;
+use crate::blocking::Block;
 
 use crate::Listener;
 use crate::form::FormItem;
 use crate::items::{Action, Input, Display};
 use crate::closure::{PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter, SuccessGetter, FlowBuilder};
 
-use maverick_os::air::{Instance, Contract, Id};
+use prism::air::{Instance, Contract};
 
-use crate::messages::ChatRoom;
+use crate::messages::{ChatRoom, Photo, Video};
 use crate::profiles::Profile;
 
 mod edit;
@@ -28,6 +26,12 @@ mod root;
 pub use root::*;
 mod stack;
 pub use stack::*;
+mod watch;
+pub use watch::*;
+mod media;
+pub use media::*;
+mod video;
+pub use video::*;
 
 #[derive(Debug, Clone)]
 pub enum Page {
@@ -36,26 +40,43 @@ pub enum Page {
 }
 
 impl Page {
-    pub fn contract_updates<C: Contract + PartialEq>(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        let updater = ContractUpdates::new(contract, builder);
-        Page::Refreshing(Box::new(updater))
+    pub fn watching<W: Watcher>(watcher: W, builder: impl FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static) -> Self {
+        Page::Refreshing(Box::new(Watching::new(watcher, builder)))
     }
 
-    pub fn updates_list_changes<C: Contract + PartialEq>(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        Page::Refreshing(Box::new(ContractUpdatesMultiples::new(ctx, builder)))
+    pub fn contract_updates<C: Contract + PartialEq>(contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
+        let builder: Box<dyn PageBuilderContractFn<C>> = Box::new(builder);
+        Page::watching(Watch::contract(contract), builder)
     }
 
-    pub fn profile(ctx: &mut Context, theme: &Theme, profile: &mut Instance<Profile>) -> Self {
+    pub fn updates_list_changes<C: Contract + PartialEq>(_ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
+        let builder: Box<dyn PageBuilderContractMultiplesFn<C>> = Box::new(builder);
+        Page::watching(Watch::list::<C>(), builder)
+    }
+
+    pub fn profile(ctx: &mut Context, profile: &mut Instance<Profile>) -> Self {
         let my_name = profile.pending().name.unwrap();
-        let is_me = my_name == ctx.me();
+        let is_me = my_name == ctx.air.me();
         match is_me {
-            true => Page::Static(ProfilePage::editing(theme, is_me, profile.clone())),
-            false => Page::contract_updates(profile.clone(), |ctx: &mut Context, theme: &Theme, mut profile: Instance<Profile>| {chk::ProfileView::new(ctx, theme, profile)})
+            true => Page::Static(ProfilePage::editing(is_me, profile.clone())),
+            false => {
+                Page::watching(
+                    (Watch::contract(profile.clone()), Watch::list::<Block>()),
+                    |ctx: &mut Context, _: &Theme, (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
+                        chk::ProfileView::new(ctx, profile)
+                    },
+                )
+            }
         }
     }
 
-    pub fn messaging(ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
-        Page::Refreshing(Box::new(chk::ViewMessages::new(ctx, room)))
+    pub fn messaging(_ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
+        Page::watching(
+            (Watch::contract(room.clone()), Watch::list::<Block>()),
+            |_ctx: &mut Context, _theme: &Theme, (room, _blocks): (Instance<ChatRoom>, Vec<Instance<Block>>)| {
+                PageType::messaging(room)
+            },
+        )
     }
 
     pub fn builder(&self) -> Option<Box<dyn PageBuilder>> {
@@ -76,7 +97,7 @@ impl Page {
         match self {
             Page::Static(page) => {
                 let mut page = page.clone();
-                page.update(ctx, theme, length, next_fn.take());
+                page.update(length, next_fn.take());
                 return page.build(ctx, theme);
             },
             Page::Refreshing(page_builder) => {
@@ -90,7 +111,7 @@ impl Page {
     pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             Page::Static(page) => {
-                return page.clone().build_root(ctx, theme);
+                return page.clone().build_root(theme);
             },
             Page::Refreshing(page_builder) => {
                 return Box::new(Listener::new(ctx, theme, page_builder.clone(), true));
@@ -98,58 +119,6 @@ impl Page {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct ContractUpdates<C: Contract + PartialEq>(Box<dyn PageBuilderContractFn<C>>, Instance<C>, C);
-impl<C: Contract + PartialEq> ContractUpdates<C> {
-    pub fn new(mut contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        ContractUpdates(Box::new(builder), contract.clone(), (*contract.pending()).clone())
-    }
-}
-impl<C: Contract + PartialEq> PageBuilder for ContractUpdates<C> {
-    fn poll(&mut self, ctx: &mut Context) -> bool {
-        let current = (*self.1.pending()).clone();
-        let has_changed = current != self.2;
-        if has_changed {self.2 = current;}
-        has_changed
-    }
-
-    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let contract = self.1.clone();
-        (self.0)(ctx, theme, contract)
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct ContractUpdatesMultiples<C: Contract + PartialEq>(Box<dyn PageBuilderContractMultiplesFn<C>>, Vec<C>);
-impl<C: Contract + PartialEq> ContractUpdatesMultiples<C> {
-    pub fn new(ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        let mut instances = ctx.list::<C>();
-        let mut instances = instances.iter_mut().collect::<Vec<_>>();
-        instances.sort_by_key(|(id, _)| *id);
-        let new = instances.into_iter().map(|(_, instance)| (*instance.pending()).clone()).collect::<Vec<_>>();
-
-        ContractUpdatesMultiples(Box::new(builder), new)
-    }
-}
-impl<C: Contract + PartialEq> PageBuilder for ContractUpdatesMultiples<C> {
-    fn poll(&mut self, ctx: &mut Context) -> bool {
-        let mut list = ctx.list::<C>();
-        let mut instances = list.iter_mut().collect::<Vec<_>>();
-        instances.sort_by_key(|(id, _)| *id);
-        let current = instances.into_iter().map(|(_, i)| (*i.pending()).clone()).collect::<Vec<_>>();
-        let changed = current != self.1;
-        if changed { self.1 = current; }
-        changed
-    }
-
-    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
-        let new = ctx.list::<C>().iter_mut().map(|(_, c)| c.clone()).collect::<Vec<_>>();
-        (self.0)(ctx, theme, new)
-    }
-}
-
 
 pub trait PageBuilder: Debug + dyn_clone::DynClone {
     fn poll(&mut self, ctx: &mut Context) -> bool;
@@ -170,14 +139,22 @@ pub enum PageType {
     Review{title: String, getter: Box<dyn ReviewItemGetter>, flow_len: usize, next: Option<NavFn>, on_submit: Box<dyn FormSubmit>},
     Success{title: String, getter: Box<dyn SuccessGetter>, flow_len: usize, on_submit: Option<Box<dyn FormSubmit>>},
     Messaging{room: Instance<ChatRoom>, flow_len: usize},
+    Photo{photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)>},
+    Video{video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)>},
 }
 
 impl PageType {
-    pub fn root(title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn root(
+        title: &str, input: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>,
+        bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
+    ) -> Self {
         PageType::Root { title: title.to_string(), input, display, header, bumper_a, bumper_b }
     }
 
-    pub fn display_and_input(title: &str, inputs: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper) -> Self {
+    pub fn display_and_input(
+        title: &str, inputs: Vec<Input>, display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>,
+        bumper: Bumper,
+    ) -> Self {
         PageType::Both{title: title.to_string(), display, inputs, header, bumper, flow_len: 1, next: None }
     }
 
@@ -193,11 +170,17 @@ impl PageType {
         PageType::Form { title: title.to_string(), validate, item, flow_len: 1, next: None, on_submit }
     }
 
-    pub fn edit(title: &str, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
+    pub fn edit(
+        title: &str, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>,
+        on_save: Box<dyn FormSubmit>,
+    ) -> Self {
         PageType::Edit { title: title.to_string(), input, display, validations, on_save, flow_len: 1}
     }
 
-    pub fn edit_and_display(title: &str, header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+    pub fn edit_and_display(
+        title: &str, header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
+        display: Vec<Display>, on_save: Box<dyn FormSubmit>,
+    ) -> Self {
         PageType::EditAndDisplay { title: title.to_string(), header, items, display, on_save, flow_len: 1}
     }
 
@@ -213,6 +196,14 @@ impl PageType {
         PageType::Messaging{ room, flow_len: 1 }
     }
 
+    pub fn photo(photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+        PageType::Photo{ photo, header }
+    }
+
+    pub fn video(video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+        PageType::Video{ video, header }
+    }
+
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
         PageType::input("Scan QR code", Input::qr_code_scanner(instructions, alt), None, crate::Bumper::None)
     }
@@ -221,8 +212,8 @@ impl PageType {
         PageType::display(title, vec![Display::qr_code(&data, instructions)],
             None,
             Bumper::custom(
-                if IS_MOBILE {"Share"} else {"Copy"}, 
-                if IS_MOBILE {Action::share(&data)} else {Action::copy(&data)}
+                if cfg!(any(target_os = "ios", target_os = "android")) {"Share"} else {"Copy"},
+                if cfg!(any(target_os = "ios", target_os = "android")) {Action::share(&data)} else {Action::copy(&data)}
             ),
             Offset::Center,
         )
@@ -232,6 +223,8 @@ impl PageType {
         match self {
             PageType::Root{..} |
             PageType::Messaging{..} |
+            PageType::Photo{..} |
+            PageType::Video{..} |
             PageType::Edit{..} |
             PageType::EditAndDisplay {..} |
             PageType::Success{..} => None,
@@ -246,6 +239,8 @@ impl PageType {
     pub fn length(&mut self) -> Option<&mut usize> {
         match self {
             PageType::Messaging{..} |
+            PageType::Photo{..} |
+            PageType::Video{..} |
             PageType::Root{..} => None,
             PageType::Edit{flow_len, ..} |
             PageType::Display{flow_len, ..} |
@@ -268,7 +263,7 @@ impl PageType {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, theme: &Theme, new_len: usize, new_fn: Option<NavFn>) {
+    pub fn update(&mut self, new_len: usize, new_fn: Option<NavFn>) {
         if let Some(l) = self.length() { *l = new_len; }
         if let Some(nav) = self.nav_fn() { *nav = new_fn.clone(); }
     }
@@ -285,28 +280,30 @@ impl PageType {
             PageType::Review{title, getter, next, flow_len, on_submit} => Box::new(ReviewPage::new(theme, title.to_string(), getter.clone(), next.clone(), *flow_len, on_submit.clone())),
             PageType::Success{title, getter, flow_len, on_submit} => Box::new(SuccessPage::new(theme, title.to_string(), getter.clone(), *flow_len, on_submit.clone())),
             PageType::Messaging{room, flow_len} => Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len)),
+            PageType::Photo{photo, header} => Box::new(PhotoPage::new(ctx, theme, photo.clone(), header.clone())),
+            PageType::Video{video, header} => Box::new(VideoPage::new(ctx, theme, video.clone(), header.clone())),
         }
     }
 
-    pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
+    pub fn build_root(&self, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             PageType::Root{title, input, display, header, bumper_a, bumper_b} => Box::new(RootPage::new(theme, title.to_string(), input.to_vec(), display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone())),
             PageType::Both{title, inputs, display, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), inputs.to_vec(), display.to_vec(), header.clone(), None, None)),
             PageType::Display{title, items, offset: _, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), vec![], items.to_vec(), header.clone(), None, None)),
             PageType::Input{title, item, header, bumper: _, next: _, flow_len: _} => Box::new(RootPage::new(theme, title.to_string(), vec![item.clone()], vec![], header.clone(), None, None)),
 
-            // PageType::Profile{..} |
             PageType::Edit{..} |
             PageType::Form{..} |
             PageType::Review{..} |
             PageType::Success{..} |
-            PageType::Messaging{..} => panic!("Not an accepted root type"),
+            PageType::Messaging{..} |
+            PageType::Photo{..} |
+            PageType::Video{..} => panic!("Not an accepted root type"),
 
             PageType::EditAndDisplay{title, header, items, display, on_save, flow_len: _} => Box::new(EditPage::root(theme, title.to_string(), header.clone(), items.clone(), display.clone(), on_save.clone())),
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub enum Bumper {
@@ -325,36 +322,3 @@ impl Bumper {
         Bumper::Custom {label: l1.to_string(), action: a1, secondary: Some((l2.to_string(), a2))}
     }
 }
-
-
-// #[derive(Debug, Component, Clone)]
-// pub struct ScanQRCodePage(Stack, PelicanPage);
-// impl OnEvent for ScanQRCodePage {}
-// impl AppPage for ScanQRCodePage {}
-// impl ScanQRCodePage {
-//     pub fn new(theme: &Theme) -> Self {
-//         let header = Header::stack(theme, "Scan QR code", None);
-
-//         let page = PelicanPage::new(
-//             header, 
-//             Content::new(Offset::Center, drawables![
-//                 QRCodeScanner::new(theme, Box::new(|ctx: &mut Context, val: String| {
-//                     ctx.send(Request::event(NavigationEvent::Pop));
-//                 })),
-//             ], Box::new(|_| true)), 
-//             None
-//         );
-
-//         ScanQRCodePage(Stack::default(), page)
-//     }
-// }
-
-
-// let img = Listener::new(ctx, theme, img, |ctx: &mut Context, theme: &Theme, img: &mut Image, state: StateTest| {
-//     let image: Arc<RgbaImage> = Arc::new(image::open(&format!("./{}", state.0.to_string())).unwrap().into());
-//     *img = Image{shape: ShapeType::Rectangle(0.0, (1448.0/6.0, 1904.0/6.0), 0.0), image: image.clone(), color: None};
-// });
-
-// Listener::new(ctx, theme, page, |ctx: &mut Context, theme: &Theme, group: &mut MessageGroup, messages: Vec<Message>| {
-//     *group = MessageGroup::new(theme, messages);
-// })

@@ -1,7 +1,9 @@
 #![doc(html_logo_url = "https://raw.githubusercontent.com/ramp-stack/chk/main/logo.png")]
 
-pub use pelican_ui::{Context, utils::{Timestamp, Assets}, event::{OnEvent, Event}, layout::Offset, theme::{Theme, Color, Icons}, image};
-pub use ramp::prism::IS_MOBILE;
+pub use pelican_ui::{Context, components::set_giphy_api_key, utils::{Timestamp, Assets},
+    theme::{Theme, Color, Icons}, image};
+pub use prism::events::{DynEvent, Event, OnEvent};
+pub use ptsd::layout::Offset;
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 
@@ -50,53 +52,18 @@ impl ChkTheme {
 
 impl Default for ChkTheme { fn default() -> Self {ChkTheme::Dark(Color::from_hex("#ffdd00", 255))} }
 
-pub trait App {
+pub trait App: Sized + 'static {
     fn roots(&self, ctx: &mut Context, theme: &Theme) -> Vec<RootInfo>;
-    fn theme(&self) -> ChkTheme { ChkTheme::default() }
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { vec![event] }
+    fn theme(&self) -> ChkTheme {ChkTheme::default()}
+    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {vec![event]}
+
+    fn build(self, ctx: &mut Context, assets: Assets) -> pelican_ui::interface::general::Interface {
+        let theme = self.theme().to_pelican(assets);
+        let roots = self.roots(ctx, &theme).into_iter().map(|root| root.0).collect();
+        let app = std::rc::Rc::new(std::cell::RefCell::new(self));
+        let on_event = Box::new(move |ctx: &mut Context, event| app.borrow_mut().on_event(ctx, event));
+        pelican_ui::interface::general::Interface::new(ctx, &theme, roots, on_event)
+    }
 }
 
-#[doc(hidden)]
-pub mod __private {
-    pub use ramp;
-    pub use ramp::prism;
-    pub use pelican_ui::utils::Assets;
-    pub use pelican_ui::theme::Theme;
-    pub use pelican_ui::Context;
-    pub use pelican_ui::event::Event;
-    pub use pelican_ui::interface::{general::Interface, navigation::RootInfo as PelicanRootInfo};
-    pub use chk::App;
-    pub use chk::ChkTheme;
-    pub use chk::RootInfo;
-    pub use std::rc::Rc;
-    pub use std::cell::RefCell;
-    pub use include_dir;
-}
-
-// example
-// chk::run! {[MyService]; |_ctx: &mut Context| Orange }
-
-#[macro_export]
-macro_rules! run {
-    ([$($service:ty),* $(,)?], $chkapp:expr) => {
-        use $crate::__private::*;
-
-        ramp::run!([$($service),*], move |ctx: &mut Context| {
-            let app: Rc<RefCell<dyn App>> = Rc::new(RefCell::new(($chkapp)(ctx)));
-
-            let assets = include_dir::include_dir!("$CARGO_MANIFEST_DIR/resources");
-            let theme: Theme = app.borrow().theme().to_pelican(Assets::new(vec![assets]));
-            let roots: Vec<RootInfo> = app.borrow().roots(ctx, &theme);
-            let roots = roots.into_iter().map(|root| root.0).collect::<Vec<PelicanRootInfo>>();
-
-            let app = Rc::clone(&app);
-            let on_event = Box::new(move |ctx: &mut Context, event: Box<dyn Event>| {
-                app.borrow_mut().on_event(ctx, event)
-            });
-
-            Interface::new(ctx, &theme, roots, on_event)
-        });
-    };
-}
 extern crate self as chk;
-

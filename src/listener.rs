@@ -1,16 +1,12 @@
 use pelican_ui::theme::Theme;
-use pelican_ui::drawable::{Component, SizedTree};
-use pelican_ui::layout::Stack;
-use pelican_ui::event::OnEvent;
-use ramp::prism;
-use pelican_ui::event::{Event, TickEvent};
+use prism::drawable::Component;
+use ptsd::layout::Stack;
+use prism::events::{on_event, OnEvent};
+use prism::events::{DynEvent, TickEvent};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::Context;
 
-use crate::{MessagesPage, PageBuilder, NavFn, PageTypeToAppPageFn, PageBuilderContractFn, PageType};
-
-use maverick_os::air::{Contract, Instance};
-use std::cmp::PartialEq;
+use crate::{MessagesPage, PageBuilder, NavFn};
 
 #[derive(Debug, Component, Clone)]
 pub struct Listener {
@@ -26,25 +22,15 @@ pub struct Listener {
 impl AppPage for Listener {}
 
 impl Listener {
-    pub fn new(
-        ctx: &mut Context,
-        theme: &Theme,
-        mut builder: Box<dyn PageBuilder>,
-        is_root: bool,
-    ) -> Self {
-        println!("Created listener");
-
+    pub fn new(ctx: &mut Context, theme: &Theme, mut builder: Box<dyn PageBuilder>, is_root: bool) -> Self {
         let page_type = builder.build(ctx, theme);
-
-        let page = if is_root {
-            page_type.build_root(ctx, theme)
-        } else {
-            page_type.build(ctx, theme)
-        };
 
         Self {
             layout: Stack::default(),
-            page,
+            page: match is_root {
+                true => page_type.build_root(theme),
+                false => page_type.build(ctx, theme),
+            },
             builder,
             theme: theme.clone(),
             is_root,
@@ -53,19 +39,13 @@ impl Listener {
         }
     }
 
-    pub fn update(
-        &mut self,
-        ctx: &mut Context,
-        next: Option<NavFn>,
-        length: usize,
-    ) {
+    pub fn update(&mut self, ctx: &mut Context, next: Option<NavFn>, length: usize) {
         let mut page_type = self.builder.build(ctx, &self.theme);
-        page_type.update(ctx, &self.theme, length, next.clone());
+        page_type.update(length, next.clone());
 
-        let mut page = if self.is_root {
-            page_type.build_root(ctx, &self.theme)
-        } else {
-            page_type.build(ctx, &self.theme)
+        let mut page = match self.is_root {
+            true => page_type.build_root(&self.theme),
+            false => page_type.build(ctx, &self.theme)
         };
 
         if let (Some(new), Some(old)) = (page.downcast_mut::<MessagesPage>(), self.page.downcast_mut::<MessagesPage>()) {
@@ -78,15 +58,13 @@ impl Listener {
     }
 }
 
-impl OnEvent for Listener {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event> ) -> Vec<Box<dyn Event>> {
-        // println!("This page is listening...");
-        if event.downcast_ref::<TickEvent>().is_some() {
-            if self.builder.poll(ctx) {
-                self.update(ctx, self.next.clone(), self.flow_len);
-            }
+#[on_event]
+impl OnEvent<TickEvent> for Listener {
+    fn on(&mut self, ctx: &mut Context, event: TickEvent) -> Vec<Box<dyn DynEvent>> {
+        if self.builder.poll(ctx) {
+            self.update(ctx, self.next.clone(), self.flow_len);
         }
 
-        vec![event]
+        prism::events![event]
     }
 }

@@ -1,12 +1,7 @@
 use pelican_ui::Context;
 use pelican_ui::components::avatar::AvatarContent;
 
-use maverick_os::air::{Metadata, Contract, Id, Name, Instance};
-
-use std::collections::BTreeMap;
-use std::convert::Infallible;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use prism::air::{Metadata, Contract, Id, Name, Instance};
 
 use rand::{seq::SliceRandom, Rng};
 
@@ -29,7 +24,7 @@ impl Contract for Profile {
 
     fn id() -> Id {Id::hash("Profile")}
 
-    fn init(init: Self::Init, metadata: Metadata) -> Self {
+    fn init(init: Self::Init, _metadata: Metadata) -> Self {
         Profile {
             name: Some(init),
             username: "Orange Profile".to_string(),
@@ -39,7 +34,7 @@ impl Contract for Profile {
         }
     }
 
-    fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
+    fn apply(&mut self, message: Self::Message, _metadata: Metadata) -> Self::Result {
         match message {
             ProfileAction::ChangeUsername(content) => self.username = content.to_string(),
             ProfileAction::ChangeNotes(content) => self.notes = content.to_string(),
@@ -49,7 +44,7 @@ impl Contract for Profile {
                     self.init = true;
                     self.username = content.to_string();
                 }
-            }
+            },
         }
 
         ()
@@ -61,20 +56,18 @@ pub enum ProfileAction {
     ChangeUsername(String),
     ChangeNotes(String),
     ChangeAvatar(AvatarContent),
-    SetUsernameInit(String)
+    SetUsernameInit(String),
 }
 
 impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
-        // ctx.register::<Profile>();
-        // std::thread::sleep(std::time::Duration::from_secs(1));
-        let mut profile = ctx.create::<Profile>(name);
+        let mut profile = ctx.air.instances::<Profile>().create(name);
         profile.send(ProfileAction::SetUsernameInit(Username::new()));
         profile
     }
 
     pub fn me(ctx: &mut Context) -> Instance<Profile> {
-        let my_name = ctx.me();
+        let my_name = ctx.air.me();
         Profile::from_name(ctx, my_name)
     }
 
@@ -83,7 +76,7 @@ impl Profile {
     }
 
     pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<Instance<Profile>> {
-        ctx.list::<Profile>().iter_mut().find_map(|profile| {
+        ctx.air.instances::<Profile>().list().iter_mut().find_map(|profile| {
             if profile.1.pending().name == Some(name) {
                 Some(profile.1.clone())
             } else {
@@ -96,7 +89,7 @@ impl Profile {
         pelican_ui::components::Profile {
             name: self.name.unwrap(),
             username: self.username.clone(),
-            pfp: self.avatar.clone(), // TODO
+            pfp: self.avatar.clone(),
         }
     }
 

@@ -7,7 +7,7 @@ use crate::form::{State, FormValidState, FormComplete};
 use pelican_ui::theme::Theme;
 use pelican_ui::navigation::AppPage;
 
-use maverick_os::air::{Contract, Instance};
+use prism::air::{Contract, Instance};
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -18,7 +18,7 @@ pub trait FnMutClone: FnMut(&mut Context) + 'static {
 
 impl PartialEq for dyn FnMutClone{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> FnMutClone for F where F: FnMut(&mut Context) + Clone + 'static {
+impl<F: FnMut(&mut Context) + Clone + 'static> FnMutClone for F {
     fn clone_box(&self) -> Box<dyn FnMutClone> {
         Box::new(self.clone())
     }
@@ -40,7 +40,7 @@ pub trait ValidityFn: FnMut(&mut Context, String) -> FormValidState + 'static {
     fn clone_box(&self) -> Box<dyn ValidityFn>;
 }
 
-impl<F> ValidityFn for F where F: FnMut(&mut Context, String) -> FormValidState + Clone + 'static {
+impl<F: FnMut(&mut Context, String) -> FormValidState + Clone + 'static> ValidityFn for F {
     fn clone_box(&self) -> Box<dyn ValidityFn> {
         Box::new(self.clone())
     }
@@ -66,7 +66,7 @@ pub trait EditedFn: FnMut(&mut Context, &mut String) + 'static {
 
 impl PartialEq for dyn EditedFn{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> EditedFn for F where F: FnMut(&mut Context, &mut String) + Clone + 'static {
+impl<F: FnMut(&mut Context, &mut String) + Clone + 'static> EditedFn for F {
     fn clone_box(&self) -> Box<dyn EditedFn> { Box::new(self.clone()) }
 }
 
@@ -97,56 +97,20 @@ impl std::fmt::Debug for NavFn {
     }
 }
 
-// pub trait PageBuilder: FnMut() -> PageType + 'static {
-//     fn clone_box(&self) -> Box<dyn PageBuilder>;
-// }
-
-// impl<F> PageBuilder for F where F: FnMut() -> PageType + Clone + 'static {
-//     fn clone_box(&self) -> Box<dyn PageBuilder> {
-//         Box::new(self.clone())
-//     }
-// }
-
-// impl Clone for Box<dyn PageBuilder> {
-//     fn clone(&self) -> Self {
-//         self.as_ref().clone_box()
-//     }
-// }
-
-// impl std::fmt::Debug for dyn PageBuilder {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "PageBuilder")
-//     }
-// }
 
 
-// pub trait ScreenBuilder: FnMut(&mut Context) -> Screen + 'static {
-//     fn clone_box(&self) -> Box<dyn ScreenBuilder>;
-// }
 
-// impl<F> ScreenBuilder for F where F: FnMut(&mut Context) -> Screen + Clone + 'static {
-//     fn clone_box(&self) -> Box<dyn ScreenBuilder> {
-//         Box::new(self.clone())
-//     }
-// }
 
-// impl Clone for Box<dyn ScreenBuilder> {
-//     fn clone(&self) -> Self {
-//         self.as_ref().clone_box()
-//     }
-// }
 
-// impl std::fmt::Debug for dyn ScreenBuilder {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "ScreenBuilder")
-//     }
-// }
+
+
+
 
 pub trait SuccessClosure: FnMut(&mut Context) -> [String; 3] + 'static {
     fn clone_box(&self) -> Box<dyn SuccessClosure>;
 }
 
-impl<F> SuccessClosure for F where F: FnMut(&mut Context) -> [String; 3] + Clone + 'static {
+impl<F: FnMut(&mut Context) -> [String; 3] + Clone + 'static> SuccessClosure for F {
     fn clone_box(&self) -> Box<dyn SuccessClosure> {
         Box::new(self.clone())
     }
@@ -169,7 +133,7 @@ pub trait MutString: FnMut(&mut Context) -> &mut String + 'static {
     fn clone_box(&self) -> Box<dyn MutString>;
 }
 
-impl<F> MutString for F where F: FnMut(&mut Context) -> &mut String + Clone + 'static {
+impl<F: FnMut(&mut Context) -> &mut String + Clone + 'static> MutString for F {
     fn clone_box(&self) -> Box<dyn MutString> {
         Box::new(self.clone())
     }
@@ -191,7 +155,7 @@ pub trait FormClosure: FnMut(&mut FormStorage, String) + 'static {
     fn clone_box(&self) -> Box<dyn FormClosure>;
 }
 
-impl<F> FormClosure for F where F: FnMut(&mut FormStorage, String) + Clone + 'static {
+impl<F: FnMut(&mut FormStorage, String) + Clone + 'static> FormClosure for F {
     fn clone_box(&self) -> Box<dyn FormClosure> {
         Box::new(self.clone())
     }
@@ -213,7 +177,7 @@ pub trait ReviewItemGetter: FnMut(&Vec<State>) -> Vec<Display> + 'static {
     fn clone_box(&self) -> Box<dyn ReviewItemGetter>;
 }
 
-impl<F> ReviewItemGetter for F where F: FnMut(&Vec<State>) -> Vec<Display> + Clone + 'static {
+impl<F: FnMut(&Vec<State>) -> Vec<Display> + Clone + 'static> ReviewItemGetter for F {
     fn clone_box(&self) -> Box<dyn ReviewItemGetter> {
         Box::new(self.clone())
     }
@@ -235,7 +199,7 @@ pub trait SuccessGetter: FnMut(Vec<State>) -> (Icons, String) + 'static {
     fn clone_box(&self) -> Box<dyn SuccessGetter>;
 }
 
-impl<F> SuccessGetter for F where F: FnMut(Vec<State>) -> (Icons, String) + Clone + 'static {
+impl<F: FnMut(Vec<State>) -> (Icons, String) + Clone + 'static> SuccessGetter for F {
     fn clone_box(&self) -> Box<dyn SuccessGetter> {
         Box::new(self.clone())
     }
@@ -260,7 +224,7 @@ pub trait FormSubmit: FnMut(&mut Context, &Vec<State>) -> FormComplete + 'static
 
 impl PartialEq for dyn FormSubmit{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> FormSubmit for F where F: FnMut(&mut Context, &Vec<State>) -> FormComplete + Clone + 'static {
+impl<F: FnMut(&mut Context, &Vec<State>) -> FormComplete + Clone + 'static> FormSubmit for F {
     fn clone_box(&self) -> Box<dyn FormSubmit> {
         Box::new(self.clone())
     }
@@ -283,11 +247,7 @@ pub trait ListItemGetter:
 {
 }
 
-impl<T> ListItemGetter for T
-where
-    T: Fn(&mut Context) -> Vec<ListItem> + Send + Sync + 'static
-{
-}
+impl<T: Fn(&mut Context) -> Vec<ListItem> + Send + Sync + 'static> ListItemGetter for T {}
 
 
 impl std::fmt::Debug for dyn ListItemGetter {
@@ -303,7 +263,7 @@ pub trait FlowBuilder: FnMut(&mut Context, &Theme) -> Flow + 'static {
 
 impl PartialEq for dyn FlowBuilder{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> FlowBuilder for F where F: FnMut(&mut Context, &Theme) -> Flow + Clone + 'static {
+impl<F: FnMut(&mut Context, &Theme) -> Flow + Clone + 'static> FlowBuilder for F {
     fn clone_box(&self) -> Box<dyn FlowBuilder> {
         Box::new(self.clone())
     }
@@ -327,7 +287,7 @@ pub trait PageTypeToAppPageFn: FnMut(&mut Context, &Theme, PageType) -> Box<dyn 
 
 impl PartialEq for dyn PageTypeToAppPageFn{fn eq(&self, _: &Self) -> bool {true}}
 
-impl<F> PageTypeToAppPageFn for F where F: FnMut(&mut Context, &Theme, PageType) -> Box<dyn AppPage> + Clone + 'static {
+impl<F: FnMut(&mut Context, &Theme, PageType) -> Box<dyn AppPage> + Clone + 'static> PageTypeToAppPageFn for F {
     fn clone_box(&self) -> Box<dyn PageTypeToAppPageFn> {
         Box::new(self.clone())
     }
@@ -349,7 +309,7 @@ pub trait PageBuilderContractFn<C: Contract>: FnMut(&mut Context, &Theme, Instan
     fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>>;
 }
 
-impl<F, C: Contract> PageBuilderContractFn<C> for F where F: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + Clone + 'static {
+impl<C: Contract, F: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + Clone + 'static> PageBuilderContractFn<C> for F {
     fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>> {
         Box::new(self.clone())
     }
@@ -371,7 +331,7 @@ pub trait PageBuilderContractMultiplesFn<C: Contract>: FnMut(&mut Context, &Them
     fn clone_box(&self) -> Box<dyn PageBuilderContractMultiplesFn<C>>;
 }
 
-impl<F, C: Contract> PageBuilderContractMultiplesFn<C> for F where F: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + Clone + 'static {
+impl<C: Contract, F: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + Clone + 'static> PageBuilderContractMultiplesFn<C> for F {
     fn clone_box(&self) -> Box<dyn PageBuilderContractMultiplesFn<C>> {
         Box::new(self.clone())
     }

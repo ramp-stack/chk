@@ -1,8 +1,6 @@
-use ramp::prism;
-use pelican_ui::event::{OnEvent, Event};
-use pelican_ui::drawable::{Component, Drawable, SizedTree};
+use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::{Context, Callback};
-use pelican_ui::layout::{Stack, Offset};
+use ptsd::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
@@ -12,31 +10,39 @@ use crate::items::{Input, Display};
 
 pub struct Root(pub Page);
 impl Root {
-    pub fn new(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn new(
+        title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>,
+        bumper_a: Option<(String, Box<dyn FlowBuilder>)>, bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
+    ) -> Self {
         Root(Page::Static(PageType::root(title, vec![], items, header, bumper_a, bumper_b)))
     }
 
     pub fn custom(page: Page) -> Self {
         Root(page)
     }
+
 }
 
 #[derive(Debug, Component, Clone)]
 pub struct RootPage(Stack, PelicanPage);
-impl OnEvent for RootPage {}
+
 impl AppPage for RootPage {}
 impl RootPage {
-    pub fn new(theme: &Theme, title: String, mut input: Vec<Input>, mut display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, mut bumper_a: Option<(String, Box<dyn FlowBuilder>)>, mut bumper_b: Option<(String, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn new(
+        theme: &Theme, title: String, mut input: Vec<Input>, mut display: Vec<Display>,
+        header: Option<(Icons, Box<dyn FlowBuilder>)>, mut bumper_a: Option<(String, Box<dyn FlowBuilder>)>,
+        mut bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
+    ) -> Self {
         let length = input.len() + display.len();
         let offset = match display.first() {
             Some(Display::List {..}) => Offset::Start,
             _ if length <= 1 => Offset::Center,
             _ => Offset::Start,
         };
-        
+
         let header_icon = header.map(|(s, flow)| {
             let mut flow = flow.clone();
-            (s, Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>) 
+            (s, Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
         });
 
         let header = Header::home(theme, &title, header_icon);
