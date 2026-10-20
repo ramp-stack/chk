@@ -15,8 +15,8 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = "1.0.219"
-pelican_ui = {path="../pelican_ui"}
+pelican_ui = {version = "2.2.0", git = "https://github.com/ramp-stack/pelican_ui"}
 prism = {package = "prism2", version = "1.0.0"}
-ptsd = {package="ptsd2", path="../ptsd"}
+ptsd = {package = "ptsd2", version = "0.1.3", git = "https://github.com/ramp-stack/ptsd"}
 dyn-clone = "1.0.20"
 rand = "0.8"

@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chk = {package="chk", path="../"}
+chk = {version = "1.1.0", git = "https://github.com/ramp-stack/chk"}
