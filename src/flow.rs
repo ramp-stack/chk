@@ -4,8 +4,9 @@ use pelican_ui::interface::general::{Content, FormEvent};
 use pelican_ui::theme::Theme;
 use prism::drawable::{Component, Drawable};
 use ptsd::layout::Stack;
-use prism::events::{on_event, OnEvent, DynEvent, Change, ChangeFuture};
+use prism::events::{on_event, OnEvent, DynEvent, ListenFuture};
 
+use std::any::Any;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -122,24 +123,21 @@ impl Flow{
 }
 
 #[derive(Debug, Component, Clone)]
-#[changed]
+#[listen]
 pub struct FlowWrapper(Stack, PelicanFlow, #[skip] bool);
 impl FlowWrapper {
     pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, true)}
 
-    fn changed(&mut self) -> ChangeFuture<'_> {
+    fn listen(&mut self) -> ListenFuture<'_> {
+        if self.2 {Box::pin(async {(vec![], Box::new(()) as Box<dyn Any>)})}
+        else {Drawable::listen(&mut self.1)}
+    }
+
+    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
         if self.2 {
-            return Box::pin(async {
-                Change::new(|drawable, ctx| {
-                    let flow = drawable.downcast_mut::<Self>().unwrap();
-                    flow.2 = false;
-                    flow.refresh(ctx);
-                })
-            });
-        }
-        Box::pin(async move {
-            Drawable::changed(&mut self.1).await.map::<Self>(|this| &mut this.1)
-        })
+            self.2 = false;
+            self.refresh(ctx);
+        } else {Drawable::update(&mut self.1, ctx, path, update);}
     }
 
     fn content(page: &dyn AppPage) -> Option<&Content> {
@@ -156,7 +154,7 @@ impl FlowWrapper {
             .flat_map(|page| Self::inputs(page.as_ref())).collect();
         if let Some(current) = &mut self.1.current {
             inputs.extend(Self::inputs(current.as_ref()));
-            Self::update(current.as_mut(), ctx, inputs);
+            Self::apply_inputs(current.as_mut(), ctx, inputs);
         }
     }
 
@@ -172,11 +170,11 @@ impl FlowWrapper {
         children.iter().filter_map(|child| Input::state(&**child)).collect()
     }
 
-    fn update(page: &mut dyn AppPage, ctx: &mut Context, inputs: Vec<State>) {
+    fn apply_inputs(page: &mut dyn AppPage, ctx: &mut Context, inputs: Vec<State>) {
         if let Some(listener) = page.downcast_mut::<Listener>() {
-            Self::update(listener.page.as_mut(), ctx, inputs);
+            Self::apply_inputs(listener.page.as_mut(), ctx, inputs);
         } else if let Some(page) = page.downcast_mut::<ReviewPage>() {
-            page.on_change(&ctx.hardware, inputs);
+            page.on_change(inputs);
         } else if let Some(page) = page.downcast_mut::<SuccessPage>() {
             page.on_change(ctx, inputs);
         } else if let Some(page) = page.downcast_mut::<FormPage>() {

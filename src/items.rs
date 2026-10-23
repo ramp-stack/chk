@@ -1,8 +1,8 @@
 use pelican_ui::{colors, Context, Callback};
 use pelican_ui::drawable::Drawable;
 use prism::drawable::{Component, text::Align};
-use prism::events::{on_change, on_event, ChangeSource, ChildEvent, DynEvent, Event, OnEvent, OnChange};
-use prism::hardware::{Hardware, Image, Picked};
+use prism::events::{on_change, on_event, ChildEvent, DynEvent, Event, OnEvent, OnChange};
+use prism::hardware::{Image, Picked};
 use ptsd::layout::Stack;
 use uuid::Uuid;
 use pelican_ui::components::QrCodeFound;
@@ -25,8 +25,6 @@ use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
 use pelican_ui::interface::general::FormEvent;
 use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
 use prism::air::{Id, Name, Instance};
-
-use std::sync::Arc;
 
 use crate::profiles::Profile;
 use crate::blocking::{Block, BlockAction};
@@ -103,7 +101,7 @@ impl Input {
         Input::QRCodeScanner { instructions: instructions.to_string(), alt, on_find }
     }
 
-    pub fn build(&self, hardware: &Hardware, theme: &Theme, touch_controls: bool) -> Option<Vec<Box<dyn Drawable>>> {
+    pub fn build(&self, theme: &Theme, touch_controls: bool) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text { id, show_label, label, preset, actions } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![Box::new(TextInput::new(
@@ -159,11 +157,11 @@ impl Input {
                 drawables
             }
             Input::Avatar { content, flair, action } => {
-                vec![Box::new(AvatarInput::new(hardware, theme, content.clone(), *flair, action.clone()))]
+                vec![Box::new(AvatarInput::new(theme, content.clone(), *flair, action.clone()))]
             }
             Input::Search { id, label, items, actions } => vec![Box::new(SearchBar::new(
                 theme, *id, label,
-                items.iter().map(|(item, id)| (item.build(hardware, theme), *id)).collect::<Vec<_>>(),
+                items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(),
                 if let Some(a) = actions.as_ref()
                     && !a.is_empty() {
                     Some(QuickActions::new(
@@ -341,7 +339,7 @@ impl Display {
         Display::Messages { messages: MessageGroups::new(ctx, theme, messages, false, false) }
     }
 
-    pub fn build(&mut self, hardware: &Hardware, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
+    pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Display::Icon { icon } => vec![Box::new(Icon::new(
                 theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0,
@@ -404,7 +402,7 @@ impl Display {
                 vec![Box::new(NumericalInput::display_number(theme, number.clone(), instructions))]
             }
             Display::List { label, items, instructions, .. } => {
-                let items = items.into_iter().map(|i| i.build(hardware, &theme)).collect::<Vec<_>>();
+                let items = items.into_iter().map(|i| i.build(&theme)).collect::<Vec<_>>();
                 vec![Box::new(ListItemSection::new(
                     &theme.clone(), label.clone(), instructions.clone(), items,
                 ))]
@@ -422,7 +420,7 @@ impl Display {
                 };
 
                 vec![Box::new(Avatar::new(
-                    hardware, theme, content.clone(), style, outline, AvatarSize::Xxl, None,
+                    theme, content.clone(), style, outline, AvatarSize::Xxl, None,
                 ))]
             }
             Display::Actions { actions, as_icons } => match as_icons {
@@ -499,7 +497,7 @@ impl ListItem {
         }
     }
 
-    pub fn build(&self, hardware: &Hardware, theme: &Theme) -> PelicanListItem {
+    pub fn build(&self, theme: &Theme) -> PelicanListItem {
         let ListItem { avatar, title, subtitle, secondary, flow } = self.clone();
         let has_flow = flow.is_some();
         let closure = Box::new(move |ctx: &mut Context, theme: &Theme| {
@@ -507,7 +505,7 @@ impl ListItem {
         });
 
         let avatar = avatar.map(|content| {
-            Avatar::new(hardware, theme, content, None, false, AvatarSize::Md, None)
+            Avatar::new(theme, content, None, false, AvatarSize::Md, None)
         });
         PelicanListItem::new(
             theme, avatar, ListItemInfoLeft::new(&title, Some(&subtitle), None, None),
@@ -727,7 +725,7 @@ pub struct AvatarInput {
 }
 
 impl AvatarInput {
-    fn new(hardware: &Hardware, theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
+    fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
         let id = Id::random();
         let on_click = action.map(|action| match action {
             Action::PickPhoto => {
@@ -738,7 +736,7 @@ impl AvatarInput {
         });
         Self {
             layout: Stack::default(),
-            avatar: Avatar::new(hardware, theme, content, flair, false, AvatarSize::Xxl, on_click),
+            avatar: Avatar::new(theme, content, flair, false, AvatarSize::Xxl, on_click),
             id,
             picked: None,
             form: None,
@@ -761,12 +759,17 @@ impl OnEvent<PickPhoto> for AvatarInput {
     }
 }
 
-#[on_change(ChangeSource::changed(&mut self.picked))]
+#[on_change(async {
+    match &mut self.picked {
+        Some(picked) => picked.next().await,
+        None => std::future::pending().await,
+    }
+})]
 impl OnChange<prism::hardware::PickResult<Image>> for AvatarInput {
     fn on_change(&mut self, ctx: &mut Context, result: prism::hardware::PickResult<Image>) {
         self.picked = None;
         if let Ok(image) = result {
-            self.avatar.set_content(&ctx.hardware, AvatarContent::Image(Arc::clone(&image)));
+            self.avatar.set_content(AvatarContent::Image(image));
             if let Some(form) = self.form { ctx.emit(FormEvent::Refresh(form)); }
         }
     }

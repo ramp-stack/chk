@@ -92,7 +92,7 @@ impl MessagesPage {
         };
 
         let title = room_data.name(ctx);
-        let header = Header::messaging(&ctx.hardware, theme, title, pel_profiles, flow_len, info);
+        let header = Header::messaging(theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
 

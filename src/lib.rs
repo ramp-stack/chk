@@ -3,7 +3,6 @@
 pub use pelican_ui::{Context, utils::{Timestamp, Assets},
     theme::{Theme, Color, Icons}, image};
 pub use prism::events::{DynEvent, Event, OnEvent};
-use prism::hardware::Hardware;
 pub use ptsd::layout::Offset;
 pub use ptsd::{Validate, Validator, Watched};
 
@@ -43,11 +42,11 @@ pub enum ChkTheme {
 }
 
 impl ChkTheme {
-    pub fn to_pelican(self, hardware: &Hardware, assets: Assets) -> Theme {
+    pub fn to_pelican(self, assets: Assets) -> Theme {
         match self {
-            ChkTheme::Dark(c) => Theme::dark(hardware, &assets.inner, c),
-            ChkTheme::Light(c) => Theme::light(hardware, &assets.inner, c),
-            ChkTheme::Auto(c) => Theme::from(hardware, &assets.inner, c)
+            ChkTheme::Dark(c) => Theme::dark(&assets.inner, c),
+            ChkTheme::Light(c) => Theme::light(&assets.inner, c),
+            ChkTheme::Auto(c) => Theme::from(&assets.inner, c)
         }
     }
 }
@@ -61,7 +60,7 @@ pub trait App: Sized + 'static {
     fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {vec![event]}
 
     fn build(self, ctx: &mut Context, assets: Assets) -> pelican_ui::interface::general::Interface {
-        let theme = self.theme().to_pelican(&ctx.hardware, assets);
+        let theme = self.theme().to_pelican(assets);
         let keyboard = self.keyboard(ctx, &theme);
         let roots = self.roots(ctx, &theme).into_iter().map(|root| root.0).collect();
         let app = std::rc::Rc::new(std::cell::RefCell::new(self));

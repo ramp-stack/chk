@@ -1,7 +1,7 @@
 use pelican_ui::theme::Theme;
 use prism::drawable::Component;
 use ptsd::layout::Stack;
-use prism::events::{on_change, ChangeSource, OnChange, Event, ChildEvent};
+use prism::events::{on_change, OnChange, Event, ChildEvent};
 use uuid::Uuid;
 use pelican_ui::navigation::AppPage;
 use pelican_ui::Context;
@@ -41,7 +41,7 @@ impl Listener {
         let mut page_type = builder.build(ctx, theme);
         page_type.update(flow_len, next.clone());
         let page = if is_root {
-            page_type.build_root(&ctx.hardware, theme, ctx.window.touch_controls)
+            page_type.build_root(theme, ctx.window.touch_controls)
         } else {
             page_type.build(ctx, theme)
         };
@@ -56,13 +56,15 @@ impl Listener {
     pub fn id(&self) -> Uuid { self.id }
 }
 
-#[on_change(ChangeSource::changed(&mut self.builder))]
+#[on_change(async {
+    if self.builder.next().await.is_none() {std::future::pending::<()>().await;}
+})]
 impl OnChange<()> for Listener {
     fn on_change(&mut self, ctx: &mut Context, _: ()) {
         let mut page_type = self.builder.build(ctx, &self.theme);
         page_type.update(self.flow_len, self.next.clone());
         let mut page = if self.is_root {
-            page_type.build_root(&ctx.hardware, &self.theme, ctx.window.touch_controls)
+            page_type.build_root(&self.theme, ctx.window.touch_controls)
         } else {
             page_type.build(ctx, &self.theme)
         };
