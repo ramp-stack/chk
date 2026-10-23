@@ -22,7 +22,7 @@ impl StackPage {
     ) -> Self {
         let items = items
             .into_iter()
-            .filter_map(|mut di| di.build(&ctx.hardware, theme))
+            .filter_map(|mut di| di.build(theme))
             .flatten()
             .collect::<Vec<Box<dyn Drawable>>>();
         StackPage::new(ctx, theme, title, items, offset, header, bumper, next, flow_len)
@@ -35,7 +35,7 @@ impl StackPage {
         flow_len: usize,
     ) -> Self {
         let offset = item.offset();
-        let item = item.build(&ctx.hardware, theme, ctx.window.touch_controls)
+        let item = item.build(theme, ctx.window.touch_controls)
             .into_iter().flatten().collect();
         StackPage::new(ctx, theme, title, item, offset, header, bumper, next, flow_len)
     }
@@ -48,11 +48,11 @@ impl StackPage {
     ) -> Self {
         let mut items = inputs
             .into_iter()
-            .filter_map(|di| di.build(&ctx.hardware, theme, ctx.window.touch_controls))
+            .filter_map(|di| di.build(theme, ctx.window.touch_controls))
             .flatten()
             .collect::<Vec<Box<dyn Drawable>>>();
         display.into_iter().for_each(|mut di| {
-            if let Some(i) = di.build(&ctx.hardware, theme) { items.extend(i) }
+            if let Some(i) = di.build(theme) { items.extend(i) }
         });
         StackPage::new(ctx, theme, title, items, Offset::Start, header, bumper, next, flow_len)
     }

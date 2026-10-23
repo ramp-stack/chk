@@ -2,7 +2,6 @@ use futures::FutureExt;
 use futures::future::{LocalBoxFuture, Shared, select_all};
 use pelican_ui::{Context, theme::Theme};
 use prism::air::{Contract, Id, Instance, Instances};
-use prism::events::ChangeSource;
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -127,16 +126,14 @@ impl<W: Watcher, F> Debug for Watching<W, F> {
         f.debug_tuple("Watching").field(&self.watcher).finish()
     }
 }
-impl<W: Watcher, F: 'static> ChangeSource for Watching<W, F> {
-    type Update = ();
-    async fn next(&mut self) -> Option<()> {
-        let update = self.pending.as_ref()?.clone().await;
-        self.pending = None;
-        update
-    }
-}
 impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static> PageBuilder for Watching<W, F> {
-    fn next(&mut self) -> LocalBoxFuture<'_, Option<()>> {ChangeSource::next(self).boxed_local()}
+    fn next(&mut self) -> LocalBoxFuture<'_, Option<()>> {
+        Box::pin(async {
+            let update = self.pending.as_ref()?.clone().await;
+            self.pending = None;
+            update
+        })
+    }
     fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
         self.pending = None;
         self.watcher.get(ctx);

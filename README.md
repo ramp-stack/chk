@@ -62,18 +62,19 @@ reactivation reloads its snapshot before consuming a potentially lagged queue. I
 snapshots, and watched contracts no longer need `PartialEq`.
 
 `Listener` remains the owner of the built page and its builder. Custom `PageBuilder`
-implementations supply `ChangeSource<Update = ()>` and register the supplied waker when
-pending. A cloned watched page refreshes once on activation to reconcile changes that
-preceded its new subscriptions.
+implementations provide a cancelable `next()` future returning `Some(())` when a rebuild is
+needed, or `None` when there are no further notifications. A cloned watched page refreshes
+once on activation to reconcile changes that preceded its new subscriptions.
 
 ## Validators with changing dependencies
 
 Ordinary closures remain valid form validators. When validity also depends on a
-change source, pass `Validator::watch(source, callback)` instead. The form checks
+changing value, pass `Validator::watch(source, listen, validate)` instead. `listen` is an async
+callback that borrows the source and returns its next update. The form checks
 initially, after input edits, and when the source wakes it; no `TickEvent`, manual
 refresh, or page rebuild is needed.
 
-The callback receives `&Watched<S>`. It dereferences to the source, so Air instance
+The validation callback receives `&Watched<S, U>`. It dereferences to the source, so Air instance
 methods such as `pending()` and player methods such as `frame()` remain available.
 For a source that delivers values only through updates, `latest()` returns the
 last update, or `None` before the first update. The last update remains available
@@ -83,53 +84,54 @@ For example, a source delivering available amounts as `u64` can validate a numbe
 
 ```rust
 use chk::{Context, FormItem, FormValidState, NumberVariant, Validator, Watched};
-use prism::events::ChangeSource;
 
 struct Payment;
 impl Payment {
-    fn amount<S: ChangeSource<Update = u64> + Clone>(balance: S) -> FormItem {
-        let valid = Validator::watch(balance, |_: &mut Context, balance: &Watched<S>, value: String| {
-            let Some(available) = balance.latest() else {return FormValidState::Invalid};
-            match value.parse::<u64>() {
-                Ok(amount) if amount > 0 && amount <= *available => FormValidState::Valid,
-                _ => FormValidState::Invalid,
-            }
-        });
+    fn amount<S: Clone + 'static>(balance: S, listen: impl AsyncFnMut(&mut S) -> u64 + Clone + 'static) -> FormItem {
+        let valid = Validator::watch(
+            balance, listen, |_: &mut Context, balance: &Watched<S, u64>, value: String| {
+                let Some(available) = balance.latest() else {return FormValidState::Invalid};
+                match value.parse::<u64>() {
+                    Ok(amount) if amount > 0 && amount <= *available => FormValidState::Valid,
+                    _ => FormValidState::Invalid,
+                }
+            },
+        );
         FormItem::number("Amount", NumberVariant::Number, valid)
     }
 }
 ```
 
+For an Air instance, the listener can be `async |instance| instance.next().await`.
 Sources and callbacks must be clonable because forms are clonable. Cloning a
 validator follows the source's clone semantics and retains its last update;
 updates themselves do not need to implement `Clone`. A player emits frame updates,
-so a validator watching it runs as frames arrive. Pending notifications are
-coalesced before validation, with bounded draining to keep the UI responsive.
+so a validator watching it runs as frames arrive. Listener futures must be safe to
+cancel and recreate. When an optional source is absent or a one-shot source has finished,
+the listener should await `std::future::pending()` until the component changes its source.
 
 ## Numbers with changing values
 
 Use a plain value for a fixed display: `Display::currency(12.50, "Available")` or
 `Display::number(42.0, "Items")`. For a changing value, pass
-`Number::watch(source, callback)`. The display updates through `OnChange` and only
+`Number::watch(source, listen, value)`. The display updates through `OnChange` and only
 rebuilds its digit slots when the formatted text changes.
 
 ```rust
 use chk::{Display, Number};
-use prism::events::ChangeSource;
 
 struct Balance;
 impl Balance {
-    fn display<S: ChangeSource<Update = f64> + Clone>(source: S, initial: f64) -> Display {
-        let number = Number::watch(source, move |_, latest| latest.copied().unwrap_or(initial));
+    fn display<S: Clone + 'static>(source: S, listen: impl AsyncFnMut(&mut S) -> f64 + Clone + 'static, initial: f64) -> Display {
+        let number = Number::watch(source, listen, move |_, latest| latest.copied().unwrap_or(initial));
         Display::currency(number, "Available")
     }
 }
 ```
 
-The callback receives `&S` and `Option<&S::Update>`. It reads the initial value
-when the number is constructed and refreshes it when a display is built. Updates
-are coalesced before recalculating, with bounded draining. For an Air instance,
-the callback can read `instance.pending()`; for update-only sources, it can use
+The value callback receives `&S` and `Option<&U>`, where `U` is the listener's output. It reads
+the initial value when the number is constructed and refreshes it when a display is built.
+For an Air instance, the callback can read `instance.pending()`; for update-only sources, it can use
 `latest`, which is `None` until the first notification. The last number remains
 displayed after the source completes.
 

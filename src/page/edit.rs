@@ -2,7 +2,6 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use prism::events::{DynEvent, OnEvent, on_event};
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::{Context, Callback};
-use prism::hardware::Hardware;
 use ptsd::layout::{Stack, Offset};
 use ptsd::Validate;
 use pelican_ui::interface::general::{
@@ -49,7 +48,7 @@ impl OnEvent<FormEvent> for EditPage {
 impl AppPage for EditPage {}
 impl EditPage {
     pub fn new(
-        hardware: &Hardware, theme: &Theme, touch_controls: bool, title: String,
+        theme: &Theme, touch_controls: bool, title: String,
         mut header: Option<(Icons, Box<dyn FlowBuilder>)>, input: Vec<Input>, display: Vec<Display>,
         validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
@@ -64,7 +63,7 @@ impl EditPage {
         });
 
         let header = Header::stack(theme, &title, header);
-        let content = Self::content(hardware, theme, touch_controls, input, display, validations);
+        let content = Self::content(theme, touch_controls, input, display, validations);
 
         let bumper = PelicanBumper::stack(
             theme, Some("Save"),
@@ -77,7 +76,7 @@ impl EditPage {
     }
 
     pub fn edit_and_display(
-        hardware: &Hardware, theme: &Theme, touch_controls: bool, title: String,
+        theme: &Theme, touch_controls: bool, title: String,
         mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
         display: Vec<Display>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
@@ -94,7 +93,7 @@ impl EditPage {
         let header = Header::stack(theme, &title, header);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let content = Self::content(hardware, theme, touch_controls, inputs, display, validations);
+        let content = Self::content(theme, touch_controls, inputs, display, validations);
 
         let bumper = PelicanBumper::stack(
             theme, Some("Save"),
@@ -107,7 +106,7 @@ impl EditPage {
     }
 
     pub fn root(
-        hardware: &Hardware, theme: &Theme, touch_controls: bool, title: String,
+        theme: &Theme, touch_controls: bool, title: String,
         mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
         display: Vec<Display>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
@@ -124,7 +123,7 @@ impl EditPage {
         let header = Header::home(theme, &title, header);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let content = Self::content(hardware, theme, touch_controls, inputs, display, validations);
+        let content = Self::content(theme, touch_controls, inputs, display, validations);
 
         let bumper = PelicanBumper::home(
             theme,
@@ -136,21 +135,18 @@ impl EditPage {
         EditPage(Stack::default(), page, on_save.clone(), None, true)
     }
 
-    fn content(
-        hardware: &Hardware, theme: &Theme, touch_controls: bool, inputs: Vec<Input>,
-        display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>,
-    ) -> Content {
+    fn content(theme: &Theme, touch_controls: bool, inputs: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>) -> Content {
         let mut children = Vec::new();
         let mut validators = Vec::new();
         let mut validations = validations.into_iter();
         for input in inputs {
             let start = children.len();
-            children.extend(input.build(hardware, theme, touch_controls).unwrap_or_default());
+            children.extend(input.build(theme, touch_controls).unwrap_or_default());
             if let Some(validation) = validations.next() {
                 validators.push((start..children.len(), validation));
             }
         }
-        for mut item in display { children.extend(item.build(hardware, theme).unwrap_or_default()); }
+        for mut item in display { children.extend(item.build(theme).unwrap_or_default()); }
         Content::new(Offset::Start, children, Box::new(FormValidation(validators)))
     }
 

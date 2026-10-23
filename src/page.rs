@@ -1,6 +1,4 @@
 use prism::air::{Instance, Contract};
-use prism::events::ChangeSource;
-use prism::hardware::Hardware;
 use pelican_ui::Context;
 use pelican_ui::components::QrCodeFound;
 use ptsd::layout::Offset;
@@ -111,7 +109,7 @@ impl Page {
     pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             Page::Static(page) => {
-                return page.clone().build_root(&ctx.hardware, theme, ctx.window.touch_controls);
+                return page.clone().build_root(theme, ctx.window.touch_controls);
             }
             Page::Refreshing(page_builder) => {
                 return Box::new(Listener::new(ctx, theme, page_builder.clone(), true, None, 0));
@@ -126,11 +124,6 @@ pub trait PageBuilder: Debug + dyn_clone::DynClone {
 }
 
 dyn_clone::clone_trait_object!(PageBuilder);
-
-impl ChangeSource for Box<dyn PageBuilder> {
-    type Update = ();
-    async fn next(&mut self) -> Option<()> { self.as_mut().next().await }
-}
 
 #[derive(Clone, Debug)]
 pub enum PageType {
@@ -362,7 +355,7 @@ impl PageType {
         match self {
             PageType::Root { title, input, display, header, bumper_a, bumper_b } => {
                 Box::new(RootPage::new(
-                    &ctx.hardware, theme, ctx.window.touch_controls, title.to_string(), input.to_vec(),
+                    theme, ctx.window.touch_controls, title.to_string(), input.to_vec(),
                     display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone(),
                 ))
             }
@@ -386,19 +379,19 @@ impl PageType {
             }
             PageType::Form { title, item, next, flow_len, validate, on_submit } => {
                 Box::new(FormPage::new(
-                    &ctx.hardware, theme, ctx.window.touch_controls, title.to_string(), item.clone(),
+                    theme, ctx.window.touch_controls, title.to_string(), item.clone(),
                     next.clone(), *flow_len, validate.clone(), on_submit.clone(),
                 ))
             }
             PageType::Edit { title, input, display, validations, on_save, flow_len: _ } => {
                 Box::new(EditPage::new(
-                    &ctx.hardware, theme, ctx.window.touch_controls, title.to_string(), None, input.clone(),
+                    theme, ctx.window.touch_controls, title.to_string(), None, input.clone(),
                     display.clone(), validations.clone(), on_save.clone(),
                 ))
             }
             PageType::EditAndDisplay { title, header, items, display, on_save, flow_len: _ } => {
                 Box::new(EditPage::edit_and_display(
-                    &ctx.hardware, theme, ctx.window.touch_controls, title.to_string(), header.clone(),
+                    theme, ctx.window.touch_controls, title.to_string(), header.clone(),
                     items.clone(), display.clone(), on_save.clone(),
                 ))
             }
@@ -423,17 +416,17 @@ impl PageType {
         }
     }
 
-    pub fn build_root(&self, hardware: &Hardware, theme: &Theme, touch_controls: bool) -> Box<dyn AppPage> {
+    pub fn build_root(&self, theme: &Theme, touch_controls: bool) -> Box<dyn AppPage> {
         match self {
             PageType::Root { title, input, display, header, bumper_a, bumper_b } => {
                 Box::new(RootPage::new(
-                    hardware, theme, touch_controls, title.to_string(), input.to_vec(), display.to_vec(),
+                    theme, touch_controls, title.to_string(), input.to_vec(), display.to_vec(),
                     header.clone(), bumper_a.clone(), bumper_b.clone(),
                 ))
             }
             PageType::Both { title, inputs, display, header, bumper: _, next: _, flow_len: _ } => {
                 Box::new(RootPage::new(
-                    hardware, theme, touch_controls, title.to_string(), inputs.to_vec(), display.to_vec(),
+                    theme, touch_controls, title.to_string(), inputs.to_vec(), display.to_vec(),
                     header.clone(), None, None,
                 ))
             }
@@ -445,12 +438,12 @@ impl PageType {
                 next: _,
                 flow_len: _,
             } => Box::new(RootPage::new(
-                hardware, theme, touch_controls, title.to_string(), vec![], items.to_vec(), header.clone(),
+                theme, touch_controls, title.to_string(), vec![], items.to_vec(), header.clone(),
                 None, None,
             )),
             PageType::Input { title, item, header, bumper: _, next: _, flow_len: _ } => {
                 Box::new(RootPage::new(
-                    hardware, theme, touch_controls, title.to_string(), vec![item.clone()], vec![],
+                    theme, touch_controls, title.to_string(), vec![item.clone()], vec![],
                     header.clone(), None, None,
                 ))
             }
@@ -465,7 +458,7 @@ impl PageType {
 
             PageType::EditAndDisplay { title, header, items, display, on_save, flow_len: _ } => {
                 Box::new(EditPage::root(
-                    hardware, theme, touch_controls, title.to_string(), header.clone(), items.clone(),
+                    theme, touch_controls, title.to_string(), header.clone(), items.clone(),
                     display.clone(), on_save.clone(),
                 ))
             }

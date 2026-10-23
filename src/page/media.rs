@@ -4,7 +4,7 @@ use pelican_ui::components::text::{Text, TextSize, TextStyle};
 use pelican_ui::interface::general::Header;
 use pelican_ui::theme::{Color, Icons, Theme};
 use prism::drawable::{Area, Component, Layout, SizeRange, text::Align};
-use prism::hardware::{Hardware, Image};
+use prism::hardware::Image;
 use ptsd::layout::{Column, Offset, Padding, Size, Stack};
 use ptsd::navigation::AppPage;
 
@@ -20,7 +20,7 @@ impl PhotoPage {
         let header = Header::stack(theme, "Photo", icon);
         Self(
             Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None), header,
-            FittedPhoto::new(&ctx.hardware, &photo),
+            FittedPhoto::new(&photo),
         )
     }
 }
@@ -49,9 +49,7 @@ impl Layout for Fit {
 #[derive(Debug, Component, Clone)]
 pub struct FittedPhoto(Fit, Image);
 impl FittedPhoto {
-    pub fn new(hardware: &Hardware, photo: &Photo) -> Self {
-        Self(Fit::new(photo.size()), photo.image(hardware))
-    }
+    pub fn new(photo: &Photo) -> Self {Self(Fit::new(photo.size()), photo.image())}
 }
 
 /// Shared photo/video overlay used by public viewer components.

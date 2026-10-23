@@ -7,15 +7,16 @@ use prism::drawable::{
     Component, Drawable, Instruction, LayoutTree, RangeTree, Rect, shape::Shape, text::Align,
 };
 use prism::events::{ChildEvent, DynEvent, Event, MouseButton, MouseEvent, MouseState};
-use prism::hardware::{Frame, Player};
+use prism::hardware::{Media, Frame, Player};
 use prism::air::{Instance, Instances};
-use prism::events::{on_change, ChangeFuture, ChangeSource, OnChange};
+use prism::events::{on_change, ListenFuture, OnChange};
 use ptsd::{emitters, events};
 use ptsd::display::Bin;
 use ptsd::layout::{Column, Offset, Padding, Row, Size, Stack};
 use ptsd::navigation::AppPage;
 use uuid::Uuid;
 
+use std::any::Any;
 use std::time::{Duration, Instant};
 
 use crate::FlowBuilder;
@@ -51,7 +52,7 @@ impl VideoPage {
         let mut page = Self {
             layout: Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None), header,
             screen: VideoScreen(ScreenBody(
-                Stack::fill(), Box::new(FittedPhoto::new(&ctx.hardware, &video.poster)),
+                Stack::fill(), Box::new(FittedPhoto::new(&video.poster)),
                 Some(Badge::label(theme, "Loading\u{2026}")),
             )), controls: Controls::new(theme, token), video, theme: theme.clone(), token,
             state: State::Waiting, shown: None, clips: Some(ctx.air.instances::<VideoClip>()),
@@ -66,7 +67,7 @@ impl VideoPage {
             && let Some(bytes) = VideoClip::find(ctx, self.video.clip)
         {
             let player =
-                ctx.hardware.read_media(std::io::Cursor::new(bytes.as_slice())).and_then(|media| {
+                Media::read(std::io::Cursor::new(bytes.as_slice())).and_then(|media| {
                     let size = media.dimensions().ok_or("Media has no video track")?;
                     Player::new(media).map(|player| (player, size))
                 });
@@ -180,7 +181,12 @@ impl VideoPage {
     }
 }
 
-#[on_change(ChangeSource::changed(&mut self.clips))]
+#[on_change(async {
+    match &mut self.clips {
+        Some(clips) => clips.next().await,
+        None => std::future::pending().await,
+    }
+})]
 impl OnChange<Instance<VideoClip>> for VideoPage {
     fn on_change(&mut self, ctx: &mut Context, clip: Instance<VideoClip>) {
         if clip.pending().id == self.video.clip {
@@ -190,7 +196,12 @@ impl OnChange<Instance<VideoClip>> for VideoPage {
     }
 }
 
-#[on_change(ChangeSource::changed(&mut self.state))]
+#[on_change(async {
+    match &mut self.state {
+        State::Ready {player, ..} => player.next().await,
+        _ => std::future::pending().await,
+    }
+})]
 impl OnChange<Frame> for VideoPage {
     fn on_change(&mut self, _ctx: &mut Context, playback: Frame) { self.update(Some(playback)); }
 }
@@ -200,15 +211,6 @@ enum State {
     Waiting,
     Ready { player: Player, scrubbing: Option<Scrubbing> }, Unplayable,
 }
-impl ChangeSource for State {
-    type Update = Frame;
-    async fn next(&mut self) -> Option<Frame> {
-        match self {
-            Self::Ready { player, .. } => Some(player.next().await), _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct Scrubbing {
     was_playing: bool,
@@ -249,10 +251,9 @@ impl Event for VideoEvent {
 #[derive(Debug, Clone)]
 struct VideoScreen(ScreenBody);
 impl Drawable for VideoScreen {
-    fn changed(&mut self) -> ChangeFuture<'_> {
-        Box::pin(
-            async move { Drawable::changed(&mut self.0).await.map::<Self>(|this| &mut this.0) },
-        )
+    fn listen(&mut self) -> ListenFuture<'_> {Drawable::listen(&mut self.0)}
+    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
+        Drawable::update(&mut self.0, ctx, path, update);
     }
     fn size_range(&self) -> RangeTree { self.0.size_range() }
     fn layout(&mut self, size: (f32, f32), range: &RangeTree) -> LayoutTree {
@@ -384,10 +385,9 @@ impl Scrubber {
 }
 
 impl Drawable for Scrubber {
-    fn changed(&mut self) -> ChangeFuture<'_> {
-        Box::pin(async move {
-            Drawable::changed(&mut self.body).await.map::<Self>(|this| &mut this.body)
-        })
+    fn listen(&mut self) -> ListenFuture<'_> {Drawable::listen(&mut self.body)}
+    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
+        Drawable::update(&mut self.body, ctx, path, update);
     }
     fn size_range(&self) -> RangeTree {
         let mut range = self.body.size_range();
@@ -409,7 +409,6 @@ impl Drawable for Scrubber {
         if let Some(MouseEvent { state, position }) = event.downcast_ref::<MouseEvent>() {
             let phase = match (state, position) {
                 (MouseState::Pressed(MouseButton::Left), Some(_)) => {
-                    ctx.claim_pointer();
                     self.dragging = true;
                     Some(Phase::Start)
                 }

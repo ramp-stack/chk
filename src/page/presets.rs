@@ -1,6 +1,5 @@
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::Context;
-use prism::hardware::Hardware;
 use ptsd::layout::{Stack, Offset};
 use prism::drawable::text::Align;
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
@@ -60,12 +59,12 @@ impl ReviewPage {
         ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone(), None)
     }
 
-    pub fn on_change(&mut self, hardware: &Hardware, new: Vec<State>) {
+    pub fn on_change(&mut self, new: Vec<State>) {
         if self.6.as_ref() == Some(&new) {return;}
         self.6 = Some(new.clone());
         let theme = self.3.clone();
         let items = (self.2)(&new);
-        let content = items.into_iter().filter_map(|mut item| item.build(hardware, &theme))
+        let content = items.into_iter().filter_map(|mut item| item.build(&theme))
             .flatten().collect();
         self.1.content = Content::new(
             Offset::Start, content, Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
