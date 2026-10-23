@@ -1,76 +1,76 @@
 use pelican_ui::theme::Theme;
-use pelican_ui::drawable::{Component, SizedTree};
-use pelican_ui::layout::Stack;
-use pelican_ui::event::OnEvent;
-use ramp::prism;
-use pelican_ui::event::{Event, TickEvent};
+use prism::drawable::Component;
+use ptsd::layout::Stack;
+use prism::events::{on_change, ChangeSource, OnChange, Event, ChildEvent};
+use uuid::Uuid;
 use pelican_ui::navigation::AppPage;
 use pelican_ui::Context;
 
 use crate::{MessagesPage, PageBuilder, NavFn};
 
+#[derive(Debug, Clone, Copy)]
+pub struct PageChanged(pub Uuid);
+impl Event for PageChanged {
+    fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+        for child in children { *child.event = Some(*self); }
+    }
+}
+
 #[derive(Debug, Component, Clone)]
 pub struct Listener {
     layout: Stack,
     pub page: Box<dyn AppPage>,
-    #[skip] builder: Box<dyn PageBuilder>,
-    #[skip] theme: Theme,
-    #[skip] is_root: bool,
-    #[skip] next: Option<NavFn>,
-    #[skip] flow_len: usize,
+    #[skip]
+    builder: Box<dyn PageBuilder>,
+    #[skip]
+    theme: Theme,
+    #[skip]
+    is_root: bool,
+    #[skip]
+    next: Option<NavFn>,
+    #[skip]
+    flow_len: usize,
+    #[skip]
+    id: Uuid,
 }
 
 impl AppPage for Listener {}
 
 impl Listener {
-    pub fn new(
-        ctx: &mut Context,
-        theme: &Theme,
-        mut builder: Box<dyn PageBuilder>,
-        is_root: bool,
-    ) -> Self {
-        let page_type = builder.build(ctx, theme);
-
+    pub fn new(ctx: &mut Context, theme: &Theme, mut builder: Box<dyn PageBuilder>, is_root: bool, next: Option<NavFn>, flow_len: usize) -> Self {
+        let mut page_type = builder.build(ctx, theme);
+        page_type.update(flow_len, next.clone());
+        let page = if is_root {
+            page_type.build_root(&ctx.hardware, theme, ctx.window.touch_controls)
+        } else {
+            page_type.build(ctx, theme)
+        };
         Self {
             layout: Stack::default(),
-            page: match is_root {
-                true => page_type.build_root(theme),
-                false => page_type.build(ctx, theme),
-            },
-            builder,
+            page, builder,
             theme: theme.clone(),
-            is_root,
-            next: None,
-            flow_len: 0,
+            is_root, next, flow_len,
+            id: Uuid::new_v4(),
         }
     }
-
-    pub fn update(&mut self, ctx: &mut Context, next: Option<NavFn>, length: usize) {
-        let mut page_type = self.builder.build(ctx, &self.theme);
-        page_type.update(length, next.clone());
-
-        let mut page = match self.is_root {
-            true => page_type.build_root(&self.theme),
-            false => page_type.build(ctx, &self.theme)
-        };
-
-        if let (Some(new), Some(old)) = (page.downcast_mut::<MessagesPage>(), self.page.downcast_mut::<MessagesPage>()) {
-            new.take_input_from(old);
-        }
-
-        self.page = page;
-        self.next = next;
-        self.flow_len = length;
-    }
+    pub fn id(&self) -> Uuid { self.id }
 }
 
-impl OnEvent for Listener {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event> ) -> Vec<Box<dyn Event>> {
-        // println!("This page is listening...");
-        if event.downcast_ref::<TickEvent>().is_some() && self.builder.poll(ctx) {
-            self.update(ctx, self.next.clone(), self.flow_len);
+#[on_change(ChangeSource::changed(&mut self.builder))]
+impl OnChange<()> for Listener {
+    fn on_change(&mut self, ctx: &mut Context, _: ()) {
+        let mut page_type = self.builder.build(ctx, &self.theme);
+        page_type.update(self.flow_len, self.next.clone());
+        let mut page = if self.is_root {
+            page_type.build_root(&ctx.hardware, &self.theme, ctx.window.touch_controls)
+        } else {
+            page_type.build(ctx, &self.theme)
+        };
+        if let (Some(new), Some(old)) =
+            (page.downcast_mut::<MessagesPage>(), self.page.downcast_mut::<MessagesPage>()) {
+            new.take_input_from(old);
         }
-
-        vec![event]
+        self.page = page;
+        ctx.emit(PageChanged(self.id));
     }
 }

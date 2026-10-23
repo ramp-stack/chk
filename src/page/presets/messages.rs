@@ -1,14 +1,12 @@
-use ramp::prism;
-
-use pelican_ui::event::{OnEvent, Event};
-use pelican_ui::drawable::{Component, SizedTree};
-use pelican_ui::{Context, Callback, drawables};
-use pelican_ui::layout::{Stack, Offset};
+use prism::events::{DynEvent, OnEvent, on_event};
+use pelican_ui::drawable::{Component, Drawable};
+use pelican_ui::{Context, Callback};
+use ptsd::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::components::{MessageGroups, SendEvent};
-use pelican_ui::navigation::{NavigationEvent};
+use pelican_ui::navigation::NavigationEvent;
 use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
 use crate::profiles::Profile;
 use crate::blocking::Block;
@@ -17,7 +15,7 @@ use crate::flow::Flow;
 use crate::items::{Action, Display};
 use crate::closure::FlowBuilder;
 
-use maverick_os::air::Instance;
+use prism::air::Instance;
 
 #[derive(Debug, Component, Clone)]
 pub struct MessagesPage {
@@ -27,21 +25,20 @@ pub struct MessagesPage {
     #[skip] is_blocked: bool,
 }
 
-impl OnEvent for MessagesPage {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(send) = event.downcast_ref::<SendEvent>() {
-            match send {
-                SendEvent::Sticker(sticker) => {self.room.send(ChatRoomAction::SendSticker(sticker.clone()));},
-                SendEvent::Gif(gif) => {self.room.send(ChatRoomAction::SendGif(gif.clone()));},
-                SendEvent::Photo(photo) => {self.room.send(ChatRoomAction::SendPhoto(photo.clone()));},
-                SendEvent::Video(video) => {
-                    let members = self.room.pending().members.clone();
-                    let video = video.share(ctx, &members);
-                    self.room.send(ChatRoomAction::SendVideo(video));
-                }
+#[on_event]
+impl OnEvent<SendEvent> for MessagesPage {
+    fn on(&mut self, ctx: &mut Context, event: SendEvent) -> Vec<Box<dyn DynEvent>> {
+        match &event {
+            SendEvent::Sticker(sticker) => {self.room.send(ChatRoomAction::SendSticker(sticker.clone()));},
+            SendEvent::Gif(gif) => {self.room.send(ChatRoomAction::SendGif(gif.clone()));},
+            SendEvent::Photo(photo) => {self.room.send(ChatRoomAction::SendPhoto(photo.clone()));},
+            SendEvent::Video(video) => {
+                let members = self.room.pending().members.clone();
+                let video = video.share(ctx, &members);
+                self.room.send(ChatRoomAction::SendVideo(video));
             }
         }
-        vec![event]
+        prism::events![event]
     }
 }
 impl AppPage for MessagesPage {}
@@ -49,7 +46,7 @@ impl AppPage for MessagesPage {}
 impl MessagesPage {
     pub fn new(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>, flow_len: usize ) -> Self {
         let room_data = room.pending().clone();
-        let my_name = ctx.me();
+        let my_name = ctx.air.me();
 
         let mut profiles = room_data.members.clone().into_iter()
             .map(|n| Profile::from_name(ctx, n))
@@ -69,12 +66,6 @@ impl MessagesPage {
         } else {None};
 
         let is_blocked = did_i_block.is_some() || am_i_blocked.is_some();
-
-        // let blocked = if profiles.len() == 1 {
-        //     let blocked = Profile::me(ctx).pending().blocked.clone();
-        //     let profile = profiles[0].pending();
-        //     profile.name.filter(|name| blocked.contains(name)).and(Some(profile.username.clone()))
-        // } else { None };
 
         let deref_profiles = profiles.iter_mut()
             .map(|p| (*p.pending()).clone())
@@ -101,18 +92,18 @@ impl MessagesPage {
         };
 
         let title = room_data.name(ctx);
-        let header = Header::messaging(theme, title, pel_profiles, flow_len, info);
+        let header = Header::messaging(&ctx.hardware, theme, title, pel_profiles, flow_len, info);
 
         let mut room_taken = room.clone();
-        
+
         let bumper = match (did_i_block, am_i_blocked) {
-            (None, None) => PelicanBumper::input(theme, 
-                "Message...", 
+            (None, None) => PelicanBumper::input(theme,
+                "Message...",
                 move |_ctx: &mut Context, val: &mut String| {
                     if !val.is_empty() {
                         room_taken.send(ChatRoomAction::SendMessage(val.to_string()));
                     }
-                }, 
+                },
                 move |_ctx: &mut Context, val: &mut String| val.is_empty()
             ),
             (_, Some(username)) => PelicanBumper::alert(theme, &format!("{} blocked you.", username)),
@@ -123,7 +114,6 @@ impl MessagesPage {
             let room = room.clone();
             let tapped = message.clone();
             message.to_pel(ctx, move |ctx: &mut Context, theme: &Theme| {
-                // Photos and videos open to be seen; anything else, its details.
                 let page = match &tapped.body {
                     MessageContent::Photo(photo) => PageType::photo(photo.clone(), Some(MessageDetails::icon(room.clone(), tapped.clone()))),
                     MessageContent::Video(video) => PageType::video(video.clone(), Some(MessageDetails::icon(room.clone(), tapped.clone()))),
@@ -135,8 +125,8 @@ impl MessagesPage {
 
         let content = Content::new(
             Offset::End,
-            drawables![MessageGroups::new(ctx, theme, messages.clone(), is_group, false)],
-            Box::new(|_, _| true),
+            vec![Box::new(MessageGroups::new(ctx, theme, messages.clone(), is_group, false))],
+            Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         );
 
         let page = PelicanPage::new(header, content, Some(bumper));
@@ -144,7 +134,7 @@ impl MessagesPage {
         MessagesPage { layout: Stack::default(), page, room, is_blocked }
     }
 
-    pub(crate) fn take_input_from(&mut self, old: &mut Self) {
+    pub fn take_input_from(&mut self, old: &mut Self) {
         if !self.is_blocked && !old.is_blocked {
             if let Some(bumper) = old.page.bumper.take() {
                 self.page.bumper = Some(bumper);
@@ -160,17 +150,14 @@ impl MessageDetails {
         Self::page(ctx, theme, room, message, 1)
     }
 
-    /// The info icon for a photo or video's page: opens the message's details,
-    /// and deleting it there goes back past that page to the chat.
     pub fn icon(room: Instance<ChatRoom>, message: Message) -> (Icons, Box<dyn FlowBuilder>) {
         (Icons::Info, Box::new(move |ctx: &mut Context, theme: &Theme| {
             Flow::new(vec![Page::Static(Self::page(ctx, theme, room.clone(), message.clone(), 2))])
         }))
     }
 
-    /// Deleting the message goes back `pops` pages.
     fn page(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, message: Message, pops: usize) -> PageType {
-        let is_mine = message.author == ctx.me();
+        let is_mine = message.author == ctx.air.me();
         let bubble = message.to_pel(ctx, |_: &mut Context, _: &Theme| {});
 
         let m = message.clone();
@@ -197,7 +184,7 @@ impl GroupMessageInfoPage {
         let items = profiles.clone().into_iter().flat_map(|profile| {
             let mut p = profile.clone();
             let deref = profile.pending();
-            if deref.name.unwrap() != ctx.me() {
+            if deref.name.unwrap() != ctx.air.me() {
                 let view_contact = Flow::new(vec![Page::profile(ctx, &mut p)]);
                 Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
             } else {None}

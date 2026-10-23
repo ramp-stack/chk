@@ -1,114 +1,186 @@
-use ramp::prism;
-
-use pelican_ui::event::{OnEvent, Event, TickEvent};
+use futures::{StreamExt, stream::FuturesUnordered};
+use prism::events::{DynEvent, OnEvent, on_event};
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::{Context, Callback};
-use pelican_ui::layout::{Stack, Offset};
-use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
+use prism::hardware::Hardware;
+use ptsd::layout::{Stack, Offset};
+use ptsd::Validate;
+use pelican_ui::interface::general::{
+    Header, Content, FormEvent, Bumper as PelicanBumper, Page as PelicanPage,
+};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::Theme;
 use pelican_ui::utils::ValidationFn;
-use pelican_ui::drawable::SizedTree;
+
+use std::ops::Range;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::{FormItem, State, FlowBuilder, Icons};
 use crate::items::{Input, Display};
 use crate::closure::FormSubmit;
 
 #[derive(Debug, Component, Clone)]
-pub struct EditPage(Stack, pub PelicanPage, #[skip] Theme, #[skip] Box<dyn FormSubmit>, #[skip] Vec<State>, #[skip] bool);
-impl OnEvent for EditPage {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if event.downcast_ref::<TickEvent>().is_some() && self.5 {
-            let mut new = vec![];
-            self.1.content.children().iter().for_each(|child| Input::store_in(child, &mut new));
+pub struct EditPage(
+    Stack, pub PelicanPage,
+    #[skip] Box<dyn FormSubmit>,
+    #[skip] Option<Vec<State>>,
+    #[skip] bool,
+);
+#[on_event]
+impl OnEvent<FormEvent> for EditPage {
+    fn on(&mut self, _ctx: &mut Context, event: FormEvent) -> Vec<Box<dyn DynEvent>> {
+        if self.4
+            && let FormEvent::Changed(id) = event
+            && id == self.1.content.id() {
+            let new = self
+                .1
+                .content
+                .children()
+                .iter()
+                .filter_map(|child| Input::state(&**child))
+                .collect();
             self.on_change(new);
         }
 
-        vec![event]
+        prism::events![event]
     }
 }
 impl AppPage for EditPage {}
 impl EditPage {
-    pub fn new(theme: &Theme, title: String, mut header: Option<(Icons, Box<dyn FlowBuilder>)>, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
+    pub fn new(
+        hardware: &Hardware, theme: &Theme, touch_controls: bool, title: String,
+        mut header: Option<(Icons, Box<dyn FlowBuilder>)>, input: Vec<Input>, display: Vec<Display>,
+        validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>,
+    ) -> Self {
         let header = header.as_mut().map(|(icon, flow)| {
             let mut flow = flow.clone();
-            (icon.clone(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
+            (
+                icon.clone(),
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
+                }) as Box<dyn Callback>,
+            )
         });
 
         let header = Header::stack(theme, &title, header);
-        let mut content = input.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<_>>();
-        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
+        let content = Self::content(hardware, theme, touch_controls, input, display, validations);
 
-        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-            validations.clone().into_iter().enumerate().any(|(i, mut validation)| {
-                let child = vec![&mut *children[i]];
-                !(validation)(ctx, child)
-            })
-        }) as Box<dyn ValidationFn>;
-        
-        let bumper = PelicanBumper::stack(theme, Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
+        let bumper = PelicanBumper::stack(
+            theme, Some("Save"),
+            Box::new(|_: &mut Context, _: &Theme| {}),
+            None,
+        );
+        let page = PelicanPage::new(header, content, Some(bumper));
 
-        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![], false)
+        EditPage(Stack::default(), page, on_save.clone(), None, false)
     }
 
-    pub fn edit_and_display(theme: &Theme, title: String, mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+    pub fn edit_and_display(
+        hardware: &Hardware, theme: &Theme, touch_controls: bool, title: String,
+        mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
+        display: Vec<Display>, on_save: Box<dyn FormSubmit>,
+    ) -> Self {
         let header = header.as_mut().map(|(icon, flow)| {
             let mut flow = flow.clone();
-            (icon.clone(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
+            (
+                icon.clone(),
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
+                }) as Box<dyn Callback>,
+            )
         });
 
         let header = Header::stack(theme, &title, header);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
+        let content = Self::content(hardware, theme, touch_controls, inputs, display, validations);
 
-        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-            validations.clone().into_iter().enumerate().any(|(i, mut validation)| {
-                let child = vec![&mut *children[i]];
-                !(validation)(ctx, child)
-            })
-        }) as Box<dyn ValidationFn>;
-        
-        let bumper = PelicanBumper::stack(theme, Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
+        let bumper = PelicanBumper::stack(
+            theme, Some("Save"),
+            Box::new(|_: &mut Context, _: &Theme| {}),
+            None,
+        );
+        let page = PelicanPage::new(header, content, Some(bumper));
 
-        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![], false)
+        EditPage(Stack::default(), page, on_save.clone(), None, false)
     }
 
-    pub fn root(theme: &Theme, title: String, mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+    pub fn root(
+        hardware: &Hardware, theme: &Theme, touch_controls: bool, title: String,
+        mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
+        display: Vec<Display>, on_save: Box<dyn FormSubmit>,
+    ) -> Self {
         let header = header.as_mut().map(|(icon, flow)| {
             let mut flow = flow.clone();
-            (icon.clone(), Box::new(move |ctx: &mut Context, theme: &Theme| ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)) as Box<dyn Callback>)
+            (
+                icon.clone(),
+                Box::new(move |ctx: &mut Context, theme: &Theme| {
+                    ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
+                }) as Box<dyn Callback>,
+            )
         });
 
         let header = Header::home(theme, &title, header);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let mut content = inputs.into_iter().flat_map(|i| i.build(theme)).flatten().collect::<Vec<Box<dyn Drawable>>>();
-        display.into_iter().for_each(|mut d| if let Some(r) = d.build(theme) {content.extend(r)});
+        let content = Self::content(hardware, theme, touch_controls, inputs, display, validations);
 
-        let validation = Box::new(move |ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-            validations.clone().into_iter().enumerate().any(|(i, mut validation)| {
-                let child = vec![&mut *children[i]];
-                !(validation)(ctx, child)
-            })
-        }) as Box<dyn ValidationFn>;
-        
-        let bumper = PelicanBumper::home(theme, Some(("Save".to_string(), Box::new(|_: &mut Context, _: &Theme| {}))), None);
-        let page = PelicanPage::new(header, Content::new(Offset::Start, content, validation), Some(bumper));
+        let bumper = PelicanBumper::home(
+            theme,
+            Some(("Save".to_string(), Box::new(|_: &mut Context, _: &Theme| {}))),
+            None,
+        );
+        let page = PelicanPage::new(header, content, Some(bumper));
 
-        EditPage(Stack::default(), page, theme.clone(), on_save.clone(), vec![], true)
+        EditPage(Stack::default(), page, on_save.clone(), None, true)
+    }
+
+    fn content(
+        hardware: &Hardware, theme: &Theme, touch_controls: bool, inputs: Vec<Input>,
+        display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>,
+    ) -> Content {
+        let mut children = Vec::new();
+        let mut validators = Vec::new();
+        let mut validations = validations.into_iter();
+        for input in inputs {
+            let start = children.len();
+            children.extend(input.build(hardware, theme, touch_controls).unwrap_or_default());
+            if let Some(validation) = validations.next() {
+                validators.push((start..children.len(), validation));
+            }
+        }
+        for mut item in display { children.extend(item.build(hardware, theme).unwrap_or_default()); }
+        Content::new(Offset::Start, children, Box::new(FormValidation(validators)))
     }
 
     pub fn on_change(&mut self, new: Vec<State>) {
-        if new != self.4 {
-            self.4 = new.clone();
-            let theme = &self.2;
-            let mut on_save = self.3.clone();
-            let closure = Box::new(move |ctx: &mut Context, _theme: &Theme| {(on_save)(ctx, &new);});
-            self.1.bumper = Some(PelicanBumper::stack(theme, Some("Save"), closure, None));
+        if self.3.as_ref() == Some(&new) { return; }
+        self.3 = Some(new.clone());
+        let mut on_save = self.2.clone();
+        *self.1.bumper.as_mut().unwrap().on_click()[0] = Box::new(move |ctx: &mut Context| {
+            (on_save)(ctx, &new);
+        });
+    }
+}
+
+#[derive(Clone)]
+struct FormValidation(Vec<(Range<usize>, Box<dyn ValidationFn>)>);
+impl Validate<Vec<&mut Box<dyn Drawable>>, bool> for FormValidation {
+    fn validate(&mut self, ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>) -> bool {
+        let mut valid = true;
+        for (range, validation) in &mut self.0 {
+            let inputs = children[range.clone()].iter_mut().map(|child| &mut **child).collect();
+            valid &= validation.validate(ctx, inputs);
         }
+        valid
+    }
+    fn change(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>> {
+        Box::pin(async move {
+            let mut waits: FuturesUnordered<_> =
+                self.0.iter_mut().map(|(_, validation)| validation.change()).collect();
+            while let Some(update) = waits.next().await { if update.is_some() { return update; } }
+            None
+        })
     }
 }

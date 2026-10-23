@@ -1,21 +1,20 @@
 use pelican_ui::{Callback, Context};
-use pelican_ui::navigation::{NavigationEvent, Flow as PelicanFlow, FlowContainer, AppPage};
+use pelican_ui::navigation::{NavigationEvent, NavigationChanged, Flow as PelicanFlow, FlowContainer, AppPage};
+use pelican_ui::interface::general::{Content, FormEvent};
 use pelican_ui::theme::Theme;
-use pelican_ui::drawable::{Component, SizedTree};
-use pelican_ui::layout::Stack;
-use pelican_ui::event::OnEvent;
-use ramp::prism;
-use pelican_ui::event::{Event, TickEvent};
+use prism::drawable::{Component, Drawable};
+use ptsd::layout::Stack;
+use prism::events::{on_event, OnEvent, DynEvent, Change, ChangeFuture};
+
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::fmt::Debug;
 
 use crate::form::{Form, State, FormComplete};
 use crate::items::Input;
 use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{FormSubmit, NavFn};
-use crate::{Listener, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
-
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::fmt::Debug;
+use crate::{Listener, PageChanged, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
 
 #[derive(Debug, Clone, Default)]
 pub struct Flow(pub Vec<Page>);
@@ -26,23 +25,23 @@ impl Flow{
         let (action_str, action) = action;
         let action_caps = action_str.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]).unwrap_or_default();
 
-        let prompt = PageType::display(&format!("{} user", action_caps), 
+        let prompt = PageType::display(&format!("{} user", action_caps),
             vec![
                 Display::avatar(avatar.clone(), purpose.clone()),
                 Display::confirmation_message(&format!("Are you sure you want to {} {}", action_str, target)),
-            ], 
-            None, 
-            Bumper::double(&action_caps, action, "Cancel", Action::None), 
+            ],
+            None,
+            Bumper::double(&action_caps, action, "Cancel", Action::None),
             Offset::Center
         );
 
-        let complete = PageType::display(&format!("User {}", past_action), 
+        let complete = PageType::display(&format!("User {}", past_action),
             vec![
                 Display::avatar(avatar, purpose),
                 Display::confirmation_message(&format!("{} has been {}", target, past_action)),
-            ], 
-            None, 
-            Bumper::Done, 
+            ],
+            None,
+            Bumper::Done,
             Offset::Center
         );
 
@@ -61,7 +60,7 @@ impl Flow{
                     let theme = t.clone();
                     let mut on_form_complete = (os)(ctx, state);
                     on_form_complete.run(ctx, &theme);
-                    
+
                     FormComplete::None
                 }) as Box<dyn FormSubmit>);
 
@@ -91,7 +90,7 @@ impl Flow{
         }
     }
 
-    pub(crate) fn build(&mut self, ctx: &mut Context, theme: &Theme) -> Box<dyn Callback> {
+    pub fn build(&mut self, ctx: &mut Context, theme: &Theme) -> Box<dyn Callback> {
         let flow = self.build_as_flow(ctx, theme);
 
         Box::new(move |ctx: &mut Context, _: &Theme| {
@@ -99,7 +98,7 @@ impl Flow{
         })
     }
 
-    pub(crate) fn build_as_flow(&mut self, ctx: &mut Context, theme: &Theme) -> FlowWrapper {
+    pub fn build_as_flow(&mut self, ctx: &mut Context, theme: &Theme) -> FlowWrapper {
         let mut new: Vec<Box<dyn AppPage>> = vec![];
         let length = self.0.len();
         if self.0.is_empty() { return FlowWrapper::new(PelicanFlow::new(vec![])) }
@@ -109,10 +108,8 @@ impl Flow{
         let mut next_fn: Option<NavFn> = None;
 
         pages.into_iter().rev().for_each(|page| {
-            // let callback = (i == 0).then_some(self.1.clone()).flatten(); 
             new.push(page.build(ctx, theme, next_fn.take(), length));
             next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {
-                // if let Some(cb) = callback.clone() { (cb.clone())(ctx) } // on_submit
                 ctx.emit(NavigationEvent::Next);
             }))));
         });
@@ -125,56 +122,102 @@ impl Flow{
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct FlowWrapper(Stack, PelicanFlow, #[skip] Vec<State>);
-impl OnEvent for FlowWrapper {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {        
-        if event.downcast_ref::<TickEvent>().is_some() {
-            let index = self.1.index;
-            self.2.clear();
+#[changed]
+pub struct FlowWrapper(Stack, PelicanFlow, #[skip] bool);
+impl FlowWrapper {
+    pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, true)}
 
-            if self.1.stored.is_empty() {
-                Self::handle_page(self.1.current.as_mut().unwrap().as_mut(), ctx, &mut self.2);
-            }
-
-            for (i, stored) in self.1.stored.iter_mut().enumerate() {
-                if i == index {
-                    Self::handle_page(self.1.current.as_mut().unwrap().as_mut(), ctx, &mut self.2);
-                }
-
-                Self::handle_page(stored.as_mut(), ctx, &mut self.2 );
-            }
+    fn changed(&mut self) -> ChangeFuture<'_> {
+        if self.2 {
+            return Box::pin(async {
+                Change::new(|drawable, ctx| {
+                    let flow = drawable.downcast_mut::<Self>().unwrap();
+                    flow.2 = false;
+                    flow.refresh(ctx);
+                })
+            });
         }
-        vec![event]
+        Box::pin(async move {
+            Drawable::changed(&mut self.1).await.map::<Self>(|this| &mut this.1)
+        })
+    }
+
+    fn content(page: &dyn AppPage) -> Option<&Content> {
+        if let Some(listener) = page.downcast_ref::<Listener>() {
+            Self::content(listener.page.as_ref())
+        } else if let Some(page) = page.downcast_ref::<FormPage>() {Some(&page.1.content)}
+        else if let Some(page) = page.downcast_ref::<EditPage>() {Some(&page.1.content)}
+        else if let Some(page) = page.downcast_ref::<ReviewPage>() {Some(&page.1.content)}
+        else {page.downcast_ref::<SuccessPage>().map(|page| &page.1.content)}
+    }
+
+    fn refresh(&mut self, ctx: &mut Context) {
+        let mut inputs: Vec<_> = self.1.stored.iter().take(self.1.index)
+            .flat_map(|page| Self::inputs(page.as_ref())).collect();
+        if let Some(current) = &mut self.1.current {
+            inputs.extend(Self::inputs(current.as_ref()));
+            Self::update(current.as_mut(), ctx, inputs);
+        }
+    }
+
+    fn inputs(page: &dyn AppPage) -> Vec<State> {
+        if let Some(listener) = page.downcast_ref::<Listener>() {
+            return Self::inputs(listener.page.as_ref());
+        }
+        let children = if let Some(page) = page.downcast_ref::<FormPage>() {
+            page.1.content.children()
+        } else if let Some(page) = page.downcast_ref::<EditPage>() {
+            page.1.content.children()
+        } else {return vec![]};
+        children.iter().filter_map(|child| Input::state(&**child)).collect()
+    }
+
+    fn update(page: &mut dyn AppPage, ctx: &mut Context, inputs: Vec<State>) {
+        if let Some(listener) = page.downcast_mut::<Listener>() {
+            Self::update(listener.page.as_mut(), ctx, inputs);
+        } else if let Some(page) = page.downcast_mut::<ReviewPage>() {
+            page.on_change(&ctx.hardware, inputs);
+        } else if let Some(page) = page.downcast_mut::<SuccessPage>() {
+            page.on_change(ctx, inputs);
+        } else if let Some(page) = page.downcast_mut::<FormPage>() {
+            page.on_change(inputs);
+        } else if let Some(page) = page.downcast_mut::<EditPage>() {
+            page.on_change(inputs);
+        }
     }
 }
 
-impl FlowWrapper {
-    pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, vec![])}
-    fn handle_page(
-        page: &mut dyn AppPage,
-        ctx: &mut Context,
-        inputs: &mut Vec<State>,
-    ) {
-        if let Some(listener) = page.downcast_mut::<Listener>() {
-            Self::handle_page(listener.page.as_mut(), ctx, inputs);
-            return;
+#[on_event]
+impl OnEvent<FormEvent> for FlowWrapper {
+    fn on(&mut self, ctx: &mut Context, event: FormEvent) -> Vec<Box<dyn DynEvent>> {
+        if let FormEvent::Changed(id) = event
+            && let Some(page) = &self.1.current
+            && Self::content(page.as_ref()).is_some_and(|content| content.id() == id) {
+            self.refresh(ctx);
         }
+        prism::events![event]
+    }
+}
 
-        if let Some(page) = page.downcast_mut::<ReviewPage>() {
-            page.on_change(inputs.clone());
-        } else if let Some(page) = page.downcast_mut::<SuccessPage>() {
-            page.on_change(ctx, inputs.clone());
-        } else if let Some(page) = page.downcast_mut::<FormPage>() {
-            page.1.content.children().iter().for_each(|c| Input::store_in(c, inputs));
-            page.on_change(inputs.clone());
-        } else if let Some(page) = page.downcast_mut::<EditPage>() {
-            page.1.content.children().iter().for_each(|c| Input::store_in(c, inputs));
-            page.on_change(inputs.clone());
+#[on_event]
+impl OnEvent<NavigationChanged> for FlowWrapper {
+    fn on(&mut self, ctx: &mut Context, event: NavigationChanged) -> Vec<Box<dyn DynEvent>> {
+        self.refresh(ctx);
+        prism::events![event]
+    }
+}
+
+#[on_event]
+impl OnEvent<PageChanged> for FlowWrapper {
+    fn on(&mut self, ctx: &mut Context, event: PageChanged) -> Vec<Box<dyn DynEvent>> {
+        if let Some(page) = &self.1.current
+            && let Some(listener) = page.downcast_ref::<Listener>() && listener.id() == event.0 {
+            self.refresh(ctx);
         }
+        prism::events![event]
     }
 }
 
 impl FlowContainer for FlowWrapper {
     fn flow(&mut self) -> &mut PelicanFlow {&mut self.1}
 }
-

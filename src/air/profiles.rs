@@ -1,12 +1,17 @@
 use pelican_ui::Context;
 use pelican_ui::components::avatar::AvatarContent;
 
-use maverick_os::air::{Metadata, Contract, Id, Name, Instance};
+use prism::air::{Metadata, Contract, Id, Name, Instance};
 
 use rand::{seq::SliceRandom, Rng};
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub enum ProfileAction {
+    ChangeUsername(String), ChangeNotes(String), ChangeAvatar(AvatarContent),
+    SetUsernameInit(String),
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Profile {
@@ -22,15 +27,12 @@ impl Contract for Profile {
     type Message = ProfileAction;
     type Result = ();
 
-    fn id() -> Id {Id::hash("Profile")}
+    fn id() -> Id { Id::hash("Profile") }
 
     fn init(init: Self::Init, _metadata: Metadata) -> Self {
         Profile {
-            name: Some(init),
-            username: "Orange Profile".to_string(),
-            notes: String::new(),
-            avatar: AvatarContent::default(),
-            init: false,
+            name: Some(init), username: "Orange Profile".to_string(), notes: String::new(),
+            avatar: AvatarContent::default(), init: false,
         }
     }
 
@@ -44,32 +46,22 @@ impl Contract for Profile {
                     self.init = true;
                     self.username = content.to_string();
                 }
-            },
+            }
         }
 
         ()
     }
 }
 
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
-pub enum ProfileAction {
-    ChangeUsername(String),
-    ChangeNotes(String),
-    ChangeAvatar(AvatarContent),
-    SetUsernameInit(String),
-}
-
 impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
-        // ctx.register::<Profile>();
-        // std::thread::sleep(std::time::Duration::from_secs(1));
-        let mut profile = ctx.create::<Profile>(name);
+        let mut profile = ctx.air.instances::<Profile>().create(name);
         profile.send(ProfileAction::SetUsernameInit(Username::new()));
         profile
     }
 
     pub fn me(ctx: &mut Context) -> Instance<Profile> {
-        let my_name = ctx.me();
+        let my_name = ctx.air.me();
         Profile::from_name(ctx, my_name)
     }
 
@@ -78,26 +70,23 @@ impl Profile {
     }
 
     pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<Instance<Profile>> {
-        ctx.list::<Profile>().iter_mut().find_map(|profile| {
-            if profile.1.pending().name == Some(name) {
-                Some(profile.1.clone())
-            } else {
-                None
-            }
+        ctx.air.instances::<Profile>().list().iter_mut().find_map(|profile| {
+            if profile.1.pending().name == Some(name) { Some(profile.1.clone()) } else { None }
         })
     }
 
     pub fn to_pel(&self) -> pelican_ui::components::Profile {
         pelican_ui::components::Profile {
-            name: self.name.unwrap(),
-            username: self.username.clone(),
-            pfp: self.avatar.clone(), // TODO
+            name: self.name.unwrap(), username: self.username.clone(), pfp: self.avatar.clone(),
         }
     }
 
     pub fn name(&self) -> String {
         let c: Vec<_> = self.name.unwrap().to_string().chars().collect();
-        format!("{}...{}", c[..17].iter().collect::<String>(), c[c.len()-4..].iter().collect::<String>())
+        format!(
+            "{}...{}", c[..17].iter().collect::<String>(),
+            c[c.len() - 4..].iter().collect::<String>()
+        )
     }
 }
 
@@ -105,21 +94,29 @@ pub struct Username;
 impl Username {
     #[allow(clippy::new_ret_no_self)]
     pub fn new() -> String {
-        let parse = |s: &str| s.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| l.to_string()).collect::<Vec<_>>();
+        let parse = |s: &str| {
+            s.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| l.to_string())
+                .collect::<Vec<_>>()
+        };
         let mut rng = rand::thread_rng();
 
-        let animals = parse(ANIMALS);
-        let adjectives = parse(ADJECTIVES);
-        let foods = parse(FOODS);
+        let animals = parse(include_str!("../../usernames/animals.txt"));
+        let adjectives = parse(include_str!("../../usernames/adjectives.txt"));
+        let foods = parse(include_str!("../../usernames/foods.txt"));
         let noun = if rng.gen_bool(0.5) { &animals } else { &foods };
 
         let f = |s: &str| {
             let mut o = String::with_capacity(s.len());
             let mut cap = true;
             for c in s.chars() {
-                if c == ' ' || c == '-' { cap = true; continue; }
-                if cap { for u in c.to_uppercase() { o.push(u); } cap = false; }
-                else { o.push(c); }
+                if c == ' ' || c == '-' {
+                    cap = true;
+                    continue;
+                }
+                if cap {
+                    for u in c.to_uppercase() { o.push(u); }
+                    cap = false;
+                } else { o.push(c); }
             }
             o
         };
@@ -127,7 +124,3 @@ impl Username {
         format!("{}{}", f(adjectives.choose(&mut rng).unwrap()), f(noun.choose(&mut rng).unwrap()))
     }
 }
-
-static ANIMALS: &str = include_str!("../../usernames/animals.txt");
-static FOODS: &str = include_str!("../../usernames/foods.txt");
-static ADJECTIVES: &str = include_str!("../../usernames/adjectives.txt");
