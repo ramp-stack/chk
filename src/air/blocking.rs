@@ -44,7 +44,7 @@ impl Block {
             block.blocker == ctx.air.me() && block.blocked == name
         }).map(|(_, b)| b).unwrap_or_else(|| {
             let block = ctx.air.instances::<Block>().create(name);
-            block.share(name);
+            if name != ctx.air.me() {block.share(name);}
             block
         })
     }

@@ -17,7 +17,7 @@ use pelican_ui::components::{
     QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput,
 };
 pub use pelican_ui::components::Number;
-use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
+use pelican_ui::components::text::{Text, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
@@ -101,7 +101,7 @@ impl Input {
         Input::QRCodeScanner { instructions: instructions.to_string(), alt, on_find }
     }
 
-    pub fn build(&self, theme: &Theme, touch_controls: bool) -> Option<Vec<Box<dyn Drawable>>> {
+    pub fn build(&self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text { id, show_label, label, preset, actions } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![Box::new(TextInput::new(
@@ -135,25 +135,25 @@ impl Input {
             Input::Currency { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::numerical(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Number { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::number(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Date { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::date(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Time { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::time(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Avatar { content, flair, action } => {
@@ -185,13 +185,13 @@ impl Input {
             Input::QRCodeScanner { instructions, alt, on_find } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![
                     Box::new(QRCodeScanner::new(theme, on_find.clone())),
-                    Box::new(ExpandableText::new(
+                    Box::new(Text::new(
                         theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center,
                         None,
                     )),
                 ];
                 if let Some((label, icon, action)) = alt.as_ref() {
-                    items.push(Box::new(ExpandableText::new(
+                    items.push(Box::new(Text::new(
                         theme, "or", TextSize::Md, TextStyle::Secondary, Align::Center, None,
                     )));
                     items.push(Box::new(QuickActions::new(
@@ -353,7 +353,7 @@ impl Display {
                 ))],
             },
             Display::Text { text, size, style, align } if !text.is_empty() => {
-                vec![Box::new(ExpandableText::new(theme, text, *size, *style, *align, None))]
+                vec![Box::new(Text::new(theme, text, *size, *style, *align, None))]
             }
             Display::Cta { label, data, instructions, actions } => vec![Box::new(DataItem::text(
                 theme, label, data.as_deref(), instructions,
@@ -409,7 +409,7 @@ impl Display {
             }
             Display::QRCode { data, instructions } => vec![
                 Box::new(QRCode::new(theme, data)),
-                Box::new(ExpandableText::new(
+                Box::new(Text::new(
                     theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None,
                 )),
             ],

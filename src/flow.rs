@@ -2,11 +2,10 @@ use pelican_ui::{Callback, Context};
 use pelican_ui::navigation::{NavigationEvent, NavigationChanged, Flow as PelicanFlow, FlowContainer, AppPage};
 use pelican_ui::interface::general::{Content, FormEvent};
 use pelican_ui::theme::Theme;
-use prism::drawable::{Component, Drawable};
+use prism::drawable::Component;
 use ptsd::layout::Stack;
-use prism::events::{on_event, OnEvent, DynEvent, ListenFuture};
+use prism::events::{on_event, OnEvent, DynEvent, on_change, OnChange};
 
-use std::any::Any;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -123,22 +122,9 @@ impl Flow{
 }
 
 #[derive(Debug, Component, Clone)]
-#[listen]
 pub struct FlowWrapper(Stack, PelicanFlow, #[skip] bool);
 impl FlowWrapper {
     pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, true)}
-
-    fn listen(&mut self) -> ListenFuture<'_> {
-        if self.2 {Box::pin(async {(vec![], Box::new(()) as Box<dyn Any>)})}
-        else {Drawable::listen(&mut self.1)}
-    }
-
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        if self.2 {
-            self.2 = false;
-            self.refresh(ctx);
-        } else {Drawable::update(&mut self.1, ctx, path, update);}
-    }
 
     fn content(page: &dyn AppPage) -> Option<&Content> {
         if let Some(listener) = page.downcast_ref::<Listener>() {
@@ -182,6 +168,16 @@ impl FlowWrapper {
         } else if let Some(page) = page.downcast_mut::<EditPage>() {
             page.on_change(inputs);
         }
+    }
+}
+
+#[on_change(async {
+    if !self.2 {std::future::pending::<()>().await;}
+})]
+impl OnChange<()> for FlowWrapper {
+    fn on_change(&mut self, ctx: &mut Context, _: ()) {
+        self.2 = false;
+        self.refresh(ctx);
     }
 }
 

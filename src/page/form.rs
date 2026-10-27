@@ -22,12 +22,12 @@ pub struct FormPage(
 impl AppPage for FormPage {}
 impl FormPage {
     pub fn new(
-        theme: &Theme, touch_controls: bool, title: String, item: Input,
+        theme: &Theme, is_mobile: bool, title: String, item: Input,
         next: Option<NavFn>, _flow_len: usize, validate: Box<dyn ValidationFn>,
         on_submit: Option<Box<dyn FormSubmit>>,
     ) -> Self {
         let header = Header::stack(theme, &title, None);
-        let content = item.build(theme, touch_controls).unwrap_or_default();
+        let content = item.build(theme, is_mobile).unwrap_or_default();
         let bumper =
             PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
         let page =

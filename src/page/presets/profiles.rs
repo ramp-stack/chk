@@ -13,7 +13,7 @@ use crate::closure::FormSubmit;
 
 pub struct ProfilePage;
 impl ProfilePage {
-    pub fn editing(is_me: bool, profile: Instance<Profile>, touch_controls: bool) -> PageType {
+    pub fn editing(is_me: bool, profile: Instance<Profile>, is_mobile: bool) -> PageType {
         let mut p = profile.clone();
         let closure = Box::new(move |_ctx: &mut Context, objects: &Vec<State>| {
             if let Some(State::Text(result)) = objects.get(1) {
@@ -41,7 +41,7 @@ impl ProfilePage {
                     ActionItem::new(
                         Action::flow(Flow::new(vec![Page::Static(PageType::display_qr_code(
                             "Share name", &my_name.to_string(), "Scan to share orange name.",
-                            touch_controls,
+                            is_mobile,
                         ))])), "Display QR Code", Icons::QrCode,
                     ),
                 ],
@@ -112,7 +112,7 @@ impl ProfileView {
                         ActionItem::new(
                             Action::flow(Flow::new(vec![Page::Static(PageType::display_qr_code(
                                 "Share name", &profile_name.to_string(),
-                                "Scan to share orange name.", ctx.window.touch_controls,
+                                "Scan to share orange name.", ctx.window.is_mobile,
                             ))])), "Display QR Code", Icons::QrCode,
                         ),
                     ],
@@ -122,7 +122,7 @@ impl ProfileView {
                 Icons::Edit,
                 Box::new(move |ctx: &mut Context, _: &Theme| {
                     Flow::new(vec![Page::Static(ProfilePage::editing(
-                        is_me, p.clone(), ctx.window.touch_controls,
+                        is_me, p.clone(), ctx.window.is_mobile,
                     ))])
                 }),
             )), Bumper::None, Offset::Start,

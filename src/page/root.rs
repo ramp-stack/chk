@@ -27,7 +27,7 @@ pub struct RootPage(Stack, PelicanPage);
 impl AppPage for RootPage {}
 impl RootPage {
     pub fn new(
-        theme: &Theme, touch_controls: bool, title: String, mut input: Vec<Input>,
+        theme: &Theme, is_mobile: bool, title: String, mut input: Vec<Input>,
         mut display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>,
         mut bumper_a: Option<(String, Box<dyn FlowBuilder>)>,
         mut bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
@@ -51,7 +51,7 @@ impl RootPage {
         let header = Header::home(theme, &title, header_icon);
         let mut content = input
             .iter_mut()
-            .filter_map(|di| di.build(theme, touch_controls))
+            .filter_map(|di| di.build(theme, is_mobile))
             .flatten()
             .collect::<Vec<Box<dyn Drawable>>>();
         content.extend(

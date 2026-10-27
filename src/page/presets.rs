@@ -4,7 +4,7 @@ use ptsd::layout::{Stack, Offset};
 use prism::drawable::text::Align;
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
-use pelican_ui::components::text::{ExpandableText, TextSize, TextStyle};
+use pelican_ui::components::text::{Text, TextSize, TextStyle};
 use pelican_ui::theme::Theme;
 
 use crate::form::{State, FormComplete};
@@ -112,7 +112,9 @@ impl SuccessPage {
         let (icon, description) = (self.2)(new);
         self.1.content = Content::new(Offset::Center, vec![
             Box::new(Icon::new(&theme, icon, Some(theme.colors().get(colors::Text::Heading)), 128.0)),
-            Box::new(ExpandableText::new(&theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None))
+            Box::new(Text::new(
+                &theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None,
+            ))
         ], Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true));
     }
 }

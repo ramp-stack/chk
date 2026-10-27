@@ -95,7 +95,7 @@ impl ChatRoom {
 
         let mut room = ctx.air.instances::<ChatRoom>().create(id);
 
-        for recipient in recipients {
+        for recipient in recipients.into_iter().filter(|name| *name != ctx.air.me()) {
             room.share(recipient);
             room.send(ChatRoomAction::Share(recipient));
         }
