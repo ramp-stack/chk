@@ -1793,7 +1793,9 @@ dependencies = [
 
 [[package]]
 name = "prism2"
-version = "1.0.1"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58e86857c2dbe79765d9c91be28d29a4fbf5cb30490167bbcabd63446df9e11f"
 dependencies = [
  "air",
  "anyanymap",
@@ -1816,7 +1818,9 @@ dependencies = [
 
 [[package]]
 name = "prism_proc"
-version = "1.0.1"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5affb8d298295498963f68a89cb71387c4c8a7060b14f0ece02df9771a2cee09"
 dependencies = [
  "proc-macro2 1.0.95",
  "quote 1.0.40",
