@@ -39,7 +39,7 @@ mod video;
 pub use video::*;
 
 #[derive(Debug, Clone)]
-pub enum Page { Static(PageType), Refreshing(Box<dyn PageBuilder>) }
+pub enum Page { Static(Box<PageType>), Refreshing(Box<dyn PageBuilder>) }
 
 impl Page {
     pub fn watching<W: Watcher>(watcher: W, builder: impl FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static) -> Self {
@@ -60,15 +60,15 @@ impl Page {
         let my_name = profile.pending().name.unwrap();
         let is_me = my_name == ctx.air.me();
         match is_me {
-            true => Page::Static(ProfilePage::editing(
-                is_me, profile.clone(), ctx.window.touch_controls,
-            )),
+            true => Page::Static(Box::new(ProfilePage::editing(
+                is_me, profile.clone(), ctx.window.is_mobile,
+            ))),
             false => Page::watching(
                 (Watch::contract(profile.clone()), Watch::list::<Block>()),
                 |ctx: &mut Context,
                  _: &Theme,
                  (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
-                    chk::ProfileView::new(ctx, profile)
+                    chk::ProfileView::build(ctx, profile)
                 },
             ),
         }
@@ -90,7 +90,7 @@ impl Page {
     }
 
     pub fn page_type(&self) -> Option<PageType> {
-        match self { Page::Static(p) => Some(p.clone()), _ => None }
+        match self {Page::Static(p) => Some(p.as_ref().clone()), _ => None}
     }
 
     pub fn build(&self, ctx: &mut Context, theme: &Theme, mut next_fn: Option<NavFn>, length: usize) -> Box<dyn AppPage> {
@@ -98,7 +98,7 @@ impl Page {
             Page::Static(page) => {
                 let mut page = page.clone();
                 page.update(length, next_fn.take());
-                return page.build(ctx, theme);
+                page.build(ctx, theme)
             }
             Page::Refreshing(page_builder) => Box::new(Listener::new(
                 ctx, theme, page_builder.clone(), false, next_fn.take(), length,
@@ -108,11 +108,9 @@ impl Page {
 
     pub fn build_root(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
-            Page::Static(page) => {
-                return page.clone().build_root(theme, ctx.window.touch_controls);
-            }
+            Page::Static(page) => page.clone().build_root(theme, ctx.window.is_mobile),
             Page::Refreshing(page_builder) => {
-                return Box::new(Listener::new(ctx, theme, page_builder.clone(), true, None, 0));
+                Box::new(Listener::new(ctx, theme, page_builder.clone(), true, None, 0))
             }
         }
     }
@@ -294,10 +292,10 @@ impl PageType {
 
     pub fn display_qr_code(title: &str, data: &str, instructions: &str, share: bool) -> Self {
         PageType::display(
-            title, vec![Display::qr_code(&data, instructions)], None,
+            title, vec![Display::qr_code(data, instructions)], None,
             Bumper::custom(
                 if share { "Share" } else { "Copy" },
-                if share { Action::share(&data) } else { Action::copy(&data) },
+                if share { Action::share(data) } else { Action::copy(data) },
             ), Offset::Center,
         )
     }
@@ -353,12 +351,7 @@ impl PageType {
 
     pub fn build(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
-            PageType::Root { title, input, display, header, bumper_a, bumper_b } => {
-                Box::new(RootPage::new(
-                    theme, ctx.window.touch_controls, title.to_string(), input.to_vec(),
-                    display.to_vec(), header.clone(), bumper_a.clone(), bumper_b.clone(),
-                ))
-            }
+            PageType::Root { .. } => self.build_root(theme, ctx.window.is_mobile),
             PageType::Both { title, inputs, display, header, bumper, next, flow_len } => {
                 Box::new(StackPage::both(
                     ctx, theme, title.to_string(), display.to_vec(), inputs.to_vec(),
@@ -377,21 +370,21 @@ impl PageType {
                     next.clone(), *flow_len,
                 ))
             }
-            PageType::Form { title, item, next, flow_len, validate, on_submit } => {
+            PageType::Form { title, item, next, flow_len: _, validate, on_submit } => {
                 Box::new(FormPage::new(
-                    theme, ctx.window.touch_controls, title.to_string(), item.clone(),
-                    next.clone(), *flow_len, validate.clone(), on_submit.clone(),
+                    theme, ctx.window.is_mobile, title.to_string(), item.clone(),
+                    next.clone(), validate.clone(), on_submit.clone(),
                 ))
             }
             PageType::Edit { title, input, display, validations, on_save, flow_len: _ } => {
                 Box::new(EditPage::new(
-                    theme, ctx.window.touch_controls, title.to_string(), None, input.clone(),
+                    theme, ctx.window.is_mobile, title.to_string(), input.clone(),
                     display.clone(), validations.clone(), on_save.clone(),
                 ))
             }
             PageType::EditAndDisplay { title, header, items, display, on_save, flow_len: _ } => {
                 Box::new(EditPage::edit_and_display(
-                    theme, ctx.window.touch_controls, title.to_string(), header.clone(),
+                    theme, ctx.window.is_mobile, title.to_string(), header.clone(),
                     items.clone(), display.clone(), on_save.clone(),
                 ))
             }
@@ -412,55 +405,6 @@ impl PageType {
             }
             PageType::Video { video, header } => {
                 Box::new(VideoPage::new(ctx, theme, video.clone(), header.clone()))
-            }
-        }
-    }
-
-    pub fn build_root(&self, theme: &Theme, touch_controls: bool) -> Box<dyn AppPage> {
-        match self {
-            PageType::Root { title, input, display, header, bumper_a, bumper_b } => {
-                Box::new(RootPage::new(
-                    theme, touch_controls, title.to_string(), input.to_vec(), display.to_vec(),
-                    header.clone(), bumper_a.clone(), bumper_b.clone(),
-                ))
-            }
-            PageType::Both { title, inputs, display, header, bumper: _, next: _, flow_len: _ } => {
-                Box::new(RootPage::new(
-                    theme, touch_controls, title.to_string(), inputs.to_vec(), display.to_vec(),
-                    header.clone(), None, None,
-                ))
-            }
-            PageType::Display {
-                title, items,
-                offset: _,
-                header,
-                bumper: _,
-                next: _,
-                flow_len: _,
-            } => Box::new(RootPage::new(
-                theme, touch_controls, title.to_string(), vec![], items.to_vec(), header.clone(),
-                None, None,
-            )),
-            PageType::Input { title, item, header, bumper: _, next: _, flow_len: _ } => {
-                Box::new(RootPage::new(
-                    theme, touch_controls, title.to_string(), vec![item.clone()], vec![],
-                    header.clone(), None, None,
-                ))
-            }
-
-            PageType::Edit { .. }
-            | PageType::Form { .. }
-            | PageType::Review { .. }
-            | PageType::Success { .. }
-            | PageType::Messaging { .. }
-            | PageType::Photo { .. }
-            | PageType::Video { .. } => panic!("Not an accepted root type"),
-
-            PageType::EditAndDisplay { title, header, items, display, on_save, flow_len: _ } => {
-                Box::new(EditPage::root(
-                    theme, touch_controls, title.to_string(), header.clone(), items.clone(),
-                    display.clone(), on_save.clone(),
-                ))
             }
         }
     }

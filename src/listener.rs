@@ -41,7 +41,7 @@ impl Listener {
         let mut page_type = builder.build(ctx, theme);
         page_type.update(flow_len, next.clone());
         let page = if is_root {
-            page_type.build_root(theme, ctx.window.touch_controls)
+            page_type.build_root(theme, ctx.window.is_mobile)
         } else {
             page_type.build(ctx, theme)
         };
@@ -64,7 +64,7 @@ impl OnChange<()> for Listener {
         let mut page_type = self.builder.build(ctx, &self.theme);
         page_type.update(self.flow_len, self.next.clone());
         let mut page = if self.is_root {
-            page_type.build_root(&self.theme, ctx.window.touch_controls)
+            page_type.build_root(&self.theme, ctx.window.is_mobile)
         } else {
             page_type.build(ctx, &self.theme)
         };

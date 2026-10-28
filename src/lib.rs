@@ -57,15 +57,12 @@ pub trait App: Sized + 'static {
     fn roots(&self, ctx: &mut Context, theme: &Theme) -> Vec<RootInfo>;
     fn theme(&self) -> ChkTheme {ChkTheme::default()}
     fn keyboard(&self, _ctx: &Context, _theme: &Theme) -> Option<Box<dyn prism::drawable::Drawable>> {None}
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {vec![event]}
 
     fn build(self, ctx: &mut Context, assets: Assets) -> pelican_ui::interface::general::Interface {
         let theme = self.theme().to_pelican(assets);
         let keyboard = self.keyboard(ctx, &theme);
         let roots = self.roots(ctx, &theme).into_iter().map(|root| root.0).collect();
-        let app = std::rc::Rc::new(std::cell::RefCell::new(self));
-        let on_event = Box::new(move |ctx: &mut Context, event| app.borrow_mut().on_event(ctx, event));
-        pelican_ui::interface::general::Interface::new(ctx, &theme, roots, keyboard, on_event)
+        pelican_ui::interface::general::Interface::new(ctx, &theme, roots, keyboard)
     }
 }
 

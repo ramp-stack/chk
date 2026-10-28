@@ -2,11 +2,10 @@ use pelican_ui::{Callback, Context};
 use pelican_ui::navigation::{NavigationEvent, NavigationChanged, Flow as PelicanFlow, FlowContainer, AppPage};
 use pelican_ui::interface::general::{Content, FormEvent};
 use pelican_ui::theme::Theme;
-use prism::drawable::{Component, Drawable};
+use prism::drawable::Component;
 use ptsd::layout::Stack;
-use prism::events::{on_event, OnEvent, DynEvent, ListenFuture};
+use prism::events::{on_event, OnEvent, DynEvent, on_change, OnChange};
 
-use std::any::Any;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -46,7 +45,7 @@ impl Flow{
             Offset::Center
         );
 
-        Flow(vec![Page::Static(prompt), Page::Static(complete)])
+        Flow(vec![Page::Static(Box::new(prompt)), Page::Static(Box::new(complete))])
     }
 
     pub fn from_form(form: Form) -> Self {
@@ -67,16 +66,22 @@ impl Flow{
 
                 inputs.into_iter().rev().map(|input| {
                     let submit = submit.take();
-                    Page::Static(PageType::form(&input.title(), input.build(), input.validation(), submit.clone()))
+                    Page::Static(Box::new(PageType::form(
+                        &input.title(), input.build(), input.validation(), submit.clone(),
+                    )))
                 }).collect::<Vec<Page>>().into_iter().rev().for_each(|s| pages.push(s));
 
                 if let Some(review) = review {
-                    let review = Page::Static(PageType::review(&review.title, review.getter, on_submit.clone()));
+                    let review = Page::Static(Box::new(PageType::review(
+                        &review.title, review.getter, on_submit.clone(),
+                    )));
                     pages.push(review);
                 }
 
                 if let Some(success) = success {
-                    let success = Page::Static(PageType::success(&success.title, success.getter, submit.clone()));
+                    let success = Page::Static(Box::new(PageType::success(
+                        &success.title, success.getter, submit.clone(),
+                    )));
                     pages.push(success);
                 }
 
@@ -85,7 +90,9 @@ impl Flow{
             Form::Page {title, inputs, display, on_save} => {
                 let validations = inputs.iter().map(|i| i.validation()).collect::<Vec<_>>();
                 let items = inputs.into_iter().map(|i| i.build()).collect::<Vec<_>>();
-                let page = Page::Static(PageType::edit(&title, items.clone(), display.clone(), validations.clone(), on_save.clone()));
+                let page = Page::Static(Box::new(PageType::edit(
+                    &title, items.clone(), display.clone(), validations.clone(), on_save.clone(),
+                )));
                 Flow(vec![page])
             }
         }
@@ -123,22 +130,9 @@ impl Flow{
 }
 
 #[derive(Debug, Component, Clone)]
-#[listen]
 pub struct FlowWrapper(Stack, PelicanFlow, #[skip] bool);
 impl FlowWrapper {
     pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, true)}
-
-    fn listen(&mut self) -> ListenFuture<'_> {
-        if self.2 {Box::pin(async {(vec![], Box::new(()) as Box<dyn Any>)})}
-        else {Drawable::listen(&mut self.1)}
-    }
-
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        if self.2 {
-            self.2 = false;
-            self.refresh(ctx);
-        } else {Drawable::update(&mut self.1, ctx, path, update);}
-    }
 
     fn content(page: &dyn AppPage) -> Option<&Content> {
         if let Some(listener) = page.downcast_ref::<Listener>() {
@@ -182,6 +176,16 @@ impl FlowWrapper {
         } else if let Some(page) = page.downcast_mut::<EditPage>() {
             page.on_change(inputs);
         }
+    }
+}
+
+#[on_change(async {
+    if !self.2 {std::future::pending::<()>().await;}
+})]
+impl OnChange<()> for FlowWrapper {
+    fn on_change(&mut self, ctx: &mut Context, _: ()) {
+        self.2 = false;
+        self.refresh(ctx);
     }
 }
 

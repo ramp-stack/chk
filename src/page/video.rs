@@ -4,26 +4,26 @@ use pelican_ui::components::text::{Text, TextSize, TextStyle};
 use pelican_ui::interface::general::Header;
 use pelican_ui::theme::{Icons, Theme};
 use prism::drawable::{
-    Component, Drawable, Instruction, LayoutTree, RangeTree, Rect, shape::Shape, text::Align,
+    Component, Drawable, Instruction, LayoutTree, Rect, Shape, text::Align,
 };
 use prism::events::{ChildEvent, DynEvent, Event, MouseButton, MouseEvent, MouseState};
 use prism::hardware::{Media, Frame, Player};
 use prism::air::{Instance, Instances};
-use prism::events::{on_change, ListenFuture, OnChange};
+use prism::events::{on_change, on_event, ListenCallback, ListenFuture, OnChange, OnEvent};
 use ptsd::{emitters, events};
 use ptsd::display::Bin;
-use ptsd::layout::{Column, Offset, Padding, Row, Size, Stack};
+use ptsd::layout::{Column, Offset, Padding, Row, Size, Slider as SliderLayout, Stack};
 use ptsd::navigation::AppPage;
 use uuid::Uuid;
 
 use std::any::Any;
+use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
 use crate::FlowBuilder;
 use super::media::{Badge, Fit, FittedPhoto};
 
 #[derive(Debug, Component, Clone)]
-#[on_dyn_event]
 pub struct VideoPage {
     layout: Column,
     header: Header,
@@ -66,11 +66,10 @@ impl VideoPage {
         if let State::Waiting = self.state
             && let Some(bytes) = VideoClip::find(ctx, self.video.clip)
         {
-            let player =
-                Media::read(std::io::Cursor::new(bytes.as_slice())).and_then(|media| {
-                    let size = media.dimensions().ok_or("Media has no video track")?;
-                    Player::new(media).map(|player| (player, size))
-                });
+            let player = Media::read(std::io::Cursor::new(bytes)).and_then(|media| {
+                let size = media.video.dimensions().ok_or("Media has no video track")?;
+                ctx.hardware.player(media.player()).map(|player| (player, size))
+            });
             self.clips = None;
             self.state = match player {
                 Ok((player, size)) => {
@@ -89,11 +88,12 @@ impl VideoPage {
             State::Waiting => (BadgeKind::Loading, false, Duration::ZERO, duration),
             State::Unplayable => (BadgeKind::Unplayable, false, Duration::ZERO, duration),
             State::Ready { player, scrubbing } => {
-                let (position, duration, playing, error) = playback
-                    .map(|event| (event.position, event.duration, event.playing, event.error))
+                let (position, duration, playing) = playback
+                    .map(|event| (event.position, event.duration.unwrap(), event.playing))
                     .unwrap_or_else(|| {
-                        (player.position(), player.duration(), player.is_playing(), player.error())
+                        (player.position(), player.duration().unwrap(), player.is_playing())
                     });
+                let error = player.error();
                 let playing =
                     error.is_none() && (playing || scrubbing.is_some_and(|s| s.was_playing));
                 let badge = if error.is_some() {
@@ -143,7 +143,7 @@ impl VideoPage {
             Action::Toggle if player.is_playing() => player.stop(),
             Action::Toggle => player.start(),
             Action::Scrub(value, phase) => {
-                let duration = player.duration();
+                let duration = player.duration().unwrap();
                 let to = duration.mul_f64(value.clamp(0.0, 1.0) as f64);
                 match phase {
                     Phase::Start => {
@@ -169,15 +169,14 @@ impl VideoPage {
             }
         }
     }
+}
 
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
-        if let Some(VideoEvent(token, action)) = event.downcast_ref::<VideoEvent>()
-            && *token == self.token
-        {
-            self.act(*action);
-            return vec![];
-        }
-        vec![event]
+#[on_event]
+impl OnEvent<VideoEvent> for VideoPage {
+    fn on(&mut self, _ctx: &mut Context, event: VideoEvent) -> Vec<Box<dyn DynEvent>> {
+        if event.0 != self.token {return vec![Box::new(event)]}
+        self.act(event.1);
+        vec![]
     }
 }
 
@@ -251,20 +250,23 @@ impl Event for VideoEvent {
 #[derive(Debug, Clone)]
 struct VideoScreen(ScreenBody);
 impl Drawable for VideoScreen {
-    fn listen(&mut self) -> ListenFuture<'_> {Drawable::listen(&mut self.0)}
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        Drawable::update(&mut self.0, ctx, path, update);
-    }
-    fn size_range(&self) -> RangeTree { self.0.size_range() }
-    fn layout(&mut self, size: (f32, f32), range: &RangeTree) -> LayoutTree {
-        Drawable::layout(&mut self.0, size, range)
-    }
+    fn request_width(&mut self) -> (f32, f32) {self.0.request_width()}
+    fn request_height(&mut self, width: f32) -> (f32, f32) {self.0.request_height(width)}
+    fn layout(&mut self, size: (f32, f32)) -> LayoutTree {Drawable::layout(&mut self.0, size)}
     fn draw(&self, layout: &LayoutTree, offset: (f32, f32), bound: Rect) -> Vec<Instruction> {
         self.0.draw(layout, offset, bound)
     }
     fn event(&mut self, ctx: &mut Context, layout: &LayoutTree, event: Box<dyn DynEvent>) {
         // Badges are visual; pointer input belongs to the fitted player.
         self.0.1.event(ctx, &layout.1[0].1, event);
+    }
+    fn changed(&mut self) -> ListenFuture<'_> {
+        Box::pin(async move {
+            let callback = Component::listen(&mut self.0).await;
+            Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
+                callback(&mut target.downcast_mut::<Self>().unwrap().0, ctx);
+            }) as ListenCallback
+        })
     }
 }
 
@@ -284,7 +286,7 @@ impl Controls {
         Self {
             layout: Row::new(0.0, Offset::Center, Size::Fit, Padding(0.0, 0.0, 24.0, 0.0)),
             toggle: emitters::Button::new(Bin(
-                Stack(
+                Stack::new(
                     Offset::Center, Offset::Center, Size::Fit, Size::Fit,
                     Padding(16.0, 4.0, 6.0, 16.0),
                 ), Toggle::new(theme, token),
@@ -298,7 +300,7 @@ impl Controls {
     }
 
     fn content_layout(padding: Padding) -> Stack {
-        Stack(Offset::Center, Offset::Center, Size::Fit, Size::Fit, padding)
+        Stack::new(Offset::Center, Offset::Center, Size::Fit, Size::Fit, padding)
     }
 
     fn time(theme: &Theme, seconds: u64) -> Text {
@@ -307,16 +309,15 @@ impl Controls {
             0 => format!("{m}:{s:02}"),
             _ => format!("{h}:{m:02}:{s:02}"),
         };
-        Text::new(theme, &text, TextSize::Sm, TextStyle::Secondary, Align::Left, None)
+        Text::new(theme, &text, TextSize::Sm, TextStyle::Secondary, Align::Left, None).fit()
     }
 }
 
 #[derive(Debug, Component, Clone)]
-#[on_dyn_event]
 struct Toggle(Stack, Option<Icon>, Option<PauseBars>, #[skip] Uuid);
 impl Toggle {
     fn new(theme: &Theme, token: Uuid) -> Self {
-        let layout = Stack(
+        let layout = Stack::new(
             Offset::Center, Offset::Center, Size::Static(40.0), Size::Static(40.0),
             Padding::default(),
         );
@@ -330,12 +331,15 @@ impl Toggle {
         self.1 = (!playing).then(|| Icon::new(theme, Icons::Play, Some(color), 28.0));
         self.2 = playing.then(|| PauseBars::new(theme));
     }
+}
 
-    fn on_event(&mut self, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
-        if let Some(events::Button::Pressed(false)) = event.downcast_ref::<events::Button>() {
+#[on_event]
+impl OnEvent<events::Button> for Toggle {
+    fn on(&mut self, ctx: &mut Context, event: events::Button) -> Vec<Box<dyn DynEvent>> {
+        if let events::Button::Pressed(false) = event {
             ctx.emit(VideoEvent(self.3, Action::Toggle));
         }
-        vec![event]
+        vec![Box::new(event)]
     }
 }
 
@@ -346,7 +350,7 @@ impl PauseBars {
         let color = theme.colors().get(colors::Text::Heading);
         let bar = || {
             Bin(
-                Stack(
+                Stack::new(
                     Offset::Center, Offset::Center, Size::Static(5.0), Size::Static(18.0),
                     Padding::default(),
                 ), Rectangle::new(color, 1.5, None),
@@ -356,81 +360,65 @@ impl PauseBars {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Component, Clone)]
 struct Scrubber {
-    body: ScrubberBody,
-    value: f32,
-    dragging: bool,
-    token: Uuid,
+    layout: SliderLayout,
+    background: Bin<Stack, Rectangle>,
+    foreground: Bin<Stack, Rectangle>,
+    handle: Bin<Stack, Shape>,
+    #[skip] dragging: bool,
+    #[skip] token: Uuid,
 }
 impl Scrubber {
     fn new(theme: &Theme, token: Uuid) -> Self {
         let colors = theme.colors();
         let bar = |width: Size| {
-            Stack(Offset::Start, Offset::Center, width, Size::Static(4.0), Padding::default())
+            Stack::new(Offset::Start, Offset::Center, width, Size::Static(4.0), Padding::default())
         };
-        let body = ScrubberBody(
-            Stack(
-                Offset::Start, Offset::Center, Size::Fill, Size::Static(32.0), Padding::default(),
+        Self {
+            layout: SliderLayout::new(0.0, Size::Static(32.0)),
+            background: Bin(
+                bar(Size::Fill), Rectangle::new(colors.get(colors::Outline::Primary), 2.0, None),
             ),
-            Bin(bar(Size::Fill), Rectangle::new(colors.get(colors::Outline::Primary), 2.0, None)),
-            Bin(bar(Size::Static(0.0)), Rectangle::new(colors.get(colors::Brand), 2.0, None)),
-            Bin(
-                Stack(Offset::Start, Offset::Center, Size::Fill, Size::Fit, Padding::default()),
-                Circle::new(14.0, colors.get(colors::Brand), false),
-            ),
-        );
-        Self { body, value: 0.0, dragging: false, token }
-    }
-}
-
-impl Drawable for Scrubber {
-    fn listen(&mut self) -> ListenFuture<'_> {Drawable::listen(&mut self.body)}
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        Drawable::update(&mut self.body, ctx, path, update);
-    }
-    fn size_range(&self) -> RangeTree {
-        let mut range = self.body.size_range();
-        range.0.min_width = 14.0;
-        range
-    }
-    fn layout(&mut self, size: (f32, f32), range: &RangeTree) -> LayoutTree {
-        let width = range.0.clamp(size).0;
-        let x = width * self.value.clamp(0.0, 1.0);
-        self.body.2.get_layout().2 = Size::Static(x);
-        self.body.3.get_layout().0 = Offset::Static((x - 7.0).clamp(0.0, (width - 14.0).max(0.0)));
-        let range = self.size_range();
-        Drawable::layout(&mut self.body, size, &range)
-    }
-    fn draw(&self, layout: &LayoutTree, offset: (f32, f32), bound: Rect) -> Vec<Instruction> {
-        self.body.draw(layout, offset, bound)
-    }
-    fn event(&mut self, ctx: &mut Context, layout: &LayoutTree, event: Box<dyn DynEvent>) {
-        if let Some(MouseEvent { state, position }) = event.downcast_ref::<MouseEvent>() {
-            let phase = match (state, position) {
-                (MouseState::Pressed(MouseButton::Left), Some(_)) => {
-                    self.dragging = true;
-                    Some(Phase::Start)
-                }
-                (MouseState::Moved | MouseState::Scroll(..), Some(_)) if self.dragging => {
-                    Some(Phase::Move)
-                }
-                (MouseState::Released(MouseButton::Left), _) if self.dragging => {
-                    self.dragging = false;
-                    Some(Phase::End)
-                }
-                _ => None,
-            };
-            if let Some(phase) = phase {
-                if let Some((x, _)) = position {
-                    self.value = (*x / layout.0.0.max(1.0)).clamp(0.0, 1.0);
-                }
-                ctx.emit(VideoEvent(self.token, Action::Scrub(self.value, phase)));
-            }
+            foreground: Bin(bar(Size::Fill), Rectangle::new(colors.get(colors::Brand), 2.0, None)),
+            handle: Circle::new(14.0, colors.get(colors::Brand), false),
+            dragging: false, token,
         }
-        self.body.event(ctx, layout, event);
     }
 }
 
-#[derive(Debug, Component, Clone)]
-struct ScrubberBody(Stack, Bin<Stack, Rectangle>, Bin<Stack, Rectangle>, Bin<Stack, Shape>);
+impl Deref for Scrubber {
+    type Target = SliderLayout;
+    fn deref(&self) -> &Self::Target {&self.layout}
+}
+
+impl DerefMut for Scrubber {
+    fn deref_mut(&mut self) -> &mut Self::Target {&mut self.layout}
+}
+
+#[on_event]
+impl OnEvent<MouseEvent> for Scrubber {
+    fn on(&mut self, ctx: &mut Context, event: MouseEvent) -> Vec<Box<dyn DynEvent>> {
+        let phase = match (event.state, event.position) {
+            (MouseState::Pressed(MouseButton::Left), Some(_)) => {
+                self.dragging = true;
+                Some(Phase::Start)
+            }
+            (MouseState::Moved | MouseState::Scroll(..), Some(_)) if self.dragging => {
+                Some(Phase::Move)
+            }
+            (MouseState::Released(MouseButton::Left), _) if self.dragging => {
+                self.dragging = false;
+                Some(Phase::End)
+            }
+            _ => None,
+        };
+        if let Some(phase) = phase {
+            if let Some((x, _)) = event.position {
+                self.value = self.layout.position(x).clamp(0.0, 1.0);
+            }
+            ctx.emit(VideoEvent(self.token, Action::Scrub(self.value, phase)));
+        }
+        prism::events![event]
+    }
+}

@@ -17,7 +17,7 @@ use pelican_ui::components::{
     QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput,
 };
 pub use pelican_ui::components::Number;
-use pelican_ui::components::text::{ExpandableText, TextStyle, TextSize};
+use pelican_ui::components::text::{Text, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
@@ -33,12 +33,14 @@ use crate::form::State;
 use crate::flow::Flow;
 use crate::messages::ChatRoom;
 
+pub type InputAction = (String, Option<String>, Icons, Action);
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     Text {
         id: Uuid,
         label: String,
-        actions: Option<Vec<(String, Option<String>, Icons, Action)>>,
+        actions: Option<Vec<InputAction>>,
         show_label: bool,
         preset: Option<String>,
     },
@@ -56,7 +58,7 @@ pub enum Input {
         id: Uuid,
         label: String,
         items: Vec<(ListItem, Name)>,
-        actions: Option<Vec<(String, Option<String>, Icons, Action)>>,
+        actions: Option<Vec<InputAction>>,
     },
     QRCodeScanner {
         instructions: String,
@@ -86,14 +88,14 @@ impl Input {
 
     pub fn text(
         id: Uuid, label: &str, show_label: bool, preset: Option<String>,
-        actions: Option<Vec<(String, Option<String>, Icons, Action)>>,
+        actions: Option<Vec<InputAction>>,
     ) -> Self { Input::Text { id, label: label.to_string(), show_label, preset, actions } }
 
     pub fn avatar(content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
         Input::Avatar { content, flair, action }
     }
 
-    pub fn search(id: Uuid, label: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<(String, Option<String>, Icons, Action)>>) -> Self {
+    pub fn search(id: Uuid, label: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<InputAction>>) -> Self {
         Input::Search { id, label: label.to_string(), items, actions }
     }
 
@@ -101,7 +103,7 @@ impl Input {
         Input::QRCodeScanner { instructions: instructions.to_string(), alt, on_find }
     }
 
-    pub fn build(&self, theme: &Theme, touch_controls: bool) -> Option<Vec<Box<dyn Drawable>>> {
+    pub fn build(&self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text { id, show_label, label, preset, actions } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![Box::new(TextInput::new(
@@ -135,25 +137,25 @@ impl Input {
             Input::Currency { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::numerical(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Number { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::number(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Date { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::date(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Time { instructions } => {
                 let mut drawables: Vec<Box<dyn Drawable>> =
                     vec![Box::new(NumericalInput::time(theme, instructions))];
-                if touch_controls { drawables.push(Box::new(Keypad::new(theme))); }
+                if is_mobile { drawables.push(Box::new(Keypad::new(theme))); }
                 drawables
             }
             Input::Avatar { content, flair, action } => {
@@ -185,13 +187,13 @@ impl Input {
             Input::QRCodeScanner { instructions, alt, on_find } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![
                     Box::new(QRCodeScanner::new(theme, on_find.clone())),
-                    Box::new(ExpandableText::new(
+                    Box::new(Text::new(
                         theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center,
                         None,
                     )),
                 ];
                 if let Some((label, icon, action)) = alt.as_ref() {
-                    items.push(Box::new(ExpandableText::new(
+                    items.push(Box::new(Text::new(
                         theme, "or", TextSize::Md, TextStyle::Secondary, Align::Center, None,
                     )));
                     items.push(Box::new(QuickActions::new(
@@ -353,7 +355,7 @@ impl Display {
                 ))],
             },
             Display::Text { text, size, style, align } if !text.is_empty() => {
-                vec![Box::new(ExpandableText::new(theme, text, *size, *style, *align, None))]
+                vec![Box::new(Text::new(theme, text, *size, *style, *align, None))]
             }
             Display::Cta { label, data, instructions, actions } => vec![Box::new(DataItem::text(
                 theme, label, data.as_deref(), instructions,
@@ -402,14 +404,14 @@ impl Display {
                 vec![Box::new(NumericalInput::display_number(theme, number.clone(), instructions))]
             }
             Display::List { label, items, instructions, .. } => {
-                let items = items.into_iter().map(|i| i.build(&theme)).collect::<Vec<_>>();
+                let items = items.iter_mut().map(|i| i.build(theme)).collect::<Vec<_>>();
                 vec![Box::new(ListItemSection::new(
                     &theme.clone(), label.clone(), instructions.clone(), items,
                 ))]
             }
             Display::QRCode { data, instructions } => vec![
                 Box::new(QRCode::new(theme, data)),
-                Box::new(ExpandableText::new(
+                Box::new(Text::new(
                     theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None,
                 )),
             ],
@@ -426,7 +428,7 @@ impl Display {
             Display::Actions { actions, as_icons } => match as_icons {
                 true => {
                     let items = actions
-                        .into_iter()
+                        .iter_mut()
                         .map(|ActionItem(action, _, _, icon)| {
                             let action: Box<dyn Callback> = action.get();
                             (*icon, action)
@@ -438,7 +440,7 @@ impl Display {
                     vec![Box::new(QuickActions::new(
                         theme, Offset::Start,
                         actions
-                            .into_iter()
+                            .iter_mut()
                             .map(|ActionItem(action, label, _, icon)| {
                                 let on_click: Box<dyn Callback> = action.get();
                                 ActionData {
@@ -549,9 +551,9 @@ impl Action {
             ctx.emit(TextInputEvent::Set { id, value });
         });
         Action::Flow {
-            flow: Flow::new(vec![Page::Static(crate::PageType::scan_qr(
+            flow: Flow::new(vec![Page::Static(Box::new(crate::PageType::scan_qr(
                 instructions, None, on_find,
-            ))]),
+            )))]),
         }
     }
 
@@ -565,7 +567,7 @@ impl Action {
         let profile = profile.pending();
         let avatar = profile.avatar.clone();
         let username = profile.username.clone();
-        let name = profile.name.unwrap().clone();
+        let name = profile.name.unwrap();
         Action::flow(Flow::action_target(
             ("block", Action::Block { name }),
             "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger),
@@ -576,7 +578,7 @@ impl Action {
         let profile = profile.pending();
         let avatar = profile.avatar.clone();
         let username = profile.username.clone();
-        let name = profile.name.unwrap().clone();
+        let name = profile.name.unwrap();
         Action::flow(Flow::action_target(
             ("unblock", Action::Unblock { name }),
             "unblocked", &username, avatar,
@@ -629,7 +631,7 @@ impl Action {
             }
 
             Action::Message { name } => {
-                let recipient = name.clone();
+                let recipient = *name;
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     let instance = ChatRoom::create(ctx, vec![recipient]);
                     let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
@@ -638,24 +640,24 @@ impl Action {
             }
 
             Action::ChooseSearch { name } => {
-                let name = name.clone();
+                let name = *name;
                 Box::new(move |ctx: &mut Context, _: &Theme| {
-                    ctx.emit(SearchbarEvent::Select(name.clone()))
+                    ctx.emit(SearchbarEvent::Select(name))
                 })
             }
 
             Action::Block { name } => {
-                let name = name.clone();
+                let name = *name;
                 Box::new(move |ctx: &mut Context, _: &Theme| {
-                    let mut block = Block::create(ctx, name.clone());
+                    let mut block = Block::create(ctx, name);
                     block.send(BlockAction::Block);
                 })
             }
 
             Action::Unblock { name } => {
-                let name = name.clone();
+                let name = *name;
                 Box::new(move |ctx: &mut Context, _: &Theme| {
-                    let mut block = Block::create(ctx, name.clone());
+                    let mut block = Block::create(ctx, name);
                     block.send(BlockAction::Unblock);
                 })
             }

@@ -35,7 +35,7 @@ impl StackPage {
         flow_len: usize,
     ) -> Self {
         let offset = item.offset();
-        let item = item.build(theme, ctx.window.touch_controls)
+        let item = item.build(theme, ctx.window.is_mobile)
             .into_iter().flatten().collect();
         StackPage::new(ctx, theme, title, item, offset, header, bumper, next, flow_len)
     }
@@ -48,7 +48,7 @@ impl StackPage {
     ) -> Self {
         let mut items = inputs
             .into_iter()
-            .filter_map(|di| di.build(theme, ctx.window.touch_controls))
+            .filter_map(|di| di.build(theme, ctx.window.is_mobile))
             .flatten()
             .collect::<Vec<Box<dyn Drawable>>>();
         display.into_iter().for_each(|mut di| {

@@ -41,7 +41,7 @@ pub enum NumberVariant {
 #[derive(Debug, Clone)]
 pub enum Form {
     Flow {
-        theme: Theme,
+        theme: Box<Theme>,
         inputs: Vec<FormItem>,
         review: Option<Review>,
         success: Option<Success>,
@@ -59,7 +59,7 @@ impl Form {
     pub fn flow(theme: &Theme, inputs: Vec<FormItem>, review: Option<Review>, success: Option<Success>, on_submit: Box<dyn FormSubmit>) -> Self {
         Form::Flow {
             inputs,
-            theme: theme.clone(),
+            theme: Box::new(theme.clone()),
             review,
             success,
             on_submit,

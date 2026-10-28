@@ -49,6 +49,14 @@ wgpu
 
 Because CHK operates at the application-description layer, it can support multiple Prism-based UI frameworks without requiring developers to change how their application logic is defined.
 
+## Application events
+
+`App::build` constructs the interface without retaining the application in an event callback.
+Handle application events with `#[on_event] impl OnEvent<E>` on the component that owns the
+behavior. Pages handle local actions; an application-owned root wrapping the built interface
+can handle actions shared by multiple pages. That root receives events before Pelican, and
+returns the events that should continue to the interface.
+
 ## Refreshing pages
 
 `Page::watching` subscribes to Air changes through Prism's `OnChange`. `Watch::contract`
