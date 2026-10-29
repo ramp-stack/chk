@@ -3,7 +3,7 @@
 ## Frontend development setup
 
 This development checkout combines CHK 2.0.0 with the sibling `pelican_ui` 3.0.0 and
-`ptsd` 0.1.3 checkouts to retain Orange's local UI changes. Backend dependencies use
+`ptsd` 0.2.0 checkouts to retain Orange's local UI changes. Backend dependencies use
 published crates. Keep these path dependencies until the local changes have been migrated
 to newer frontend releases. Follow the [Orange setup instructions](https://github.com/ramp-stack/orange#frontend-setup)
 for Cargo Piston, the shared team identity, and build troubleshooting.

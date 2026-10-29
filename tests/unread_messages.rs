@@ -329,7 +329,7 @@ fn group_info_renders_controls_and_edits_do_not_overwrite_an_unchanged_remote_fi
     let labels: Vec<_> = draw_page(&mut view).into_iter().filter_map(|i| {
         if let Item::Text(text) = i.item {Some(text.spans.iter().map(|s| s.text.clone()).collect::<String>())} else {None}
     }).collect();
-    for label in ["Group info", "This group has 3 members.", "Add members", "Leave group"] {
+    for label in ["Group info", "Group members", "This group has 3 members.", "Add Members", "Leave group"] {
         assert!(labels.iter().any(|text| text == label), "missing {label}: {labels:?}");
     }
     assert!(!labels.iter().any(|text| text == "Friends" || text == "Group message"));

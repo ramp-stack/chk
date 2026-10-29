@@ -1276,12 +1276,11 @@ dependencies = [
 
 [[package]]
 name = "ptsd2"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "downcast-rs",
  "dyn-clone",
- "futures",
  "hex",
  "include_dir",
  "prism2",
