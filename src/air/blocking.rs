@@ -32,8 +32,6 @@ impl Contract for Block {
             BlockAction::Block => self.is_blocked = true,
             BlockAction::Unblock => self.is_blocked = false,
         }
-        
-        ()
     }
 }
 

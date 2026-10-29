@@ -73,21 +73,10 @@ impl OnEvent<EditSaved> for EditPage {
 impl AppPage for EditPage {}
 impl EditPage {
     pub fn new(
-        theme: &Theme, is_mobile: bool, title: String,
-        mut header: Option<(Icons, Box<dyn FlowBuilder>)>, input: Vec<Input>, display: Vec<Display>,
+        theme: &Theme, is_mobile: bool, title: String, input: Vec<Input>, display: Vec<Display>,
         validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
-        let header = header.as_mut().map(|(icon, flow)| {
-            let mut flow = flow.clone();
-            (
-                icon.clone(),
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
-                }) as Box<dyn Callback>,
-            )
-        });
-
-        let header = Header::stack(theme, &title, header);
+        let header = Header::stack(theme, &title, None);
         let content = Self::content(theme, is_mobile, input, display, validations);
 
         let bumper = PelicanBumper::stack(
@@ -108,7 +97,7 @@ impl EditPage {
         let header = header.as_mut().map(|(icon, flow)| {
             let mut flow = flow.clone();
             (
-                icon.clone(),
+                *icon,
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
                 }) as Box<dyn Callback>,
@@ -138,7 +127,7 @@ impl EditPage {
         let header = header.as_mut().map(|(icon, flow)| {
             let mut flow = flow.clone();
             (
-                icon.clone(),
+                *icon,
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
                 }) as Box<dyn Callback>,

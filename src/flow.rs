@@ -45,7 +45,7 @@ impl Flow{
             Offset::Center
         );
 
-        Flow(vec![Page::Static(prompt), Page::Static(complete)])
+        Flow(vec![Page::Static(Box::new(prompt)), Page::Static(Box::new(complete))])
     }
 
     pub fn from_form(form: Form) -> Self {
@@ -66,16 +66,22 @@ impl Flow{
 
                 inputs.into_iter().rev().map(|input| {
                     let submit = submit.take();
-                    Page::Static(PageType::form(&input.title(), input.build(), input.validation(), submit.clone()))
+                    Page::Static(Box::new(PageType::form(
+                        &input.title(), input.build(), input.validation(), submit.clone(),
+                    )))
                 }).collect::<Vec<Page>>().into_iter().rev().for_each(|s| pages.push(s));
 
                 if let Some(review) = review {
-                    let review = Page::Static(PageType::review(&review.title, review.getter, on_submit.clone()));
+                    let review = Page::Static(Box::new(PageType::review(
+                        &review.title, review.getter, on_submit.clone(),
+                    )));
                     pages.push(review);
                 }
 
                 if let Some(success) = success {
-                    let success = Page::Static(PageType::success(&success.title, success.getter, submit.clone()));
+                    let success = Page::Static(Box::new(PageType::success(
+                        &success.title, success.getter, submit.clone(),
+                    )));
                     pages.push(success);
                 }
 
@@ -84,7 +90,9 @@ impl Flow{
             Form::Page {title, inputs, display, on_save} => {
                 let validations = inputs.iter().map(|i| i.validation()).collect::<Vec<_>>();
                 let items = inputs.into_iter().map(|i| i.build()).collect::<Vec<_>>();
-                let page = Page::Static(PageType::edit(&title, items.clone(), display.clone(), validations.clone(), on_save.clone()));
+                let page = Page::Static(Box::new(PageType::edit(
+                    &title, items.clone(), display.clone(), validations.clone(), on_save.clone(),
+                )));
                 Flow(vec![page])
             }
         }

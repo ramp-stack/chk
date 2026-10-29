@@ -165,7 +165,7 @@ impl MessagesPage {
             }
             (true, _) => Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                 (Flow::new(vec![
-                    Page::Static(GroupMessageInfoPage::new(ctx, profiles.clone()))
+                    Page::Static(Box::new(GroupMessageInfoPage::new(ctx, profiles.clone())))
                 ]).build(ctx, theme))(ctx, theme);
             }) as Box<dyn Callback>),
         };
@@ -198,7 +198,7 @@ impl MessagesPage {
                     MessageContent::Video(video) => PageType::video(video.clone(), Some(MessageDetails::icon(room.clone(), tapped.clone()))),
                     _ => MessageDetails::new(ctx, theme, room.clone(), tapped.clone()),
                 };
-                (Flow::new(vec![Page::Static(page)]).build(ctx, theme))(ctx, theme);
+                (Flow::new(vec![Page::Static(Box::new(page))]).build(ctx, theme))(ctx, theme);
             })
         }).collect::<Vec<_>>();
 
@@ -240,7 +240,9 @@ impl MessageDetails {
 
     pub fn icon(room: Instance<ChatRoom>, message: Message) -> (Icons, Box<dyn FlowBuilder>) {
         (Icons::Info, Box::new(move |ctx: &mut Context, theme: &Theme| {
-            Flow::new(vec![Page::Static(Self::page(ctx, theme, room.clone(), message.clone(), 2))])
+            Flow::new(vec![Page::Static(Box::new(Self::page(
+                ctx, theme, room.clone(), message.clone(), 2,
+            )))])
         }))
     }
 
@@ -259,7 +261,7 @@ impl MessageDetails {
             false => "Received message",
         };
 
-        PageType::display(&title, vec![
+        PageType::display(title, vec![
             Display::messages(ctx, theme, vec![bubble]),
         ], None, bumper, Offset::Start)
     }

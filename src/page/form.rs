@@ -23,7 +23,7 @@ impl AppPage for FormPage {}
 impl FormPage {
     pub fn new(
         theme: &Theme, is_mobile: bool, title: String, item: Input,
-        next: Option<NavFn>, _flow_len: usize, validate: Box<dyn ValidationFn>,
+        next: Option<NavFn>, validate: Box<dyn ValidationFn>,
         on_submit: Option<Box<dyn FormSubmit>>,
     ) -> Self {
         let header = Header::stack(theme, &title, None);

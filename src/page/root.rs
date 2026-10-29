@@ -6,7 +6,8 @@ use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 
 use crate::{Page, FlowBuilder, PageType};
-use crate::items::{Input, Display};
+use crate::page::EditPage;
+use crate::items::Display;
 
 pub struct Root(pub Page);
 impl Root {
@@ -15,7 +16,7 @@ impl Root {
         bumper_a: Option<(String, Box<dyn FlowBuilder>)>,
         bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
     ) -> Self {
-        Root(Page::Static(PageType::root(title, vec![], items, header, bumper_a, bumper_b)))
+        Root(Page::Static(Box::new(PageType::root(title, vec![], items, header, bumper_a, bumper_b))))
     }
 
     pub fn custom(page: Page) -> Self { Root(page) }
@@ -25,13 +26,31 @@ impl Root {
 pub struct RootPage(Stack, PelicanPage);
 
 impl AppPage for RootPage {}
-impl RootPage {
-    pub fn new(
-        theme: &Theme, is_mobile: bool, title: String, mut input: Vec<Input>,
-        mut display: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>,
-        mut bumper_a: Option<(String, Box<dyn FlowBuilder>)>,
-        mut bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
-    ) -> Self {
+impl PageType {
+    pub fn build_root(&self, theme: &Theme, is_mobile: bool) -> Box<dyn AppPage> {
+        let (title, mut input, mut display, header, mut bumper_a, mut bumper_b) = match self.clone() {
+            Self::Root { title, input, display, header, bumper_a, bumper_b } => {
+                (title, input, display, header, bumper_a, bumper_b)
+            }
+            Self::Both { title, inputs, display, header, .. } => {
+                (title, inputs, display, header, None, None)
+            }
+            Self::Display { title, items, header, .. } => {
+                (title, vec![], items, header, None, None)
+            }
+            Self::Input { title, item, header, .. } => {
+                (title, vec![item], vec![], header, None, None)
+            }
+            Self::EditAndDisplay { title, header, items, display, on_save, .. } => {
+                return Box::new(EditPage::root(
+                    theme, is_mobile, title, header, items, display, on_save,
+                ));
+            }
+            Self::Edit { .. } | Self::Form { .. } | Self::Review { .. } | Self::Success { .. }
+            | Self::Messaging { .. } | Self::Photo { .. } | Self::Video { .. } => {
+                panic!("Not an accepted root type");
+            }
+        };
         let length = input.len() + display.len();
         let offset = match display.first() {
             Some(Display::List { .. }) => Offset::Start,
@@ -93,6 +112,6 @@ impl RootPage {
                 Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
             ), bumper,
         );
-        RootPage(Stack::default(), page)
+        Box::new(RootPage(Stack::default(), page))
     }
 }

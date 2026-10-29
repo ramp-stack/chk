@@ -31,7 +31,7 @@ impl Editor {
         let page = match variant {
             0 => EditPage::root(&theme, true, "Edit".into(), None, vec![item], vec![], save),
             1 => EditPage::edit_and_display(&theme, true, "Edit".into(), None, vec![item], vec![], save),
-            _ => EditPage::new(&theme, true, "Edit".into(), None,
+            _ => EditPage::new(&theme, true, "Edit".into(),
                 vec![item.build()], vec![], vec![item.validation()], save),
         };
         let view: Box<dyn Drawable> = if variant == 0 {Box::new(page)} else {

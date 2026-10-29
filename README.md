@@ -2,10 +2,10 @@
 
 ## Frontend development setup
 
-Clone `orange`, `chk`, `pelican_ui`, and `ptsd` into sibling directories and update
-their default branches together. Frontend dependencies use these local checkouts;
-backend dependencies use published crates. Follow the
-[Orange setup instructions](https://github.com/ramp-stack/orange#frontend-setup)
+This development checkout combines CHK 2.0.0 with the sibling `pelican_ui` 2.2.0 and
+`ptsd` 0.1.3 checkouts to retain Orange's local UI changes. Backend dependencies use
+published crates. Keep these path dependencies until the local changes have been migrated
+to newer frontend releases. Follow the [Orange setup instructions](https://github.com/ramp-stack/orange#frontend-setup)
 for Cargo Piston, the shared team identity, and build troubleshooting.
 
 CHK is a Rust application-building layer designed to sit on top of UI systems built with **Prism**. Rather than requiring developers to construct user interfaces manually, CHK allows builders to describe the **data they want to collect or display**, and automatically generates the corresponding application interface.

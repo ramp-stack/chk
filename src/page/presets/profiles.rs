@@ -22,7 +22,7 @@ impl ProfilePage {
             if let Some(State::Text(result)) = objects.get(2) {
                 p.send(ProfileAction::ChangeNotes(result.to_string()));
             }
-            if let Some(State::Avatar(result)) = objects.get(0) {
+            if let Some(State::Avatar(result)) = objects.first() {
                 p.send(ProfileAction::ChangeAvatar(result.clone()));
             }
             FormComplete::None
@@ -39,10 +39,10 @@ impl ProfilePage {
                         Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy,
                     ),
                     ActionItem::new(
-                        Action::flow(Flow::new(vec![Page::Static(PageType::display_qr_code(
+                        Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
                             "Share name", &my_name.to_string(), "Scan to share orange name.",
                             is_mobile,
-                        ))])), "Display QR Code", Icons::QrCode,
+                        )))])), "Display QR Code", Icons::QrCode,
                     ),
                 ],
             )]
@@ -78,7 +78,7 @@ impl ProfilePage {
 
 pub struct ProfileView;
 impl ProfileView {
-    pub fn new(ctx: &mut Context, profile: Instance<Profile>) -> PageType {
+    pub fn build(ctx: &mut Context, profile: Instance<Profile>) -> PageType {
         let p = profile.clone();
         let profile = profile.pending().clone();
         let profile_name = profile.name.unwrap();
@@ -110,10 +110,10 @@ impl ProfileView {
                             Action::copy(&profile_name.to_string()), "Copy", "Copied", Icons::Copy,
                         ),
                         ActionItem::new(
-                            Action::flow(Flow::new(vec![Page::Static(PageType::display_qr_code(
+                            Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
                                 "Share name", &profile_name.to_string(),
                                 "Scan to share orange name.", ctx.window.is_mobile,
-                            ))])), "Display QR Code", Icons::QrCode,
+                            )))])), "Display QR Code", Icons::QrCode,
                         ),
                     ],
                 ),
@@ -121,9 +121,9 @@ impl ProfileView {
             Some((
                 Icons::Edit,
                 Box::new(move |ctx: &mut Context, _: &Theme| {
-                    Flow::new(vec![Page::Static(ProfilePage::editing(
+                    Flow::new(vec![Page::Static(Box::new(ProfilePage::editing(
                         is_me, p.clone(), ctx.window.is_mobile,
-                    ))])
+                    )))])
                 }),
             )), Bumper::None, Offset::Start,
         )

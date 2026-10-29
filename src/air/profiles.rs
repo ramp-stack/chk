@@ -48,8 +48,6 @@ impl Contract for Profile {
                 }
             }
         }
-
-        ()
     }
 }
 

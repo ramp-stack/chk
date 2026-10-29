@@ -3,7 +3,9 @@ use pelican_ui::components::{Circle, Icon, Rectangle, Video, VideoClip};
 use pelican_ui::components::text::{Text, TextSize, TextStyle};
 use pelican_ui::interface::general::Header;
 use pelican_ui::theme::{Icons, Theme};
-use prism::drawable::{Component, Drawable, Instruction, LayoutTree, Rect, Shape, text::Align};
+use prism::drawable::{
+    Component, Drawable, Instruction, LayoutTree, Rect, Shape, text::Align,
+};
 use prism::events::{ChildEvent, DynEvent, Event, MouseButton, MouseEvent, MouseState};
 use prism::hardware::{Media, Frame, Player};
 use prism::air::{Instance, Instances};
