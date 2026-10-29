@@ -31,7 +31,7 @@ impl Activity {
 
 impl TypingPublisher {
     pub fn edit(&mut self, ctx: &mut Context, room: &Instance<ChatRoom>, nonempty: bool) {
-        if !nonempty {self.stop(); return;}
+        if !nonempty || !room.pending().members.contains(&ctx.air.me()) {self.stop(); return;}
         self.idle.reset(Duration::from_secs(3));
         if let Some(active) = self.activity.edit(Instant::now(), true) {
             let instance = self.instance.get_or_insert_with(|| {
@@ -98,14 +98,15 @@ impl TypingPanel {
     fn refresh(&mut self, ctx: &mut Context) {
         let room = self.room.pending();
         let me = ctx.air.me();
-        let group = room.members.iter().filter(|member| **member != me).count() > 1;
+        let group = room.is_group();
         let now = TypingState::now();
         let mut shown = self.feed.watch.get(ctx).into_iter().filter_map(|instance| {
             let state = instance.pending();
             if state.room != self.room.id() || state.author == me || !room.members.contains(&state.author)
                 || Block::did_i_block(ctx, state.author) || Block::am_i_blocked(ctx, state.author) {return None;}
             // AIR message timestamps are nanoseconds; typing timestamps are milliseconds.
-            let sent = room.messages(me).filter(|message| message.author == state.author)
+            let sent = room.messages(me).filter(|message| message.author == state.author
+                && !matches!(message.body, crate::messages::MessageContent::System(_)))
                 .map(|message| message.timestamp / 1_000_000).max();
             state.is_typing(now, sent).then(|| {
                 (state.author, Profile::from_name(ctx, state.author).pending().username.clone())

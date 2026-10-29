@@ -244,6 +244,7 @@ pub enum Display {
     Image { image: String, size: (f32, f32) },
     Cta { label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem> },
     Table { label: String, items: Vec<TableItem>, actions: Option<Vec<ActionItem>> },
+    DataList { label: String, instructions: Option<String>, items: Vec<ListItem>, actions: Option<Vec<ActionItem>> },
     Currency { amount: Number, instructions: String },
     Number { number: Number, instructions: String },
     List { label: Option<String>, items: Vec<ListItem>, instructions: Option<String> },
@@ -307,6 +308,13 @@ impl Display {
 
     pub fn table(label: &str, items: Vec<TableItem>, actions: Option<Vec<ActionItem>>) -> Self {
         Display::Table { label: label.to_string(), items, actions }
+    }
+
+    /// List rows inside a data item, with optional instructions and quick actions.
+    pub fn data_list(label: &str, instructions: Option<&str>, items: Vec<ListItem>, actions: Option<Vec<ActionItem>>) -> Self {
+        Display::DataList {
+            label: label.to_string(), instructions: instructions.map(str::to_string), items, actions,
+        }
     }
 
     pub fn qr_code(data: &str, instructions: &str) -> Self {
@@ -397,6 +405,16 @@ impl Display {
                     actions,
                 ))]
             }
+            Display::DataList { label, instructions, items, actions } => {
+                let actions = actions.as_ref().map(|actions| actions.iter()
+                    .map(|ActionItem(action, label, active, icon)| ActionData {
+                        label: label.clone(), active: active.clone(), icon: *icon, on_click: action.get(),
+                    }).collect());
+                vec![Box::new(DataItem::list(
+                    theme, label, instructions.as_deref(),
+                    items.iter().map(|item| item.build(theme)).collect(), actions,
+                ))]
+            }
             Display::Currency { amount, instructions } => vec![Box::new(
                 NumericalInput::display_currency(theme, amount.clone(), instructions),
             )],
@@ -416,13 +434,13 @@ impl Display {
                 )),
             ],
             Display::Avatar { content, purpose } => {
-                let (style, outline) = match purpose {
-                    AvatarPurpose::None => (None, false),
-                    AvatarPurpose::Custom { icon, style } => (Some((*icon, *style)), true),
+                let style = match purpose {
+                    AvatarPurpose::None => None,
+                    AvatarPurpose::Custom { icon, style } => Some((*icon, *style)),
                 };
 
                 vec![Box::new(Avatar::new(
-                    theme, content.clone(), style, outline, AvatarSize::Xxl, None,
+                    theme, content.clone(), style, AvatarSize::Xxl, None,
                 ))]
             }
             Display::Actions { actions, as_icons } => match as_icons {
@@ -511,7 +529,7 @@ impl ListItem {
         });
 
         let avatar = avatar.map(|content| {
-            Avatar::new(theme, content, None, false, AvatarSize::Md, None)
+            Avatar::new(theme, content, None, AvatarSize::Md, None)
         });
         PelicanListItem::new(
             theme, avatar, ListItemInfoLeft::new(&title, Some(&subtitle), None, None).with_badge(badge),
@@ -742,7 +760,7 @@ impl AvatarInput {
         });
         Self {
             layout: Stack::default(),
-            avatar: Avatar::new(theme, content, flair, false, AvatarSize::Xxl, on_click),
+            avatar: Avatar::new(theme, content, flair, AvatarSize::Xxl, on_click),
             id,
             picked: None,
             form: None,
@@ -775,7 +793,7 @@ impl OnChange<prism::hardware::PickResult<Image>> for AvatarInput {
     fn on_change(&mut self, ctx: &mut Context, result: prism::hardware::PickResult<Image>) {
         self.picked = None;
         if let Ok(image) = result {
-            self.avatar.set_content(AvatarContent::Image(image));
+            self.avatar.set_content(AvatarContent::image(image));
             if let Some(form) = self.form { ctx.emit(FormEvent::Refresh(form)); }
         }
     }

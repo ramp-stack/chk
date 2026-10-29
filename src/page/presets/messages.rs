@@ -17,6 +17,7 @@ use crate::closure::FlowBuilder;
 
 use prism::air::Instance;
 use super::typing::{TypingPanel, TypingPublisher};
+use super::groups::GroupMessageInfoPage;
 
 #[derive(Debug, Component, Clone)]
 pub struct MessagesPage {
@@ -69,8 +70,9 @@ impl OnEvent<ptsd::events::TextInput> for MessagesPage {
     if !self.acknowledge {std::future::pending::<()>().await;}
 })]
 impl OnChange<()> for MessagesPage {
-    fn on_change(&mut self, _: &mut Context, _: ()) {
+    fn on_change(&mut self, ctx: &mut Context, _: ()) {
         self.acknowledge = false;
+        if !self.room.pending().members.contains(&ctx.air.me()) {return;}
         let unread = {
             let reads = self.reads.pending();
             self.displayed.iter().copied().filter(|id| !reads.read_flag(*id)).collect::<Vec<_>>()
@@ -104,6 +106,7 @@ impl OnEvent<NavigationChanged> for MessagesPage {
 impl OnEvent<SendEvent> for MessagesPage {
     fn on(&mut self, ctx: &mut Context, event: SendEvent) -> Vec<Box<dyn DynEvent>> {
         self.typing.stop();
+        if self.is_blocked || !self.room.pending().members.contains(&ctx.air.me()) {return vec![];}
         match &event {
             SendEvent::Sticker(sticker) => {self.room.send(ChatRoomAction::SendSticker(sticker.clone()));},
             SendEvent::Gif(gif) => {self.room.send(ChatRoomAction::SendGif(gif.clone()));},
@@ -123,6 +126,8 @@ impl MessagesPage {
     pub fn new(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>, flow_len: usize ) -> Self {
         let room_data = room.pending().clone();
         let my_name = ctx.air.me();
+        let is_group = room_data.is_group();
+        let has_left = !room_data.members.contains(&my_name);
         let reads = RoomReadState::open(ctx, room.id());
         let displayed = room_data.messages(my_name).filter(|message| message.author != my_name)
             .map(|message| message.id).collect();
@@ -132,29 +137,28 @@ impl MessagesPage {
             .filter(|p| p.pending().name != Some(my_name))
             .collect::<Vec<_>>();
 
-        let did_i_block = if profiles.len() == 1 {
+        let did_i_block = if !is_group && profiles.len() == 1 {
             let profile = profiles[0].pending();
             Block::did_i_block(ctx, profile.name.unwrap())
                 .then_some(profile.username.to_string())
         } else {None};
 
-        let am_i_blocked = if profiles.len() == 1 {
+        let am_i_blocked = if !is_group && profiles.len() == 1 {
             let profile = profiles[0].pending();
             Block::am_i_blocked(ctx, profile.name.unwrap())
                 .then_some(profile.username.to_string())
         } else {None};
 
-        let is_blocked = did_i_block.is_some() || am_i_blocked.is_some();
+        let is_blocked = has_left || did_i_block.is_some() || am_i_blocked.is_some();
 
         let deref_profiles = profiles.iter_mut()
             .map(|p| (*p.pending()).clone())
             .collect::<Vec<Profile>>();
 
-        let is_group = deref_profiles.len() > 1;
-
         let pel_profiles = deref_profiles.iter()
             .map(|p| p.to_pel()).collect::<Vec<_>>();
 
+        let info_room = room.clone();
         let info = match (is_group, profiles.first().cloned()) {
             (false, None) => None,
             (false, Some(profile)) => {
@@ -165,17 +169,25 @@ impl MessagesPage {
             }
             (true, _) => Some(Box::new(move |ctx: &mut Context, theme: &Theme| {
                 (Flow::new(vec![
-                    Page::Static(Box::new(GroupMessageInfoPage::new(ctx, profiles.clone())))
+                    GroupMessageInfoPage::page(info_room.clone())
                 ]).build(ctx, theme))(ctx, theme);
             }) as Box<dyn Callback>),
         };
 
         let title = room_data.name(ctx);
-        let header = Header::messaging(theme, title, pel_profiles, flow_len, info);
+        let mut header = Header::messaging(theme, title.clone(), pel_profiles, flow_len, info);
+        if is_group {
+            use pelican_ui::components::{avatar::{Avatar, AvatarSize}, text::{Text, TextSize, TextStyle}};
+            use prism::drawable::text::Align;
+            header.center = Box::new(ptsd::display::Bin(ptsd::layout::Column::center(8.0), (
+                Avatar::new(theme, room_data.group_details().photo, None, AvatarSize::Sm, None),
+                Text::new(theme, &title, TextSize::H4, TextStyle::Heading, Align::Center, Some(1)),
+            )));
+        }
 
         let mut room_taken = room.clone();
 
-        let bumper = match (did_i_block, am_i_blocked) {
+        let bumper = if has_left {PelicanBumper::alert(theme, "You left this group.")} else {match (did_i_block, am_i_blocked) {
             (None, None) => PelicanBumper::input(theme,
                 "Message...",
                 move |_ctx: &mut Context, val: &mut String| {
@@ -187,7 +199,7 @@ impl MessagesPage {
             ),
             (_, Some(username)) => PelicanBumper::alert(theme, &format!("{} blocked you.", username)),
             (Some(username), _) => PelicanBumper::alert(theme, &format!("You blocked {}.", username))
-        };
+        }};
 
         let messages = room_data.messages(my_name).map(|message| {
             let room = room.clone();
@@ -264,24 +276,5 @@ impl MessageDetails {
         PageType::display(title, vec![
             Display::messages(ctx, theme, vec![bubble]),
         ], None, bumper, Offset::Start)
-    }
-}
-
-pub struct GroupMessageInfoPage;
-impl GroupMessageInfoPage {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(ctx: &mut Context, profiles: Vec<Instance<Profile>>) -> PageType {
-        let items = profiles.clone().into_iter().flat_map(|profile| {
-            let mut p = profile.clone();
-            let deref = profile.pending();
-            if deref.name.unwrap() != ctx.air.me() {
-                let view_contact = Flow::new(vec![Page::profile(ctx, &mut p)]);
-                Some(crate::ListItem::avatar(deref.avatar.clone(), &deref.username, &deref.name(), None, Some(view_contact)))
-            } else {None}
-        }).collect::<Vec<crate::ListItem>>();
-        PageType::display("Group members", vec![
-            Display::instructions(&format!("This group has {} members.", profiles.len())),
-            Display::list(None, items, None),
-        ], None, Bumper::None, Offset::Start)
     }
 }

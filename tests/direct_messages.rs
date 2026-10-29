@@ -147,3 +147,21 @@ fn self_messages_use_a_stable_id_including_empty_recipient_input() {
     assert_eq!(ChatRoom::create(&mut ctx, vec![]).id(), first.id());
     assert_eq!(air.created.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn adding_members_deduplicates_and_a_shrunken_group_is_never_reused_as_a_dm() {
+    let (air, mut ctx) = MemoryAir::new();
+    let [me, other, third] = names();
+    let mut room = ChatRoom::create(&mut ctx, vec![other, third]);
+    let stored = air.rooms.lock().unwrap()[&room.id()].clone();
+    stored.room.lock().unwrap().apply(ChatRoomAction::Leave, metadata(third));
+    assert_eq!(room.pending().members, vec![me, other]);
+    let dm = ChatRoom::create(&mut ctx, vec![other]);
+    assert_ne!(room.id(), dm.id());
+    let before = air.shares.load(Ordering::Relaxed);
+    ChatRoom::add_members(&mut ctx, &mut room, vec![me, other, third, third]);
+    assert_eq!(air.shares.load(Ordering::Relaxed), before + 1);
+    assert_eq!(room.pending().members, vec![me, other, third]);
+    ChatRoom::add_members(&mut ctx, &mut dm.clone(), vec![third]);
+    assert_eq!(dm.pending().members, vec![me, other]);
+}

@@ -2,7 +2,7 @@
 
 ## Frontend development setup
 
-This development checkout combines CHK 2.0.0 with the sibling `pelican_ui` 2.2.0 and
+This development checkout combines CHK 2.0.0 with the sibling `pelican_ui` 3.0.0 and
 `ptsd` 0.1.3 checkouts to retain Orange's local UI changes. Backend dependencies use
 published crates. Keep these path dependencies until the local changes have been migrated
 to newer frontend releases. Follow the [Orange setup instructions](https://github.com/ramp-stack/orange#frontend-setup)
@@ -13,6 +13,30 @@ CHK is a Rust application-building layer designed to sit on top of UI systems bu
 Instead of choosing specific UI components such as text inputs, radio selectors, or tables, developers simply define the information a user should interact with. CHK then determines how that information should be presented within the underlying UI system.
 
 CHK currently targets **Pelican UI**, with plans to support additional Prism-based UI systems in the future.
+
+## Group conversations
+
+The group info screen provides name/photo editing, contact selection (including a new
+Orange name or QR code), and a confirmation before leaving. Any current member can
+edit the group or invite someone. New members receive the existing conversation history;
+available video attachments are shared separately. Leaving hides the room in Orange,
+disables notifications and sending, and preserves its group identity even with fewer
+than three members. Another current member can invite a departed member again.
+
+Adding or leaving writes a typed, read-only membership notice in the same AIR update.
+The conversation renders it as plain centered text, with no avatar, bubble, sender
+label, or tap action. List previews use the same notice without a sender prefix.
+Group names and photos are shared room data; personal contact edits do not change them.
+
+Group actions are appended to the existing action enum so old signed messages still
+verify. Existing room caches load without a reset. Updated group snapshots use an empty
+leading members vector as a version marker; ordinary DM snapshots keep their old bytes.
+All participants should update to use group controls consistently. Older app versions
+do not understand the new actions or upgraded group caches.
+
+Leaving is an application membership change, not cryptographic revocation: AIR currently
+exposes sharing but no unshare/key rotation API. Former members retain existing channel
+credentials. Enforcing read-access revocation requires backend support.
 
 ## Design Goals
 

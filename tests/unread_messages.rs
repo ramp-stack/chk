@@ -51,6 +51,7 @@ fn old_room_bytes_still_load_and_read_flags_survive_serialization() {
     struct LegacyRoom {members: Vec<Name>, messages: Vec<LegacyMessage>, id: Id}
     let [me, other, _] = names();
     let mut room = ChatRoom::init(Id::from(1), metadata(me, 0));
+    room.apply(ChatRoomAction::Share(other), metadata(me, 0));
     room.apply(ChatRoomAction::SendMessage("Existing history".into()), metadata(other, 1));
     let legacy = LegacyRoom {
         members: room.members.clone(), id: room.id,
@@ -120,7 +121,9 @@ impl<T: std::fmt::Debug + Send + Sync + 'static> traits::DynRef for Snapshot<T> 
 impl<C: Contract> traits::DynInstance for Stored<C> {
     fn id(&self) -> Id {self.id}
     fn notify(&self, enabled: bool) {assert!(!enabled, "read and typing updates must not enable notifications");}
-    fn share(&self, _: Name) {assert_eq!(C::id(), TypingState::id(), "read state must remain private");}
+    fn share(&self, _: Name) {
+        assert!(C::id() == TypingState::id() || C::id() == ChatRoom::id(), "read state must remain private");
+    }
     fn send(&mut self, message: Request) -> Box<dyn traits::DynPending> {
         Box::new(Pending(self.state.lock().unwrap().apply(*message.downcast::<C::Message>().unwrap(), metadata(names()[0], 100))))
     }
@@ -171,7 +174,8 @@ fn opening_marks_read_but_construction_background_and_hidden_flows_do_not() {
     let air = MemoryAir::default();
     let mut ctx = support::context();
     ctx.air = prism::air::Air::new(air.clone());
-    let room = ctx.air.instances::<ChatRoom>().create(Id::from(1));
+    let mut room = ctx.air.instances::<ChatRoom>().create(Id::from(1));
+    room.send(ChatRoomAction::Share(names()[1]));
     let stored = air.0.lock().unwrap()[&(ChatRoom::id(), room.id())].downcast_ref::<Stored<ChatRoom>>().unwrap().clone();
     let receive = |timestamp| {
         stored.state.lock().unwrap().apply(ChatRoomAction::SendMessage("Hello".into()), metadata(names()[1], timestamp));
@@ -309,4 +313,143 @@ fn composer_publishes_activity_without_draft_text_and_stops_on_background_or_sen
     settle(&mut page, &mut ctx);
     assert!(!typing.pending().is_typing(TypingState::now(), None));
     assert_eq!(room.pending().messages(names()[0]).count(), 1);
+}
+
+#[test]
+fn group_info_renders_controls_and_edits_do_not_overwrite_an_unchanged_remote_field() {
+    use chk::{GroupMessageInfoPage, PageType, State, AvatarContent};
+    let mut ctx = support::context();
+    ctx.air = prism::air::Air::new(MemoryAir::default());
+    let mut room = ctx.air.instances::<ChatRoom>().create(Id::from(31));
+    for member in &names()[1..] {room.send(ChatRoomAction::Share(*member));}
+    room.send(ChatRoomAction::RenameGroup("Friends".into()));
+    let theme = Theme::default();
+    let mut view = GroupMessageInfoPage::build(&mut ctx, room.clone()).build(&mut ctx, &theme);
+    settle(&mut view, &mut ctx);
+    let labels: Vec<_> = draw_page(&mut view).into_iter().filter_map(|i| {
+        if let Item::Text(text) = i.item {Some(text.spans.iter().map(|s| s.text.clone()).collect::<String>())} else {None}
+    }).collect();
+    for label in ["Group info", "This group has 3 members.", "Add members", "Leave group"] {
+        assert!(labels.iter().any(|text| text == label), "missing {label}: {labels:?}");
+    }
+    assert!(!labels.iter().any(|text| text == "Friends" || text == "Group message"));
+    let PageType::EditAndDisplay {mut on_save, ..} = GroupMessageInfoPage::edit(room.clone()) else {panic!()};
+    // Someone renames the group while this user changes only the photo.
+    room.send(ChatRoomAction::RenameGroup("Remote name".into()));
+    let photo = AvatarContent::image(media::Image::new((1, 1), vec![media::Pixel {
+        red: 255, green: 32, blue: 32, alpha: 255,
+    }]));
+    on_save(&mut ctx, &vec![State::Avatar(photo.clone()), State::Text("Friends".into())]);
+    assert_eq!(room.pending().group_details().name, "Remote name");
+    assert_eq!(room.pending().group_details().photo, photo);
+    ctx.events();
+    let mut messages = MessagesPage::new(&mut ctx, &theme, room.clone(), 1);
+    settle(&mut messages, &mut ctx);
+    let drawing = draw_page(&mut messages);
+    assert!(drawing.iter().any(|i| matches!(&i.item, Item::Text(t) if t.spans.iter().any(|s| s.text == "Remote name"))));
+}
+
+#[test]
+fn leaving_requires_confirmation_and_stale_pages_cannot_send_or_edit() {
+    use chk::{GroupMessageInfoPage, PageType, Bumper, State, AvatarContent};
+    let mut ctx = support::context();
+    ctx.air = prism::air::Air::new(MemoryAir::default());
+    let mut room = ctx.air.instances::<ChatRoom>().create(Id::from(32));
+    for member in &names()[1..] {room.send(ChatRoomAction::Share(*member));}
+    let PageType::EditAndDisplay {mut on_save, ..} = GroupMessageInfoPage::edit(room.clone()) else {panic!()};
+    let mut messages = MessagesPage::new(&mut ctx, &Theme::default(), room.clone(), 1);
+    let PageType::Display {bumper: Bumper::Custom {action, ..}, ..} = GroupMessageInfoPage::leave(room.clone()) else {panic!()};
+    assert!(room.pending().members.contains(&names()[0]), "opening the confirmation must not leave");
+    (action.get())(&mut ctx, &Theme::default());
+    assert!(!room.pending().members.contains(&names()[0]));
+    assert!(ctx.events().iter().any(|event| matches!(
+        event.downcast_ref::<pelican_ui::navigation::NavigationEvent>(),
+        Some(pelican_ui::navigation::NavigationEvent::Root(None))
+    )), "leaving must close all nested conversation screens");
+    let original = room.pending().clone();
+    on_save(&mut ctx, &vec![State::Avatar(AvatarContent::default()), State::Text("Stale edit".into())]);
+    ctx.emit(pelican_ui::components::SendEvent::Photo(chk::messages::Photo::from_image(
+        &media::Image::new((1, 1), vec![media::Pixel {red: 0, green: 0, blue: 0, alpha: 255}])
+    ).unwrap()));
+    settle(&mut messages, &mut ctx);
+    assert_eq!(*room.pending(), original);
+    let mut left_page = MessagesPage::new(&mut ctx, &Theme::default(), room, 1);
+    settle(&mut left_page, &mut ctx);
+    assert!(draw_page(&mut left_page).iter().any(|i| matches!(&i.item, Item::Text(t) if t.spans.iter().any(|s| s.text == "You left this group."))));
+}
+
+#[test]
+fn member_picker_excludes_current_members_and_adds_selected_contacts() {
+    use chk::{Form, FormItem, FormAction, GroupMessageInfoPage, State};
+    let mut ctx = support::context();
+    ctx.air = prism::air::Air::new(MemoryAir::default());
+    let mut room = ctx.air.instances::<ChatRoom>().create(Id::from(33));
+    room.send(ChatRoomAction::CreateGroup);
+    room.send(ChatRoomAction::Share(names()[1]));
+    for name in names() {chk::profiles::Profile::from_name(&mut ctx, name);}
+    let Form::Flow {inputs, mut on_submit, ..} = GroupMessageInfoPage::add_members(&mut ctx, &Theme::default(), room.clone()) else {panic!()};
+    let FormItem::Search(_, _, items, Some(actions)) = &inputs[0] else {panic!()};
+    assert_eq!(items.iter().map(|(_, name)| *name).collect::<Vec<_>>(), vec![names()[2]]);
+    assert!(actions.iter().any(|action| matches!(action, FormAction::Custom(label, ..) if label == "New contact")));
+    on_submit(&mut ctx, &vec![State::Search(vec![names()[2]])]);
+    assert_eq!(room.pending().members, names());
+}
+
+#[test]
+fn membership_notices_are_centered_plain_text_and_previews_have_no_sender_prefix() {
+    use chk::messages::{MessageContent, SystemMessage};
+    use pelican_ui::components::MessageGroups;
+    let mut ctx = support::context();
+    ctx.air = prism::air::Air::new(MemoryAir::default());
+    let [me, inviter, member] = names();
+    let mut profile = chk::profiles::Profile::from_name(&mut ctx, member);
+    profile.send(chk::profiles::ProfileAction::ChangeUsername("JadedFish".into()));
+    let mut room = ChatRoom::init(Id::from(34), metadata(me, 1));
+    room.apply(ChatRoomAction::CreateGroup, metadata(me, 2));
+    room.apply(ChatRoomAction::Share(inviter), metadata(me, 3));
+    room.apply(ChatRoomAction::AddMember(member), metadata(inviter, 4));
+    room.apply(ChatRoomAction::LeaveGroup, metadata(member, 5));
+    let notices = room.messages(me).cloned().collect::<Vec<_>>();
+    assert_eq!(notices.len(), 2);
+    assert!(matches!(notices[0].body, MessageContent::System(SystemMessage::MemberAdded(n)) if n == member));
+    let mut added_me = notices[0].clone();
+    added_me.body = MessageContent::System(SystemMessage::MemberAdded(me));
+    let mut left_me = notices[1].clone();
+    left_me.body = MessageContent::System(SystemMessage::MemberLeft(me));
+    for (notice, expected) in [
+        (&notices[0], "JadedFish was added to the group"),
+        (&notices[1], "JadedFish left the group"),
+        (&added_me, "You were added to the group"),
+        (&left_me, "You left the group"),
+    ] {
+        assert_eq!(notice.preview(&mut ctx, true), expected);
+        let pel = notice.to_pel(&mut ctx, |_, _| panic!("system messages must not be interactive"));
+        let mut group = MessageGroups::new(&mut ctx, &Theme::default(), vec![pel], true, false);
+        for width in [320.0, 768.0] {
+            group.request_width();
+            let (_, height) = group.request_height(width);
+            let layout = group.layout((width, height));
+            let drawing = group.draw(&layout, (0.0, 0.0), (0.0, 0.0, width, height));
+            assert_eq!(drawing.len(), 1, "no avatar, bubble or timestamp on a system message");
+            let Item::Text(text) = &drawing[0].item else {panic!("expected plain text")};
+            assert_eq!(text.spans.iter().map(|span| span.text.as_str()).collect::<String>(), expected);
+            assert_eq!(text.align, prism::drawable::text::Align::Center);
+            assert!((text.width.unwrap() + drawing[0].offset.0 * 2.0 - width).abs() < 0.1);
+        }
+    }
+    let plain = |text: &str| chk::messages::Message {
+        body: MessageContent::Text(text.into()), author: me, timestamp: 6,
+        hidden_from: vec![], id: Id::hash(text),
+    };
+    let timeline = [plain("Before"), notices[0].clone(), plain("After")].iter()
+        .map(|message| message.to_pel(&mut ctx, |_, _| {})).collect();
+    let mut timeline = MessageGroups::new(&mut ctx, &Theme::default(), timeline, true, false);
+    let labels: Vec<_> = draw_page(&mut timeline).iter().filter_map(|i| {
+        if let Item::Text(text) = &i.item {Some(text.spans.iter().map(|s| s.text.as_str()).collect::<String>())} else {None}
+    }).collect();
+    assert_eq!(labels.iter().filter(|label| *label == "You").count(), 2,
+        "system messages must separate adjacent sender groups");
+    let index = |label| labels.iter().position(|text| text == label).unwrap();
+    assert!(index("Before") < index("JadedFish was added to the group"));
+    assert!(index("JadedFish was added to the group") < index("After"));
 }
