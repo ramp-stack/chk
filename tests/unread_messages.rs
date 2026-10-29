@@ -8,6 +8,8 @@ use chk::air::typing::{TypingState, TypingAction};
 
 mod support;
 
+type Contracts = HashMap<(Id, Id), Box<dyn Any + Send + Sync>>;
+
 fn names() -> [Name; 3] {
     [Name::orange_me(),
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".parse().unwrap(),
@@ -74,7 +76,7 @@ fn old_room_bytes_still_load_and_read_flags_survive_serialization() {
 }
 
 #[derive(Clone, Default, Debug)]
-struct MemoryAir(Arc<Mutex<HashMap<(Id, Id), Box<dyn Any + Send + Sync>>>>);
+struct MemoryAir(Arc<Mutex<Contracts>>);
 
 impl traits::Air for MemoryAir {
     fn me(&self) -> Name {names()[0]}
@@ -103,9 +105,10 @@ impl<C: Contract> traits::DynInstances for Instances<C> {
         Box::new(entry.downcast_ref::<Stored<C>>().unwrap().clone())
     }
     fn list(&self) -> HashMap<Id, Box<dyn traits::DynInstance>> {
-        self.0.0.lock().unwrap().iter().filter_map(|((kind, id), stored)| {
-            (*kind == C::id()).then(|| (*id, Box::new(stored.downcast_ref::<Stored<C>>().unwrap().clone()) as Box<dyn traits::DynInstance>))
-        }).collect()
+        self.0.0.lock().unwrap().iter().filter(|((kind, _), _)| *kind == C::id())
+            .map(|((_, id), stored)| {
+                (*id, Box::new(stored.downcast_ref::<Stored<C>>().unwrap().clone()) as Box<dyn traits::DynInstance>)
+            }).collect()
     }
     fn try_next(&mut self) -> Option<Box<dyn traits::DynInstance>> {None}
     fn next(&mut self) -> traits::BoxFuture<'_, Box<dyn traits::DynInstance>> {Box::pin(std::future::pending())}

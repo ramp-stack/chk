@@ -235,10 +235,8 @@ impl MessagesPage {
         self.acknowledge &= self.focused;
         if self.is_blocked {old.typing.stop();}
         else {self.typing = std::mem::take(&mut old.typing);}
-        if !self.is_blocked && !old.is_blocked {
-            if let Some(bumper) = old.page.bumper.take() {
-                self.page.bumper = Some(bumper);
-            }
+        if !self.is_blocked && !old.is_blocked && let Some(bumper) = old.page.bumper.take() {
+            self.page.bumper = Some(bumper);
         }
     }
 }

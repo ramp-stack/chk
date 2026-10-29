@@ -1133,6 +1133,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "pelican_ui"
 version = "3.0.0"
+source = "git+https://github.com/ramp-stack/pelican_ui?rev=4522d2919738a6e042faa530c3f04f8bca66a5cf#4522d2919738a6e042faa530c3f04f8bca66a5cf"
 dependencies = [
  "bardecoder",
  "base64",
@@ -1277,6 +1278,7 @@ dependencies = [
 [[package]]
 name = "ptsd2"
 version = "0.2.0"
+source = "git+https://github.com/ramp-stack/ptsd?rev=965e94c3094e0e871381b34d9b0ba9976232b10e#965e94c3094e0e871381b34d9b0ba9976232b10e"
 dependencies = [
  "chrono",
  "downcast-rs",

@@ -15,9 +15,9 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = "1.0.219"
-pelican_ui = {version = "3.0.0", path = "../pelican_ui"}
+pelican_ui = {version = "3.0.0", git = "https://github.com/ramp-stack/pelican_ui", rev = "4522d2919738a6e042faa530c3f04f8bca66a5cf"}
 prism = {package = "prism2", version = "3.1.0"}
-ptsd = {package = "ptsd2", version = "0.2.0", path = "../ptsd"}
+ptsd = {package = "ptsd2", version = "0.2.0", git = "https://github.com/ramp-stack/ptsd", rev = "965e94c3094e0e871381b34d9b0ba9976232b10e"}
 dyn-clone = "1.0.20"
 rand = "0.8"
 uuid = {version = "1.16.0", features = ["v4", "js"]}
