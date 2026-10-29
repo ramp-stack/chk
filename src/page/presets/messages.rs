@@ -1,13 +1,13 @@
-use prism::events::{DynEvent, OnEvent, on_event};
+use prism::events::{DynEvent, OnEvent, on_event, OnChange, on_change, WindowEvent};
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::{Context, Callback};
 use ptsd::layout::{Stack, Offset};
 use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::components::{MessageGroups, SendEvent};
-use pelican_ui::navigation::NavigationEvent;
-use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent};
+use pelican_ui::components::{MessageGroups, SendEvent, TextInputEvent};
+use pelican_ui::navigation::{NavigationEvent, NavigationChanged};
+use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent, RoomReadState};
 use crate::profiles::Profile;
 use crate::blocking::Block;
 use crate::{Page, PageType, Bumper};
@@ -16,6 +16,7 @@ use crate::items::{Action, Display};
 use crate::closure::FlowBuilder;
 
 use prism::air::Instance;
+use super::typing::{TypingPanel, TypingPublisher};
 
 #[derive(Debug, Component, Clone)]
 pub struct MessagesPage {
@@ -23,11 +24,86 @@ pub struct MessagesPage {
     page: PelicanPage,
     #[skip] room: Instance<ChatRoom>,
     #[skip] is_blocked: bool,
+    #[skip] reads: Instance<RoomReadState>,
+    #[skip] displayed: Vec<prism::air::Id>,
+    #[skip] acknowledge: bool,
+    #[skip] focused: bool,
+    #[skip] typing: TypingPublisher,
+}
+
+#[on_change(self.typing.next())]
+impl OnChange<()> for MessagesPage {
+    fn on_change(&mut self, _: &mut Context, _: ()) {self.typing.stop();}
+}
+
+#[on_event]
+impl OnEvent<TextInputEvent> for MessagesPage {
+    fn on(&mut self, ctx: &mut Context, event: TextInputEvent) -> Vec<Box<dyn DynEvent>> {
+        if let Some(bar) = self.page.bumper.as_mut().and_then(|bumper| bumper.message_bar()) {
+            let field = bar.field();
+            match &event {
+                TextInputEvent::Changed {id, value} if *id == field.id() => {
+                    if self.focused && !self.is_blocked && field.has_focus() {
+                        self.typing.edit(ctx, &self.room, !value.is_empty());
+                    } else {self.typing.stop();}
+                }
+                TextInputEvent::Submit {id} if *id == field.id() => self.typing.stop(),
+                _ => {}
+            }
+        }
+        prism::events![event]
+    }
+}
+
+#[on_event]
+impl OnEvent<ptsd::events::TextInput> for MessagesPage {
+    fn on(&mut self, _: &mut Context, event: ptsd::events::TextInput) -> Vec<Box<dyn DynEvent>> {
+        if matches!(event, ptsd::events::TextInput::Focused(false)) {self.typing.stop();}
+        prism::events![event]
+    }
+}
+
+// Only the current page is polled. Constructing a flow for a list row must
+// never mark its messages read; hidden and background pages do not acknowledge.
+#[on_change(async {
+    if !self.acknowledge {std::future::pending::<()>().await;}
+})]
+impl OnChange<()> for MessagesPage {
+    fn on_change(&mut self, _: &mut Context, _: ()) {
+        self.acknowledge = false;
+        let unread = {
+            let reads = self.reads.pending();
+            self.displayed.iter().copied().filter(|id| !reads.read_flag(*id)).collect::<Vec<_>>()
+        };
+        if !unread.is_empty() {self.reads.send(unread);}
+    }
+}
+
+#[on_event]
+impl OnEvent<WindowEvent> for MessagesPage {
+    fn on(&mut self, _: &mut Context, event: WindowEvent) -> Vec<Box<dyn DynEvent>> {
+        if let WindowEvent::Focused(focused) = event {
+            self.focused = focused;
+            self.acknowledge = focused;
+            if !focused {self.typing.stop();}
+        }
+        prism::events![event]
+    }
+}
+
+#[on_event]
+impl OnEvent<NavigationChanged> for MessagesPage {
+    fn on(&mut self, _: &mut Context, event: NavigationChanged) -> Vec<Box<dyn DynEvent>> {
+        self.focused = true;
+        self.acknowledge = true;
+        prism::events![event]
+    }
 }
 
 #[on_event]
 impl OnEvent<SendEvent> for MessagesPage {
     fn on(&mut self, ctx: &mut Context, event: SendEvent) -> Vec<Box<dyn DynEvent>> {
+        self.typing.stop();
         match &event {
             SendEvent::Sticker(sticker) => {self.room.send(ChatRoomAction::SendSticker(sticker.clone()));},
             SendEvent::Gif(gif) => {self.room.send(ChatRoomAction::SendGif(gif.clone()));},
@@ -47,6 +123,9 @@ impl MessagesPage {
     pub fn new(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>, flow_len: usize ) -> Self {
         let room_data = room.pending().clone();
         let my_name = ctx.air.me();
+        let reads = RoomReadState::open(ctx, room.id());
+        let displayed = room_data.messages(my_name).filter(|message| message.author != my_name)
+            .map(|message| message.id).collect();
 
         let mut profiles = room_data.members.clone().into_iter()
             .map(|n| Profile::from_name(ctx, n))
@@ -123,18 +202,27 @@ impl MessagesPage {
             })
         }).collect::<Vec<_>>();
 
+        let mut children: Vec<Box<dyn Drawable>> = vec![Box::new(MessageGroups::new(ctx, theme, messages, is_group, false))];
+        if !is_blocked {children.push(Box::new(TypingPanel::new(ctx, theme, room.clone())));}
         let content = Content::new(
             Offset::End,
-            vec![Box::new(MessageGroups::new(ctx, theme, messages.clone(), is_group, false))],
+            children,
             Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         );
 
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        MessagesPage { layout: Stack::default(), page, room, is_blocked }
+        MessagesPage {
+            layout: Stack::default(), page, room, is_blocked, reads, displayed,
+            acknowledge: true, focused: true, typing: TypingPublisher::default(),
+        }
     }
 
     pub fn take_input_from(&mut self, old: &mut Self) {
+        self.focused = old.focused;
+        self.acknowledge &= self.focused;
+        if self.is_blocked {old.typing.stop();}
+        else {self.typing = std::mem::take(&mut old.typing);}
         if !self.is_blocked && !old.is_blocked {
             if let Some(bumper) = old.page.bumper.take() {
                 self.page.bumper = Some(bumper);

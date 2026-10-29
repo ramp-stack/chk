@@ -465,6 +465,7 @@ pub struct ListItem {
     subtitle: String,
     secondary: Option<String>,
     flow: Option<Flow>,
+    badge: bool,
 }
 
 impl PartialEq for ListItem {
@@ -473,6 +474,7 @@ impl PartialEq for ListItem {
             && self.title == other.title
             && self.subtitle == other.subtitle
             && self.secondary == other.secondary
+            && self.badge == other.badge
     }
 }
 
@@ -483,7 +485,7 @@ impl ListItem {
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             secondary: secondary.map(|s| s.to_string()),
-            flow,
+            flow, badge: false,
         }
     }
 
@@ -493,12 +495,14 @@ impl ListItem {
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             secondary: secondary.map(|s| s.to_string()),
-            flow,
+            flow, badge: false,
         }
     }
 
+    pub fn with_badge(mut self, badge: bool) -> Self {self.badge = badge; self}
+
     pub fn build(&self, theme: &Theme) -> PelicanListItem {
-        let ListItem { avatar, title, subtitle, secondary, flow } = self.clone();
+        let ListItem { avatar, title, subtitle, secondary, flow, badge } = self.clone();
         let has_flow = flow.is_some();
         let closure = Box::new(move |ctx: &mut Context, theme: &Theme| {
             if let Some(mut f) = flow.clone() { (f.build(ctx, theme))(ctx, theme); }
@@ -508,7 +512,7 @@ impl ListItem {
             Avatar::new(theme, content, None, false, AvatarSize::Md, None)
         });
         PelicanListItem::new(
-            theme, avatar, ListItemInfoLeft::new(&title, Some(&subtitle), None, None),
+            theme, avatar, ListItemInfoLeft::new(&title, Some(&subtitle), None, None).with_badge(badge),
             secondary.as_ref().map(|s| TitleSubtitle::new(s, Some("Details"))), None,
             has_flow.then_some(Icons::Forward), closure,
         )

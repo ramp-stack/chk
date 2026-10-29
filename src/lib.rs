@@ -26,10 +26,15 @@ pub use air::*;
 pub trait App: Sized + 'static {
     fn roots(&self, ctx: &mut Context, theme: &Theme) -> Vec<RootInfo>;
     fn theme(&self) -> ChkTheme {ChkTheme::default()}
+    /// App-owned configuration, supplied before any GIF picker is created.
+    fn giphy_api_key(&self) -> Option<&str> {None}
     fn keyboard(&self, _ctx: &Context, _theme: &Theme) -> Option<Box<dyn prism::drawable::Drawable>> {None}
 
     fn build(self, ctx: &mut Context, assets: Assets) -> pelican_ui::interface::general::Interface {
         let theme = self.theme().to_pelican(assets);
+        if let Some(key) = self.giphy_api_key().filter(|key| !key.trim().is_empty()) {
+            theme.gifs().set_api_key(key);
+        }
         let keyboard = self.keyboard(ctx, &theme);
         let roots = self.roots(ctx, &theme).into_iter().map(|root| root.0).collect();
         pelican_ui::interface::general::Interface::new(ctx, &theme, roots, keyboard)

@@ -76,10 +76,10 @@ impl Page {
 
     pub fn messaging(_ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
         Page::watching(
-            (Watch::contract(room.clone()), Watch::list::<Block>()),
+            (Watch::contract(room.clone()), Watch::list::<Block>(), Watch::list::<Profile>()),
             |_ctx: &mut Context,
              _theme: &Theme,
-             (room, _blocks): (Instance<ChatRoom>, Vec<Instance<Block>>)| {
+             (room, _blocks, _profiles): (Instance<ChatRoom>, Vec<Instance<Block>>, Vec<Instance<Profile>>)| {
                 PageType::messaging(room)
             },
         )

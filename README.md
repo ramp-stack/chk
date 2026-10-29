@@ -156,6 +156,39 @@ and follows the source's subscription semantics; updates need not be clonable.
 Every dependency that can change the displayed number must notify the watched
 source. Arbitrary getter closures are no longer polled each tick.
 
+## Unread messages
+
+`ListItem::with_badge(true)` displays a small brand-colored dot beside the title.
+Orange watches rooms and `RoomReadState` instances to refresh these badges when messages
+arrive or are read. Own messages and messages hidden from the reader do not count as unread.
+
+`RoomReadState` stores a boolean per message ID in a private, per-reader AIR instance,
+keyed by the room's instance ID. Missing flags mean unread. This preserves the existing
+binary format of shared messages and delete actions, and keeps group members' read state
+independent. Read-state instances are not shared and do not enable notifications.
+
+The active `MessagesPage` acknowledges its displayed conversation snapshot. Constructing a
+page does not mark it read, and background or hidden pages do not acknowledge messages.
+Refreshing an open conversation acknowledges newly displayed incoming messages; reopening
+the app retains saved flags. Existing history has no flags until first opened.
+
+## Typing indicators
+
+Messaging pages publish throttled activity to a separate `TypingState` AIR contract,
+shared only with the room's other unblocked members. Activity contains a boolean and
+timestamp, never draft text, and notifications stay disabled. It does not change chat
+history, list previews, or unread badges. These are persisted AIR updates with UI expiry,
+not an ephemeral transport.
+
+The first edit publishes immediately; subsequent edits publish at most once every two
+seconds. Three seconds without editing, sending, losing focus, backgrounding, or leaving
+the conversation stops activity. Remote indicators expire after six seconds if a stop
+update is lost or a client disconnects. Old queued activity does not revive on reconnect.
+
+Pelican's `TypingIndicator` shows an animated three-dot received bubble. DMs have no label;
+groups show a separate bubble and `Name is typing...` below it for each active sender.
+Only the typing portion updates as activity changes, preserving the composer draft.
+
 ## Platform Support
 
 * Linux

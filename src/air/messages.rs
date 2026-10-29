@@ -6,6 +6,7 @@ pub use pelican_ui::components::{Photo, Video, VideoClip};
 use prism::air::{Id, Name, Metadata, Contract, Instance};
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::profiles::Profile;
 
@@ -31,6 +32,49 @@ impl Message {
             author: Profile::from_name(ctx, self.author).pending().to_pel(),
             on_click: Box::new(on_click),
         }
+    }
+}
+
+/// Private, per-reader flags kept outside the shared message's binary schema.
+/// Missing flags mean unread; a reader's own messages are always read.
+#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
+pub struct RoomReadState {
+    pub room: Id,
+    pub owner: Name,
+    read: BTreeMap<Id, bool>,
+}
+
+impl Contract for RoomReadState {
+    type Init = Id;
+    type Message = Vec<Id>;
+    type Result = ();
+
+    fn id() -> Id {Id::hash("Orange.RoomReadState.v1")}
+    fn init(room: Id, metadata: Metadata) -> Self {
+        Self {room, owner: metadata.signer, read: BTreeMap::new()}
+    }
+    fn apply(&mut self, messages: Vec<Id>, metadata: Metadata) {
+        if metadata.signer == self.owner {
+            for id in messages {self.read.insert(id, true);}
+        }
+    }
+}
+
+impl RoomReadState {
+    pub fn open(ctx: &Context, room: Id) -> Instance<Self> {
+        // AIR includes the creator in the location. Never share this instance
+        // or enable notifications: reading must not notify the other members.
+        ctx.air.instances::<Self>().create(room)
+    }
+
+    pub fn is_read(&self, message: &Message) -> bool {
+        message.author == self.owner || self.read_flag(message.id)
+    }
+
+    pub fn read_flag(&self, id: Id) -> bool {self.read.get(&id).copied().unwrap_or(false)}
+
+    pub fn unread<'a>(&'a self, room: &'a ChatRoom) -> impl Iterator<Item = Id> + 'a {
+        room.messages(self.owner).filter(|message| !self.is_read(message)).map(|message| message.id)
     }
 }
 
@@ -87,15 +131,34 @@ impl Contract for ChatRoom {
 }
 
 impl ChatRoom {
-    pub fn create(ctx: &mut Context, recipients: Vec<Name>) -> Instance<ChatRoom> {
-        let is_dm = recipients.len() <= 1;
-        let id = match is_dm {
-            true => Id::hash(&recipients[0]), false => Id::random(),
+    pub fn create(ctx: &mut Context, mut recipients: Vec<Name>) -> Instance<ChatRoom> {
+        let me = ctx.air.me();
+        recipients.retain(|name| *name != me);
+        recipients.sort_unstable();
+        recipients.dedup();
+        let rooms = ctx.air.instances::<ChatRoom>();
+        let id = if recipients.len() <= 1 {
+            let recipient = recipients.first().copied().unwrap_or(me);
+            // Received and older DMs may have a different creator or init ID.
+            // Reopen their existing history before creating our name-hashed room.
+            let existing = rooms.list().into_values().filter(|instance| {
+                let room = instance.pending();
+                room.members.contains(&me) && room.members.contains(&recipient)
+                    && room.members.iter().all(|name| *name == me || *name == recipient)
+            }).min_by_key(|instance| {
+                // Prefer actual conversations over empty duplicates, with a
+                // stable tie-breaker independent of HashMap iteration order.
+                (instance.pending().messages.is_empty(), instance.id())
+            });
+            if let Some(room) = existing {return room;}
+            Id::hash(&recipient)
+        } else {
+            Id::random()
         };
 
-        let mut room = ctx.air.instances::<ChatRoom>().create(id);
+        let mut room = rooms.create(id);
 
-        for recipient in recipients.into_iter().filter(|name| *name != ctx.air.me()) {
+        for recipient in recipients {
             room.share(recipient);
             room.send(ChatRoomAction::Share(recipient));
         }

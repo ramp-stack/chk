@@ -11,6 +11,7 @@ use crate::form::{State, FormComplete};
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
 mod messages;
+mod typing;
 pub use messages::{MessagesPage, MessageDetails};
 mod profiles;
 pub use profiles::{ProfilePage, ProfileView};
