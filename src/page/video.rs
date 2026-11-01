@@ -30,7 +30,7 @@ pub struct VideoPage {
     screen: VideoScreen,
     controls: Controls,
     #[skip]
-    video: Video,
+    video: Option<Video>,
     #[skip]
     clips: Option<Instances<VideoClip>>,
     #[skip]
@@ -54,7 +54,7 @@ impl VideoPage {
             screen: VideoScreen(ScreenBody(
                 Stack::fill(), Box::new(FittedPhoto::new(&video.poster)),
                 Some(Badge::label(theme, "Loading\u{2026}")),
-            )), controls: Controls::new(theme, token), video, theme: theme.clone(), token,
+            )), controls: Controls::new(theme, token), video: Some(video), theme: theme.clone(), token,
             state: State::Waiting, shown: None, clips: Some(ctx.air.instances::<VideoClip>()),
         };
         page.load(ctx);
@@ -62,9 +62,26 @@ impl VideoPage {
         page
     }
 
+    /// Reuse the standard controls without encoding or uploading a derived video.
+    pub fn from_player(theme: &Theme, title: &str, player: Player, size: (u32, u32)) -> Self {
+        let token = Uuid::new_v4();
+        let mut page = Self {
+            layout: Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None),
+            header: Header::stack(theme, title, None),
+            screen: VideoScreen(ScreenBody(Stack::fill(), Box::new(Bin(Fit::new(size), player.clone())), None)),
+            controls: Controls::new(theme, token), video: None, clips: None,
+            theme: theme.clone(), token, state: State::Ready { player: player.clone(), scrubbing: None },
+            shown: None,
+        };
+        player.start();
+        page.update(None);
+        page
+    }
+
     fn load(&mut self, ctx: &mut Context) {
         if let State::Waiting = self.state
-            && let Some(bytes) = VideoClip::find(ctx, self.video.clip)
+            && let Some(video) = &self.video
+            && let Some(bytes) = VideoClip::find(ctx, video.clip)
         {
             let player = Media::read(std::io::Cursor::new(bytes)).and_then(|media| {
                 let size = media.video.dimensions().ok_or("Media has no video track")?;
@@ -83,7 +100,7 @@ impl VideoPage {
     }
 
     fn update(&mut self, playback: Option<Frame>) {
-        let duration = Duration::from_millis(self.video.duration_ms);
+        let duration = Duration::from_millis(self.video.as_ref().map_or(0, |video| video.duration_ms));
         let (badge, playing, position, duration) = match &self.state {
             State::Waiting => (BadgeKind::Loading, false, Duration::ZERO, duration),
             State::Unplayable => (BadgeKind::Unplayable, false, Duration::ZERO, duration),
@@ -188,7 +205,7 @@ impl OnEvent<VideoEvent> for VideoPage {
 })]
 impl OnChange<Instance<VideoClip>> for VideoPage {
     fn on_change(&mut self, ctx: &mut Context, clip: Instance<VideoClip>) {
-        if clip.pending().id == self.video.clip {
+        if self.video.as_ref().is_some_and(|video| clip.pending().id == video.clip) {
             self.load(ctx);
             self.update(None);
         }

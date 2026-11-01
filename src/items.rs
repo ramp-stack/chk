@@ -547,6 +547,7 @@ pub enum Action {
     None,
     Flow { flow: Flow },
     Paste { id: Uuid },
+    SetText { id: Uuid, value: String },
     Copy { data: String },
     Message { name: Name },
     ChooseSearch { name: Name },
@@ -560,6 +561,11 @@ impl PartialEq for Action {
 }
 
 impl Action {
+    /// Set a text input without changing the system clipboard.
+    pub fn set_text(id: Uuid, value: impl Into<String>) -> Self {
+        Action::SetText { id, value: value.into() }
+    }
+
     pub fn choose_search(name: Name) -> Self { Action::ChooseSearch { name } }
 
     pub fn share(data: &str) -> Self { Action::Share { data: data.to_string() } }
@@ -632,6 +638,13 @@ impl Action {
                 let mut flow = flow.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     flow.build(ctx, theme)(ctx, theme);
+                })
+            }
+
+            Action::SetText { id, value } => {
+                let (id, value) = (*id, value.clone());
+                Box::new(move |ctx: &mut Context, _: &Theme| {
+                    ctx.emit(TextInputEvent::Set { id, value: value.clone() });
                 })
             }
 

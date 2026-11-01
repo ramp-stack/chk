@@ -47,7 +47,7 @@ impl PageType {
                 ));
             }
             Self::Edit { .. } | Self::Form { .. } | Self::Review { .. } | Self::Success { .. }
-            | Self::Messaging { .. } | Self::Photo { .. } | Self::Video { .. } => {
+            | Self::Messaging { .. } | Self::Photo { .. } | Self::Video { .. } | Self::Playback { .. } => {
                 panic!("Not an accepted root type");
             }
         };

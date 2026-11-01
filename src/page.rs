@@ -199,6 +199,7 @@ pub enum PageType {
     Messaging { room: Instance<ChatRoom>, flow_len: usize },
     Photo { photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)> },
     Video { video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)> },
+    Playback { title: String, player: prism::hardware::Player, size: (u32, u32) },
 }
 
 impl PageType {
@@ -283,6 +284,11 @@ impl PageType {
         PageType::Video { video, header }
     }
 
+    /// Reuse CHK's video page with an application-prepared playback timeline.
+    pub fn playback(title: &str, player: prism::hardware::Player, size: (u32, u32)) -> Self {
+        Self::Playback { title: title.into(), player, size }
+    }
+
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>, on_find: Box<dyn QrCodeFound>) -> Self {
         PageType::input(
             "Scan QR code", Input::qr_code_scanner(instructions, alt, on_find), None,
@@ -306,6 +312,7 @@ impl PageType {
             | PageType::Messaging { .. }
             | PageType::Photo { .. }
             | PageType::Video { .. }
+            | PageType::Playback { .. }
             | PageType::Edit { .. }
             | PageType::EditAndDisplay { .. }
             | PageType::Success { .. } => None,
@@ -322,6 +329,7 @@ impl PageType {
             PageType::Messaging { .. }
             | PageType::Photo { .. }
             | PageType::Video { .. }
+            | PageType::Playback { .. }
             | PageType::Root { .. } => None,
             PageType::Edit { flow_len, .. }
             | PageType::Display { flow_len, .. }
@@ -405,6 +413,9 @@ impl PageType {
             }
             PageType::Video { video, header } => {
                 Box::new(VideoPage::new(ctx, theme, video.clone(), header.clone()))
+            }
+            PageType::Playback { title, player, size } => {
+                Box::new(VideoPage::from_player(theme, title, player.clone(), *size))
             }
         }
     }
