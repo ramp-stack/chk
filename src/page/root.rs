@@ -8,6 +8,7 @@ use pelican_ui::theme::{Theme, Icons};
 use crate::{Page, FlowBuilder, PageType};
 use crate::page::EditPage;
 use crate::items::Display;
+use crate::button_label::button_label;
 
 pub struct Root(pub Page);
 impl Root {
@@ -84,7 +85,7 @@ impl PageType {
         let second = bumper_b.as_mut().map(|(t, flow)| {
             let mut flow = flow.clone();
             (
-                t.to_string(),
+                button_label(t),
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
                 }) as Box<dyn Callback>,
@@ -94,7 +95,7 @@ impl PageType {
         let first = bumper_a.as_mut().map(|(t, flow)| {
             let mut flow = flow.clone();
             (
-                t.to_string(),
+                button_label(t),
                 Box::new(move |ctx: &mut Context, theme: &Theme| {
                     ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
                 }) as Box<dyn Callback>,

@@ -4,7 +4,8 @@ use pelican_ui::drawable::Drawable;
 use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::navigation::NavigationEvent;
 
-use pelican_ui::components::{SearchBar, TextInput, NumericalInput};
+use pelican_ui::components::{TextInput, NumericalInput};
+use crate::selection::{Selector, SelectionInput};
 use ptsd::Validate;
 use pelican_ui::utils::ValidationFn;
 
@@ -27,6 +28,7 @@ pub enum State {
     Number(String),
     Avatar(AvatarContent),
     Search(Vec<Name>),
+    Selection(Vec<String>),
     ScanCode(Option<String>),
 }
 
@@ -161,6 +163,7 @@ pub enum FormItem {
     Number(String, NumberVariant, Box<dyn ValidityFn>),
     Enum(String, Vec<EnumItem>),
     Search(String, String, Vec<(ListItem, Name)>, Option<Vec<FormAction>>),
+    Selection(String, Selector),
     ScanQR(String, String, Option<(String, Icons, Action)>),
     Avatar(String, AvatarContent, Action, Box<dyn ValidityFn>),
     AvatarWithPreset(String, AvatarContent, Action, Box<dyn ValidityFn>),
@@ -198,6 +201,11 @@ impl FormItem {
         FormItem::Search(title.to_string(), search.to_string(), items, actions)
     }
 
+    /// Search and select application-owned keys with the standard list selector.
+    pub fn selection(title: &str, selector: Selector) -> Self {
+        FormItem::Selection(title.to_string(), selector)
+    }
+
     pub fn avatar(title: &str, action: Action, valid: impl ValidityFn + 'static) -> Self {
         FormItem::Avatar(title.to_string(), AvatarContent::default(), action, Box::new(valid))
     }
@@ -213,6 +221,7 @@ impl FormItem {
     pub fn title(&self) -> String {
         match self {
             FormItem::Search(title, ..) |
+            FormItem::Selection(title, ..) |
             FormItem::Text(title, ..) |
             FormItem::TextWithPreset(title, ..) |
             FormItem::Number(title, ..) |
@@ -228,8 +237,9 @@ impl FormItem {
             FormItem::Text(_, _, _, _, validation) | FormItem::TextWithPreset(_, _, _, _, validation) |
             FormItem::Number(_, _, validation) | FormItem::Avatar(_, _, _, validation) |
             FormItem::AvatarWithPreset(_, _, _, validation) => Box::new(InputValidation(validation.clone())),
-            FormItem::Search(_, _, _, _) => Box::new(|_ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>| {
-                if let Some(searchbar) = children[0].downcast_mut::<SearchBar>() {!searchbar.results().is_empty()} else {true}
+            FormItem::Search(..) | FormItem::Selection(..) => Box::new(|_ctx: &mut Context, children: Vec<&mut Box<dyn Drawable>>| {
+                children.first().and_then(|child| child.downcast_ref::<SelectionInput>())
+                    .is_some_and(|input| !input.results().is_empty())
             }),
             _ => Box::new(|_ctx: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         }
@@ -265,6 +275,7 @@ impl FormItem {
                 let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
                 Input::search(id, search, items.clone(), actions)
             },
+            FormItem::Selection(_, selector) => Input::selection(selector.clone()),
             FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(
                 instructions, alt.clone(), Box::new(|_ctx: &mut Context, _value: String| {}),
             ),

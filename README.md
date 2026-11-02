@@ -81,6 +81,36 @@ wgpu
 
 Because CHK operates at the application-description layer, it can support multiple Prism-based UI frameworks without requiring developers to change how their application logic is defined.
 
+## Searchable selection
+
+Use one `Selector` for contacts or application-owned records. Keys are strings; the
+selector does not create identities, load profiles, or access AIR. Each handle has
+its own event scope, and clones refer to that same input.
+
+```rust
+let selector = Selector::new("passwords", vec![
+    (ListItem::plain("Amazon", "family@example.test", None, None), "login-123".into()),
+]).with_limit(32).with_chip_subtitles(true);
+let field = FormItem::selection("Choose passwords", selector.clone());
+// Submit receives State::Selection(Vec<String>).
+```
+
+The standard form supplies searchable rows, removable selected chips, and Continue
+validation requiring at least one selection. Search filters visible titles and
+subtitles in place. Limits count unique keys; empty and duplicate initial keys are
+ignored. Selected chips show titles by default; opt into subtitles when they help
+distinguish records. Applications must still validate returned keys against their
+current data and permissions before performing an action.
+
+Attach `FormAction`s with `selector.with_actions(...)`. When a nested flow creates a
+record, return `FormComplete::Return(selector.select(item, key).get())` to add and
+select its row in the original selector. Repeating this action updates the row and
+keeps it selected. Create a fresh `Selector` for each independent input.
+
+Legacy `FormItem::search` and `Input::search` use this same control and continue to
+return `State::Search(Vec<Name>)`. `Action::choose_search` is a compatibility action
+for those legacy inputs; new flows should use the scoped `Selector::select` action.
+
 ## Application events
 
 `App::build` constructs the interface without retaining the application in an event callback.

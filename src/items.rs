@@ -21,7 +21,8 @@ use pelican_ui::components::text::{Text, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
-use pelican_ui::components::{SearchBar, SearchbarEvent, Keypad, TextInputEvent};
+use pelican_ui::components::{SearchbarEvent, Keypad, TextInputEvent};
+use crate::selection::{Selector, SelectionInput};
 use pelican_ui::interface::general::FormEvent;
 use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
 use prism::air::{Id, Name, Instance};
@@ -32,6 +33,7 @@ use crate::Page;
 use crate::form::State;
 use crate::flow::Flow;
 use crate::messages::ChatRoom;
+use crate::button_label::button_label;
 
 pub type InputAction = (String, Option<String>, Icons, Action);
 
@@ -60,6 +62,7 @@ pub enum Input {
         items: Vec<(ListItem, Name)>,
         actions: Option<Vec<InputAction>>,
     },
+    Selection(Selector),
     QRCodeScanner {
         instructions: String,
         alt: Option<(String, Icons, Action)>,
@@ -99,6 +102,8 @@ impl Input {
         Input::Search { id, label: label.to_string(), items, actions }
     }
 
+    pub fn selection(selector: Selector) -> Self {Input::Selection(selector)}
+
     pub fn qr_code_scanner(instructions: &str, alt: Option<(String, Icons, Action)>, on_find: Box<dyn QrCodeFound>) -> Self {
         Input::QRCodeScanner { instructions: instructions.to_string(), alt, on_find }
     }
@@ -119,8 +124,8 @@ impl Input {
                             .map(|(label, active, icon, action)| {
                                 let on_click: Box<dyn Callback> = action.get();
                                 ActionData {
-                                    label: label.to_string(),
-                                    active: active.clone(),
+                                    label: button_label(label),
+                                    active: active.as_deref().map(button_label),
                                     icon: *icon,
                                     on_click,
                                 }
@@ -161,29 +166,10 @@ impl Input {
             Input::Avatar { content, flair, action } => {
                 vec![Box::new(AvatarInput::new(theme, content.clone(), *flair, action.clone()))]
             }
-            Input::Search { id, label, items, actions } => vec![Box::new(SearchBar::new(
-                theme, *id, label,
-                items.iter().map(|(item, id)| (item.build(theme), *id)).collect::<Vec<_>>(),
-                if let Some(a) = actions.as_ref()
-                    && !a.is_empty() {
-                    Some(QuickActions::new(
-                        theme, Offset::Start,
-                        a.iter()
-                            .map(|(label, active, icon, action)| {
-                                let on_click: Box<dyn Callback> = action.get();
-                                ActionData {
-                                    label: label.to_string(),
-                                    active: active.clone(),
-                                    icon: *icon,
-                                    on_click,
-                                }
-                            })
-                            .collect::<Vec<ActionData>>(),
-                    ))
-                } else {
-                    None
-                },
+            Input::Search { id, label, items, actions } => vec![Box::new(SelectionInput::legacy(
+                theme, *id, label, items.clone(), actions.clone().unwrap_or_default(),
             ))],
+            Input::Selection(selector) => vec![Box::new(SelectionInput::new(theme, selector.clone()))],
             Input::QRCodeScanner { instructions, alt, on_find } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![
                     Box::new(QRCodeScanner::new(theme, on_find.clone())),
@@ -198,7 +184,7 @@ impl Input {
                     )));
                     items.push(Box::new(QuickActions::new(
                         theme, Offset::Center,
-                        vec![ActionData::new(label, None, *icon, action.get())],
+                        vec![ActionData::new(&button_label(label), None, *icon, action.get())],
                     )));
                 }
                 items
@@ -215,7 +201,8 @@ impl Input {
             | Input::Date { .. }
             | Input::Time { .. }
             | Input::Avatar { .. }
-            | Input::Search { .. } => Offset::Start,
+            | Input::Search { .. }
+            | Input::Selection(..) => Offset::Start,
             Input::QRCodeScanner { .. } => Offset::Center,
         }
     }
@@ -229,8 +216,8 @@ impl Input {
             Some(State::Number(input.value()))
         } else if let Some(avatar) = child.downcast_ref::<AvatarInput>() {
             Some(State::Avatar(avatar.content().clone()))
-        } else if let Some(searchbar) = child.downcast_ref::<SearchBar>() {
-            Some(State::Search(searchbar.results()))
+        } else if let Some(selection) = child.downcast_ref::<SelectionInput>() {
+            Some(selection.state())
         } else {
             child.downcast_ref::<QRCodeScanner>().map(|scanner| State::ScanCode(scanner.found()))
         }
@@ -373,8 +360,8 @@ impl Display {
                         .map(|ActionItem(action, label, active, icon)| {
                             let on_click: Box<dyn Callback> = action.get();
                             ActionData {
-                                label: label.to_string(),
-                                active: active.clone(),
+                                label: button_label(label),
+                                active: active.as_deref().map(button_label),
                                 icon: *icon,
                                 on_click,
                             }
@@ -388,8 +375,8 @@ impl Display {
                         .map(|ActionItem(action, label, active, icon)| {
                             let on_click: Box<dyn Callback> = action.get();
                             ActionData {
-                                label: label.to_string(),
-                                active: active.clone(),
+                                label: button_label(label),
+                                active: active.as_deref().map(button_label),
                                 icon: *icon,
                                 on_click,
                             }
@@ -408,7 +395,8 @@ impl Display {
             Display::DataList { label, instructions, items, actions } => {
                 let actions = actions.as_ref().map(|actions| actions.iter()
                     .map(|ActionItem(action, label, active, icon)| ActionData {
-                        label: label.clone(), active: active.clone(), icon: *icon, on_click: action.get(),
+                        label: button_label(label), active: active.as_deref().map(button_label),
+                        icon: *icon, on_click: action.get(),
                     }).collect());
                 vec![Box::new(DataItem::list(
                     theme, label, instructions.as_deref(),
@@ -462,7 +450,7 @@ impl Display {
                             .map(|ActionItem(action, label, _, icon)| {
                                 let on_click: Box<dyn Callback> = action.get();
                                 ActionData {
-                                    label: label.to_string(),
+                                    label: button_label(label),
                                     active: None,
                                     icon: *icon,
                                     on_click,
@@ -520,6 +508,18 @@ impl ListItem {
     }
 
     pub fn with_badge(mut self, badge: bool) -> Self {self.badge = badge; self}
+
+    pub(crate) fn selection_labels(&self) -> (&str, &str) {(&self.title, &self.subtitle)}
+
+    pub(crate) fn selection_row(&self, theme: &Theme, mut action: Box<dyn Callback>) -> PelicanListItem {
+        let avatar = self.avatar.clone().map(|content| Avatar::new(theme, content, None, AvatarSize::Md, None));
+        PelicanListItem::new(
+            theme, avatar,
+            ListItemInfoLeft::new(&self.title, Some(&self.subtitle), None, None).with_badge(self.badge),
+            self.secondary.as_ref().map(|s| TitleSubtitle::new(s, Some("Details"))),
+            None, None, move |ctx, theme| (action)(ctx, theme),
+        )
+    }
 
     pub fn build(&self, theme: &Theme) -> PelicanListItem {
         let ListItem { avatar, title, subtitle, secondary, flow, badge } = self.clone();

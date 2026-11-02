@@ -2,7 +2,7 @@ use pelican_ui::{Context, theme::{Theme, Icons}, navigation::NavigationEvent};
 use prism::air::{Instance, Name};
 use ptsd::layout::Offset;
 use crate::{Action, ActionItem, AvatarPurpose, Bumper, Display, Flow, Form, FormAction,
-    FormComplete, FormItem, FormSubmit, FormValidState, ListItem, Page, PageType, State, Watch};
+    FormComplete, FormItem, FormSubmit, FormValidState, ListItem, Page, PageType, Selector, State, Watch};
 use crate::messages::{ChatRoom, ChatRoomAction};
 use crate::profiles::Profile;
 
@@ -91,27 +91,31 @@ impl GroupMessageInfoPage {
         }).collect();
         items.sort_by_key(|(_, name)| *name);
         items.dedup_by_key(|(_, name)| *name);
-        let new_contact = Self::new_contact(theme, members);
+        let selector = Selector::new("profile name", items.into_iter()
+            .map(|(item, name)| (item, name.to_string())).collect());
+        let new_contact = Self::new_contact(theme, members, selector.clone());
         let submit = Box::new(move |ctx: &mut Context, values: &Vec<State>| {
-            if let Some(State::Search(names)) = values.first() {
-                ChatRoom::add_members(ctx, &mut room, names.clone());
-            }
+            let Some(State::Selection(keys)) = values.first() else {return FormComplete::None;};
+            let Ok(names) = keys.iter().map(|key| key.parse::<Name>()).collect::<Result<Vec<_>, _>>()
+                else {return FormComplete::None;};
+            ChatRoom::add_members(ctx, &mut room, names);
             ctx.emit(NavigationEvent::Pop);
             FormComplete::None
         }) as Box<dyn FormSubmit>;
-        Form::flow(theme, vec![FormItem::search("Add members", "profile name", items,
-            Some(vec![FormAction::Custom("New contact".into(), None, Icons::Add,
-                Action::flow(Flow::from_form(new_contact)))]))], None, None, submit)
+        Form::flow(theme, vec![FormItem::selection("Add members", selector.with_actions(vec![
+            FormAction::Custom("New contact".into(), None, Icons::Add,
+                Action::flow(Flow::from_form(new_contact))),
+        ]))], None, None, submit)
     }
 
-    fn new_contact(theme: &Theme, members: Vec<Name>) -> Form {
-        let submit = Box::new(|ctx: &mut Context, values: &Vec<State>| {
+    fn new_contact(theme: &Theme, members: Vec<Name>, selector: Selector) -> Form {
+        let submit = Box::new(move |ctx: &mut Context, values: &Vec<State>| {
             let Some(State::Text(value)) = values.first() else {return FormComplete::None;};
             let Ok(name) = value.trim().parse::<Name>() else {return FormComplete::None;};
-            Profile::from_name(ctx, name);
-            FormComplete::Return(Box::new(move |ctx: &mut Context, theme: &Theme| {
-                (Action::choose_search(name).get())(ctx, theme)
-            }))
+            let profile = Profile::from_name(ctx, name);
+            let profile = profile.pending();
+            let item = ListItem::avatar(profile.avatar.clone(), &profile.username, &profile.name(), None, None);
+            FormComplete::Return(selector.select(item, name.to_string()).get())
         }) as Box<dyn FormSubmit>;
         Form::flow(theme, vec![FormItem::text("New contact", "orange name", Some(vec![
             FormAction::Paste, FormAction::scan_qr_code("Scan a profile QR code"),

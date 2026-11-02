@@ -383,18 +383,31 @@ fn leaving_requires_confirmation_and_stale_pages_cannot_send_or_edit() {
 
 #[test]
 fn member_picker_excludes_current_members_and_adds_selected_contacts() {
-    use chk::{Form, FormItem, FormAction, GroupMessageInfoPage, State};
+    use chk::{Form, FormItem, GroupMessageInfoPage, State};
     let mut ctx = support::context();
     ctx.air = prism::air::Air::new(MemoryAir::default());
     let mut room = ctx.air.instances::<ChatRoom>().create(Id::from(33));
     room.send(ChatRoomAction::CreateGroup);
     room.send(ChatRoomAction::Share(names()[1]));
-    for name in names() {chk::profiles::Profile::from_name(&mut ctx, name);}
-    let Form::Flow {inputs, mut on_submit, ..} = GroupMessageInfoPage::add_members(&mut ctx, &Theme::default(), room.clone()) else {panic!()};
-    let FormItem::Search(_, _, items, Some(actions)) = &inputs[0] else {panic!()};
-    assert_eq!(items.iter().map(|(_, name)| *name).collect::<Vec<_>>(), vec![names()[2]]);
-    assert!(actions.iter().any(|action| matches!(action, FormAction::Custom(label, ..) if label == "New contact")));
-    on_submit(&mut ctx, &vec![State::Search(vec![names()[2]])]);
+    for (name, label) in names().into_iter().zip(["Current member one", "Current member two", "Available contact"]) {
+        let mut profile = chk::profiles::Profile::from_name(&mut ctx, name);
+        profile.send(chk::profiles::ProfileAction::ChangeUsername(label.into()));
+    }
+    let theme = Theme::default();
+    let Form::Flow {inputs, mut on_submit, ..} = GroupMessageInfoPage::add_members(&mut ctx, &theme, room.clone()) else {panic!()};
+    assert!(matches!(&inputs[0], FormItem::Selection(..)));
+    let mut input = inputs[0].build().build(&theme, true).unwrap().remove(0);
+    let labels: Vec<_> = draw_page(&mut input).into_iter().filter_map(|instruction| {
+        if let Item::Text(text) = instruction.item {
+            Some(text.spans.iter().map(|span| span.text.as_str()).collect::<String>())
+        } else {None}
+    }).collect();
+    assert!(labels.iter().any(|label| label == "Available contact"));
+    assert!(labels.iter().any(|label| label == "New Contact"));
+    assert!(!labels.iter().any(|label| label.starts_with("Current member")));
+    on_submit(&mut ctx, &vec![State::Selection(vec!["invalid name".into()])]);
+    assert_eq!(room.pending().members.len(), 2);
+    on_submit(&mut ctx, &vec![State::Selection(vec![names()[2].to_string()])]);
     assert_eq!(room.pending().members, names());
 }
 

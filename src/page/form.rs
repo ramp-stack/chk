@@ -28,8 +28,11 @@ impl FormPage {
     ) -> Self {
         let header = Header::stack(theme, &title, None);
         let content = item.build(theme, is_mobile).unwrap_or_default();
-        let bumper =
+        let mut bumper =
             PelicanBumper::stack(theme, None, Box::new(|_: &mut Context, _: &Theme| {}), None);
+        // Validation runs asynchronously. Do not allow an unvalidated form to
+        // advance during the first frame (including an empty selector).
+        bumper.disable(true);
         let page =
             PelicanPage::new(header, Content::new(Offset::Start, content, validate), Some(bumper));
 

@@ -14,6 +14,11 @@ use crate::closure::FormSubmit;
 pub struct ProfilePage;
 impl ProfilePage {
     pub fn editing(is_me: bool, profile: Instance<Profile>, is_mobile: bool) -> PageType {
+        Self::editing_with_contact_actions(is_me, profile, is_mobile, None)
+    }
+
+    pub(crate) fn editing_with_contact_actions(is_me: bool, profile: Instance<Profile>,
+        is_mobile: bool, contact_actions: Option<Vec<ActionItem>>) -> PageType {
         let mut p = profile.clone();
         let closure = Box::new(move |_ctx: &mut Context, objects: &Vec<State>| {
             if let Some(State::Text(result)) = objects.get(1) {
@@ -34,7 +39,7 @@ impl ProfilePage {
         let display = if is_me {
             vec![Display::cta(
                 "Orange name", None, &my_name.to_string(),
-                vec![
+                contact_actions.unwrap_or_else(|| vec![
                     ActionItem::new_with_active(
                         Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy,
                     ),
@@ -44,7 +49,7 @@ impl ProfilePage {
                             is_mobile,
                         )))])), "Display QR Code", Icons::QrCode,
                     ),
-                ],
+                ]),
             )]
         } else {
             vec![]

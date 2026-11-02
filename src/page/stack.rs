@@ -8,6 +8,7 @@ use pelican_ui::theme::{Theme, Icons};
 use crate::{Bumper, FlowBuilder};
 use crate::items::{Input, Display};
 use crate::closure::NavFn;
+use crate::button_label::button_label;
 
 #[derive(Debug, Component, Clone)]
 pub struct StackPage(Stack, PelicanPage);
@@ -80,7 +81,7 @@ impl StackPage {
                 };
                 let secondary = secondary.clone().map(|(l, a)| {
                     (
-                        l,
+                        button_label(&l),
                         Box::new(move |ctx: &mut Context, theme: &Theme| {
                             (a.clone().get())(ctx, theme);
                             (0..1).for_each(|_| {
@@ -89,7 +90,7 @@ impl StackPage {
                         }) as Box<dyn Callback>,
                     )
                 });
-                let bumper = PelicanBumper::stack(theme, Some(&label), on_click, secondary);
+                let bumper = PelicanBumper::stack(theme, Some(&button_label(&label)), on_click, secondary);
                 let header = Header::stack(theme, &title, icon);
                 (header, Some(bumper))
             }

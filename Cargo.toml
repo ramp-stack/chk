@@ -23,6 +23,7 @@ rand = "0.8"
 uuid = {version = "1.16.0", features = ["v4", "js"]}
 
 futures = "0.3.34"
+async-channel = "2.5"
 
 [dev-dependencies]
 media = {package = "media2", version = "0.1.0"}

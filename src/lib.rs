@@ -8,6 +8,14 @@ pub use ptsd::{Validate, Validator, Watched};
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 
+mod button_label;
+mod selection;
+pub use selection::Selector;
+
+pub mod invitations;
+pub use invitations::{Invitations, InvitationLinks};
+mod contact_invitations;
+
 pub mod listener;
 pub use listener::*;
 pub mod closure;
@@ -59,6 +67,13 @@ pub trait App: Sized + 'static {
     /// App-owned configuration, supplied before any GIF picker is created.
     fn giphy_api_key(&self) -> Option<&str> {None}
     fn keyboard(&self, _ctx: &Context, _theme: &Theme) -> Option<Box<dyn prism::drawable::Drawable>> {None}
+
+    /// Build the standard interface and deliver queued invitations to it.
+    fn build_with_invitations<T: Clone + std::fmt::Debug + 'static>(self, ctx: &mut Context, assets: Assets,
+        invitations: &Invitations<T>) -> InvitationLinks<T> {
+        let theme = self.theme().to_pelican(assets.clone());
+        invitations.wrap(self.build(ctx, assets), theme)
+    }
 
     fn build(self, ctx: &mut Context, assets: Assets) -> pelican_ui::interface::general::Interface {
         let theme = self.theme().to_pelican(assets);
