@@ -21,28 +21,38 @@ use pelican_ui::components::text::{Text, TextStyle, TextSize};
 use pelican_ui::components::avatar::{Avatar, AvatarSize};
 pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
-use pelican_ui::components::{SearchbarEvent, Keypad, TextInputEvent};
+use pelican_ui::components::{Keypad, TextInputEvent};
 use crate::selection::{Selector, SelectionInput};
 use pelican_ui::interface::general::FormEvent;
 use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
-use prism::air::{Id, Name, Instance};
+use prism::air::{Id, Name};
 
-use crate::profiles::Profile;
-use crate::blocking::{Block, BlockAction};
 use crate::Page;
 use crate::form::State;
 use crate::flow::Flow;
-use crate::messages::ChatRoom;
-use crate::button_label::button_label;
 
-pub type InputAction = (String, Option<String>, Icons, Action);
+/// Page content keeps editable controls and presentation explicitly distinct.
+#[derive(Debug, Clone)]
+pub enum Item {
+    Input(Input),
+    Display(Display),
+}
+
+impl Item {
+    pub fn build(&mut self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
+        match self {
+            Self::Input(input) => input.build(theme, is_mobile),
+            Self::Display(display) => display.build(theme),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     Text {
         id: Uuid,
         label: String,
-        actions: Option<Vec<InputAction>>,
+        actions: Option<Vec<ActionItem>>,
         show_label: bool,
         preset: Option<String>,
     },
@@ -50,7 +60,7 @@ pub enum Input {
     Number { instructions: String },
     Date { instructions: String },
     Time { instructions: String },
-    Enumerator { items: Vec<EnumItem> },
+    Enumerator { items: Vec<ValueItem> },
     Avatar {
         content: AvatarContent,
         flair: Option<(Icons, AvatarIconStyle)>,
@@ -60,7 +70,7 @@ pub enum Input {
         id: Uuid,
         label: String,
         items: Vec<(ListItem, Name)>,
-        actions: Option<Vec<InputAction>>,
+        actions: Option<Vec<ActionItem>>,
     },
     Selection(Selector),
     QRCodeScanner {
@@ -87,18 +97,18 @@ impl Input {
         Input::Number { instructions: instructions.to_string() }
     }
 
-    pub fn enumerator(items: Vec<EnumItem>) -> Self { Input::Enumerator { items } }
+    pub fn enumerator(items: Vec<ValueItem>) -> Self { Input::Enumerator { items } }
 
     pub fn text(
         id: Uuid, label: &str, show_label: bool, preset: Option<String>,
-        actions: Option<Vec<InputAction>>,
+        actions: Option<Vec<ActionItem>>,
     ) -> Self { Input::Text { id, label: label.to_string(), show_label, preset, actions } }
 
     pub fn avatar(content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
         Input::Avatar { content, flair, action }
     }
 
-    pub fn search(id: Uuid, label: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<InputAction>>) -> Self {
+    pub fn search(id: Uuid, label: &str, items: Vec<(ListItem, Name)>, actions: Option<Vec<ActionItem>>) -> Self {
         Input::Search { id, label: label.to_string(), items, actions }
     }
 
@@ -108,12 +118,27 @@ impl Input {
         Input::QRCodeScanner { instructions: instructions.to_string(), alt, on_find }
     }
 
+    fn text_placeholder(label: &str) -> String {
+        let label = label.trim();
+        let first_word = label.split_whitespace().next().unwrap_or_default();
+        // Labels start sentences; placeholders continue after "Enter". Keep
+        // intentional capitalization in names such as AirName and acronyms.
+        let mut chars = label.chars();
+        let label = match chars.next() {
+            Some(first) if !first_word.chars().skip(1).any(char::is_uppercase) => {
+                first.to_lowercase().chain(chars).collect()
+            }
+            _ => label.to_string(),
+        };
+        format!("Enter {label}...")
+    }
+
     pub fn build(&self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Input::Text { id, show_label, label, preset, actions } => {
                 let mut items: Vec<Box<dyn Drawable>> = vec![Box::new(TextInput::new(
                     theme, *id, preset.as_deref(), show_label.then_some(label),
-                    Some(&format!("Enter {}...", label.to_lowercase())),
+                    Some(&Self::text_placeholder(label)),
                     None, None,
                 ))];
                 if let Some(a) = actions.as_ref()
@@ -121,11 +146,11 @@ impl Input {
                     items.push(Box::new(QuickActions::new(
                         theme, Offset::Start,
                         a.iter()
-                            .map(|(label, active, icon, action)| {
+                            .map(|ActionItem(action, label, active, icon)| {
                                 let on_click: Box<dyn Callback> = action.get();
                                 ActionData {
-                                    label: button_label(label),
-                                    active: active.as_deref().map(button_label),
+                                    label: ActionItem::format_label(label),
+                                    active: active.as_deref().map(ActionItem::format_label),
                                     icon: *icon,
                                     on_click,
                                 }
@@ -184,7 +209,7 @@ impl Input {
                     )));
                     items.push(Box::new(QuickActions::new(
                         theme, Offset::Center,
-                        vec![ActionData::new(&button_label(label), None, *icon, action.get())],
+                        vec![ActionData::new(&ActionItem::format_label(label), None, *icon, action.get())],
                     )));
                 }
                 items
@@ -230,7 +255,7 @@ pub enum Display {
     Icon { icon: Icons },
     Image { image: String, size: (f32, f32) },
     Cta { label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem> },
-    Table { label: String, items: Vec<TableItem>, actions: Option<Vec<ActionItem>> },
+    Table { label: String, items: Vec<ValueItem>, actions: Option<Vec<ActionItem>> },
     DataList { label: String, instructions: Option<String>, items: Vec<ListItem>, actions: Option<Vec<ActionItem>> },
     Currency { amount: Number, instructions: String },
     Number { number: Number, instructions: String },
@@ -293,7 +318,7 @@ impl Display {
         }
     }
 
-    pub fn table(label: &str, items: Vec<TableItem>, actions: Option<Vec<ActionItem>>) -> Self {
+    pub fn table(label: &str, items: Vec<ValueItem>, actions: Option<Vec<ActionItem>>) -> Self {
         Display::Table { label: label.to_string(), items, actions }
     }
 
@@ -360,8 +385,8 @@ impl Display {
                         .map(|ActionItem(action, label, active, icon)| {
                             let on_click: Box<dyn Callback> = action.get();
                             ActionData {
-                                label: button_label(label),
-                                active: active.as_deref().map(button_label),
+                                label: ActionItem::format_label(label),
+                                active: active.as_deref().map(ActionItem::format_label),
                                 icon: *icon,
                                 on_click,
                             }
@@ -375,8 +400,8 @@ impl Display {
                         .map(|ActionItem(action, label, active, icon)| {
                             let on_click: Box<dyn Callback> = action.get();
                             ActionData {
-                                label: button_label(label),
-                                active: active.as_deref().map(button_label),
+                                label: ActionItem::format_label(label),
+                                active: active.as_deref().map(ActionItem::format_label),
                                 icon: *icon,
                                 on_click,
                             }
@@ -387,7 +412,7 @@ impl Display {
                     theme, label,
                     items
                         .iter()
-                        .map(|TableItem { title, data }| (title.clone(), data.clone()))
+                        .map(|ValueItem { title, data }| (title.clone(), data.clone()))
                         .collect(),
                     actions,
                 ))]
@@ -395,7 +420,7 @@ impl Display {
             Display::DataList { label, instructions, items, actions } => {
                 let actions = actions.as_ref().map(|actions| actions.iter()
                     .map(|ActionItem(action, label, active, icon)| ActionData {
-                        label: button_label(label), active: active.as_deref().map(button_label),
+                        label: ActionItem::format_label(label), active: active.as_deref().map(ActionItem::format_label),
                         icon: *icon, on_click: action.get(),
                     }).collect());
                 vec![Box::new(DataItem::list(
@@ -450,7 +475,7 @@ impl Display {
                             .map(|ActionItem(action, label, _, icon)| {
                                 let on_click: Box<dyn Callback> = action.get();
                                 ActionData {
-                                    label: button_label(label),
+                                    label: ActionItem::format_label(label),
                                     active: None,
                                     icon: *icon,
                                     on_click,
@@ -472,7 +497,7 @@ pub struct ListItem {
     pub title: String,
     subtitle: String,
     secondary: Option<String>,
-    flow: Option<Flow>,
+    action: Option<Action>,
     badge: bool,
 }
 
@@ -487,23 +512,23 @@ impl PartialEq for ListItem {
 }
 
 impl ListItem {
-    pub fn plain(title: &str, subtitle: &str, secondary: Option<&str>, flow: Option<Flow>) -> Self {
+    pub fn plain(title: &str, subtitle: &str, secondary: Option<&str>, action: Option<Action>) -> Self {
         ListItem {
             avatar: None,
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             secondary: secondary.map(|s| s.to_string()),
-            flow, badge: false,
+            action, badge: false,
         }
     }
 
-    pub fn avatar(avatar: AvatarContent, title: &str, subtitle: &str, secondary: Option<&str>, flow: Option<Flow>) -> Self {
+    pub fn avatar(avatar: AvatarContent, title: &str, subtitle: &str, secondary: Option<&str>, action: Option<Action>) -> Self {
         ListItem {
             avatar: Some(avatar),
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             secondary: secondary.map(|s| s.to_string()),
-            flow, badge: false,
+            action, badge: false,
         }
     }
 
@@ -522,11 +547,9 @@ impl ListItem {
     }
 
     pub fn build(&self, theme: &Theme) -> PelicanListItem {
-        let ListItem { avatar, title, subtitle, secondary, flow, badge } = self.clone();
-        let has_flow = flow.is_some();
-        let closure = Box::new(move |ctx: &mut Context, theme: &Theme| {
-            if let Some(mut f) = flow.clone() { (f.build(ctx, theme))(ctx, theme); }
-        });
+        let ListItem { avatar, title, subtitle, secondary, action, badge } = self.clone();
+        let has_action = action.is_some();
+        let closure = action.unwrap_or(Action::None).get();
 
         let avatar = avatar.map(|content| {
             Avatar::new(theme, content, None, AvatarSize::Md, None)
@@ -534,7 +557,7 @@ impl ListItem {
         PelicanListItem::new(
             theme, avatar, ListItemInfoLeft::new(&title, Some(&subtitle), None, None).with_badge(badge),
             secondary.as_ref().map(|s| TitleSubtitle::new(s, Some("Details"))), None,
-            has_flow.then_some(Icons::Forward), closure,
+            has_action.then_some(Icons::Forward), closure,
         )
     }
 }
@@ -549,10 +572,6 @@ pub enum Action {
     Paste { id: Uuid },
     SetText { id: Uuid, value: String },
     Copy { data: String },
-    Message { name: Name },
-    ChooseSearch { name: Name },
-    Block { name: Name },
-    Unblock { name: Name },
     PickPhoto,
 }
 
@@ -565,8 +584,6 @@ impl Action {
     pub fn set_text(id: Uuid, value: impl Into<String>) -> Self {
         Action::SetText { id, value: value.into() }
     }
-
-    pub fn choose_search(name: Name) -> Self { Action::ChooseSearch { name } }
 
     pub fn share(data: &str) -> Self { Action::Share { data: data.to_string() } }
 
@@ -591,30 +608,11 @@ impl Action {
 
     pub fn flow(flow: Flow) -> Self { Action::Flow { flow } }
 
-    pub fn block(profile: Instance<Profile>) -> Self {
-        let profile = profile.pending();
-        let avatar = profile.avatar.clone();
-        let username = profile.username.clone();
-        let name = profile.name.unwrap();
-        Action::flow(Flow::action_target(
-            ("block", Action::Block { name }),
-            "blocked", &username, avatar, AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger),
-        ))
+    pub fn deferred_flow(mut build: impl FnMut(&mut Context, &Theme) -> Flow + Clone + 'static) -> Self {
+        Self::custom(move |ctx: &mut Context, theme: &Theme| {
+            (build(ctx, theme).build(ctx, theme))(ctx, theme);
+        })
     }
-
-    pub fn unblock(profile: Instance<Profile>) -> Self {
-        let profile = profile.pending();
-        let avatar = profile.avatar.clone();
-        let username = profile.username.clone();
-        let name = profile.name.unwrap();
-        Action::flow(Flow::action_target(
-            ("unblock", Action::Unblock { name }),
-            "unblocked", &username, avatar,
-            AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success),
-        ))
-    }
-
-    pub fn message(name: Name) -> Self { Action::Message { name } }
 
     pub fn get(&self) -> Box<dyn Callback> {
         match self {
@@ -665,46 +663,39 @@ impl Action {
                 })
             }
 
-            Action::Message { name } => {
-                let recipient = *name;
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    let instance = ChatRoom::create(ctx, vec![recipient]);
-                    let mut flow = Flow::new(vec![Page::messaging(ctx, &mut instance.clone())]);
-                    flow.build(ctx, theme)(ctx, theme);
-                })
-            }
-
-            Action::ChooseSearch { name } => {
-                let name = *name;
-                Box::new(move |ctx: &mut Context, _: &Theme| {
-                    ctx.emit(SearchbarEvent::Select(name))
-                })
-            }
-
-            Action::Block { name } => {
-                let name = *name;
-                Box::new(move |ctx: &mut Context, _: &Theme| {
-                    let mut block = Block::create(ctx, name);
-                    block.send(BlockAction::Block);
-                })
-            }
-
-            Action::Unblock { name } => {
-                let name = *name;
-                Box::new(move |ctx: &mut Context, _: &Theme| {
-                    let mut block = Block::create(ctx, name);
-                    block.send(BlockAction::Unblock);
-                })
-            }
-
             _ => Box::new(move |_ctx: &mut Context, _: &Theme| {}),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ActionItem(Action, String, Option<String>, Icons);
+pub struct ActionItem(pub(crate) Action, pub(crate) String, pub(crate) Option<String>, pub(crate) Icons);
 impl ActionItem {
+    pub(crate) fn format_label(label: &str) -> String {
+        let mut output = String::with_capacity(label.len());
+        let mut first_word = true;
+        for part in label.split_inclusive(char::is_whitespace) {
+            let letters = part
+                .chars()
+                .filter(|character| character.is_alphabetic())
+                .count();
+            let capitalize = first_word || letters > 3;
+            let mut first_letter = true;
+            for character in part.chars() {
+                if first_letter && character.is_alphabetic() {
+                    first_letter = false;
+                    first_word = false;
+                    if capitalize {
+                        output.extend(character.to_uppercase());
+                        continue;
+                    }
+                }
+                output.push(character);
+            }
+        }
+        output
+    }
+
     pub fn new(action: Action, label: &str, icon: Icons) -> Self {
         ActionItem(action, label.to_string(), None, icon)
     }
@@ -714,26 +705,15 @@ impl ActionItem {
     }
 }
 
+/// A labeled value shared by tables and enumerated choices.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableItem {
+pub struct ValueItem {
     title: String,
     data: String,
 }
-
-impl TableItem {
+impl ValueItem {
     pub fn new(title: &str, data: &str) -> Self {
-        TableItem { title: title.to_string(), data: data.to_string() }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct EnumItem {
-    title: String,
-    data: String,
-}
-impl EnumItem {
-    pub fn new(title: &str, data: &str) -> Self {
-        EnumItem { title: title.to_string(), data: data.to_string() }
+        Self {title: title.to_string(), data: data.to_string()}
     }
     fn get(&self) -> (&str, &str, Box<dyn Callback>) {
         (&self.title, &self.data, Box::new(|_, _| {}))
@@ -825,5 +805,41 @@ struct PickPhoto(Id);
 impl Event for PickPhoto {
     fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
         for child in children { *child.event = Some(self.clone()); }
+    }
+}
+
+
+#[cfg(test)]
+mod button_label_tests {
+    use super::ActionItem;
+
+    #[test]
+    fn button_words_follow_the_length_rule() {
+        assert_eq!(ActionItem::format_label("add password"), "Add Password");
+        assert_eq!(ActionItem::format_label("Share a login"), "Share a Login");
+        assert_eq!(ActionItem::format_label("Save all"), "Save all");
+        assert_eq!(ActionItem::format_label("go to my profile"), "Go to my Profile");
+        assert_eq!(ActionItem::format_label("Capital letter"), "Capital Letter");
+        assert_eq!(ActionItem::format_label("Special character"), "Special Character");
+    }
+
+    #[test]
+    fn acronyms_whitespace_and_existing_case_are_preserved() {
+        assert_eq!(ActionItem::format_label("Scan QR code"), "Scan QR Code");
+        assert_eq!(ActionItem::format_label("Open URL"), "Open URL");
+        assert_eq!(ActionItem::format_label("  paste\tclipboard\n"), "  Paste\tClipboard\n");
+        assert_eq!(ActionItem::format_label("Copy iCloud URL"), "Copy ICloud URL");
+        assert_eq!(ActionItem::format_label("Send to NASA"), "Send to NASA");
+    }
+
+    #[test]
+    fn punctuation_and_unicode_do_not_break_word_casing() {
+        assert_eq!(ActionItem::format_label("show (code)"), "Show (Code)");
+        assert_eq!(ActionItem::format_label("add (a) key"), "Add (a) key");
+        assert_eq!(ActionItem::format_label("copy über"), "Copy Über");
+        assert_eq!(ActionItem::format_label("…"), "…");
+        assert_eq!(ActionItem::format_label(""), "");
+        let label = "Paste Clipboard";
+        assert_eq!(ActionItem::format_label(&ActionItem::format_label(label)), label);
     }
 }

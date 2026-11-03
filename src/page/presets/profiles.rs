@@ -7,7 +7,7 @@ use crate::profiles::{Profile, ProfileAction};
 use crate::blocking::Block;
 use crate::{Page, ActionItem, PageType, FormItem, Bumper};
 use crate::flow::Flow;
-use crate::form::{State, FormValidState, FormComplete};
+use crate::form::{FormValues, FormValidState, FormComplete};
 use crate::items::{Action, Display, AvatarPurpose};
 use crate::closure::FormSubmit;
 
@@ -20,14 +20,14 @@ impl ProfilePage {
     pub(crate) fn editing_with_contact_actions(is_me: bool, profile: Instance<Profile>,
         is_mobile: bool, contact_actions: Option<Vec<ActionItem>>) -> PageType {
         let mut p = profile.clone();
-        let closure = Box::new(move |_ctx: &mut Context, objects: &Vec<State>| {
-            if let Some(State::Text(result)) = objects.get(1) {
+        let closure = Box::new(move |_ctx: &mut Context, objects: &FormValues| {
+            if let Some(result) = objects.text("username") {
                 p.send(ProfileAction::ChangeUsername(result.to_string()));
             }
-            if let Some(State::Text(result)) = objects.get(2) {
+            if let Some(result) = objects.text("about") {
                 p.send(ProfileAction::ChangeNotes(result.to_string()));
             }
-            if let Some(State::Avatar(result)) = objects.first() {
+            if let Some(result) = objects.avatar("avatar") {
                 p.send(ProfileAction::ChangeAvatar(result.clone()));
             }
             FormComplete::None
@@ -38,14 +38,14 @@ impl ProfilePage {
         let title = if is_me { "My profile" } else { "Edit profile" };
         let display = if is_me {
             vec![Display::cta(
-                "Orange name", None, &my_name.to_string(),
+                "AirName", None, &my_name.to_string(),
                 contact_actions.unwrap_or_else(|| vec![
                     ActionItem::new_with_active(
                         Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy,
                     ),
                     ActionItem::new(
                         Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
-                            "Share name", &my_name.to_string(), "Scan to share orange name.",
+                            "Share AirName", &my_name.to_string(), "Scan to share AirName.",
                             is_mobile,
                         )))])), "Display QR Code", Icons::QrCode,
                     ),
@@ -55,13 +55,13 @@ impl ProfilePage {
             vec![]
         };
 
-        PageType::edit_and_display(
+        PageType::edit(
             title, None,
             vec![
                 FormItem::avatar_with_preset(
                     "Avatar", p.avatar.clone(), Action::PickPhoto,
                     |_ctx: &mut Context, _: String| FormValidState::Valid,
-                ),
+                ).named("avatar"),
                 FormItem::text_with_preset(
                     "Username", &p.username, None,
                     |_ctx: &mut Context, value: String| {
@@ -71,11 +71,11 @@ impl ProfilePage {
                             FormValidState::Valid
                         }
                     },
-                ),
+                ).named("username"),
                 FormItem::text_with_preset(
                     "About me", &p.notes, None,
                     |_ctx: &mut Context, _: String| FormValidState::Valid,
-                ),
+                ).named("about"),
             ], display, closure,
         )
     }
@@ -94,8 +94,8 @@ impl ProfileView {
         let is_blocked = !is_me && Block::did_i_block(ctx, profile.name.unwrap());
 
         let block_action = match is_blocked {
-            true => ActionItem::new(Action::unblock(p.clone()), "Unblock", Icons::Unblock),
-            false => ActionItem::new(Action::block(p.clone()), "Block", Icons::Block),
+            true => ActionItem::new(crate::ChatPresets::unblock(p.clone()), "Unblock", Icons::Unblock),
+            false => ActionItem::new(crate::ChatPresets::block(p.clone()), "Block", Icons::Block),
         };
 
         PageType::display(
@@ -104,20 +104,20 @@ impl ProfileView {
                 Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
                 Display::actions(
                     vec![
-                        ActionItem::new(Action::message(profile_name), "Message", Icons::Messages),
+                        ActionItem::new(crate::ChatPresets::message(profile_name), "Message", Icons::Messages),
                         block_action,
                     ], true,
                 ), Display::cta("About me", None, about_me, vec![]),
                 Display::cta(
-                    "Orange name", None, &profile_name.to_string(),
+                    "AirName", None, &profile_name.to_string(),
                     vec![
                         ActionItem::new_with_active(
                             Action::copy(&profile_name.to_string()), "Copy", "Copied", Icons::Copy,
                         ),
                         ActionItem::new(
                             Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
-                                "Share name", &profile_name.to_string(),
-                                "Scan to share orange name.", ctx.window.is_mobile,
+                                "Share AirName", &profile_name.to_string(),
+                                "Scan to share AirName.", ctx.window.is_mobile,
                             )))])), "Display QR Code", Icons::QrCode,
                         ),
                     ],
@@ -125,7 +125,7 @@ impl ProfileView {
             ],
             Some((
                 Icons::Edit,
-                Box::new(move |ctx: &mut Context, _: &Theme| {
+                Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
                     Flow::new(vec![Page::Static(Box::new(ProfilePage::editing(
                         is_me, p.clone(), ctx.window.is_mobile,
                     )))])

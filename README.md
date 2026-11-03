@@ -14,10 +14,92 @@ Instead of choosing specific UI components such as text inputs, radio selectors,
 
 CHK currently targets **Pelican UI**, with plans to support additional Prism-based UI systems in the future.
 
+## Page items and presets
+
+`Item::Input(Input::...)` and `Item::Display(Display::...)` explicitly distinguish
+editable controls from presentation. `PageType::content` accepts an ordered list
+of these items. The typed `PageType::input` and `PageType::display` constructors
+remain conveniences; both now produce the same `Content` variant.
+
+```rust
+let page = PageType::content("Details", vec![
+    Item::Display(Display::text("Choose a contact to continue.")),
+    Item::Input(Input::selection(selector)),
+], None, Bumper::Default, Offset::Start);
+```
+
+Use `FormItem` for fields requiring validation and submission. `PageType::edit`
+accepts those fields directly with optional display content and a header action;
+there is no separate `EditAndDisplay` variant. `Form::page` uses the same editor.
+`Form::flow` still provides one field per step, with optional `Review` and `Success`.
+
+`chk::presets` exposes the standard page presets. Chat applications can construct
+their navigation directly, including the user's avatar on the Profile tab.
+The Profile tab watches the saved avatar, including synced changes, and refreshes
+when shown if changes arrived while navigation was hidden:
+
+```rust
+vec![
+    RootInfo::messages(ctx, theme, invitations),
+    RootInfo::contacts(ctx, theme, invitations),
+    RootInfo::profile(ctx, theme, invitations),
+]
+```
+
+`RootInfo::messages` starts CHK's membership-aware notification subscription service.
+`ChatPresets` supplies the underlying pages and the new-message, new-contact,
+and contact selection flows for applications that need them individually.
+The message list watches rooms, profiles, and per-reader read state. Contacts and
+messages retain their existing navigation, sorting, unread badges, and previews.
+All contact identity labels use **AirName**. Apps provide their invitation URL,
+parser, and receive action through `App::invitations`; no Orange URLs or branding
+are embedded in these presets. `ChatPresets::default()` supports raw AirNames
+without requiring an invitation configuration. `select_contact` also supports
+an exclusion list, used by the group-member picker.
+
+API migration from the previous descriptions:
+
+- `PageType::{Display, Input, Both}` → `PageType::Content`.
+- `PageType::EditAndDisplay` → `PageType::Edit`.
+- `PageType::edit` now takes `FormItem`s and an optional header, with validators
+  derived from the fields rather than a separate validation list.
+- `InputAction` tuples → `ActionItem`; `FormAction::Custom` takes an `ActionItem`.
+- `TableItem` and `EnumItem` → `ValueItem`.
+- Unused form-storage callbacks and unused closure traits have been removed.
+- Headers, root bumper actions, and `ListItem::action` accept `Action`. Use
+  `Action::deferred_flow` when a flow needs current context at activation time.
+- Chat actions live on `ChatPresets::message`, `block`, and `unblock`; generic
+  `Action` no longer has chat-specific variants.
+- Form submit, review, and success callbacks receive `FormValues`, replacing
+  positional state vectors.
+
+## Named fields and saving
+
+Give each form field a stable key with `.named("username")`. Without an explicit
+key, the field's title is used. Keys must be nonempty and unique across the form.
+Read values using typed accessors such as `values.text("username")`,
+`values.avatar("avatar")`, or `values.selection("members")`; `values.get(key)`
+returns the underlying `State` when needed. Reordering fields or translating
+labels does not change callbacks when fields have explicit keys.
+
+Return `FormComplete::None` on success to continue normally, or
+`FormComplete::Error(message)` to show a failure and retain the draft. Return
+`FormComplete::pending(future)` for asynchronous work; the future returns another
+`FormComplete`. CHK disables submission and blocks navigation while it is pending.
+Return a completion action instead of navigating from inside the submit callback,
+so CHK can finish save bookkeeping before navigation.
+
+Edit pages enable Save only for valid changes. Successful saves update the
+baseline to the submitted values; failed saves keep the draft dirty. Edits made
+while a save is pending remain unsaved. Leaving an active dirty editor offers
+Save and leave, Discard changes, or Keep editing. Pushed pickers and dialogs retain
+the editor underneath them. `App::build` installs the form host automatically;
+custom interfaces should wrap their interface in `FormHost`.
+
 ## Group conversations
 
 The group info screen provides name/photo editing, contact selection (including a new
-Orange name or QR code), and a confirmation before leaving. Any current member can
+AirName or QR code), and a confirmation before leaving. Any current member can
 edit the group or invite someone. New members receive the existing conversation history;
 available video attachments are shared separately. Leaving hides the room in Orange,
 disables notifications and sending, and preserves its group identity even with fewer
@@ -91,8 +173,8 @@ its own event scope, and clones refer to that same input.
 let selector = Selector::new("passwords", vec![
     (ListItem::plain("Amazon", "family@example.test", None, None), "login-123".into()),
 ]).with_limit(32).with_chip_subtitles(true);
-let field = FormItem::selection("Choose passwords", selector.clone());
-// Submit receives State::Selection(Vec<String>).
+let field = FormItem::selection("Choose passwords", selector.clone()).named("passwords");
+// Submit reads values.selection("passwords").
 ```
 
 The standard form supplies searchable rows, removable selected chips, and Continue
@@ -108,8 +190,8 @@ select its row in the original selector. Repeating this action updates the row a
 keeps it selected. Create a fresh `Selector` for each independent input.
 
 Legacy `FormItem::search` and `Input::search` use this same control and continue to
-return `State::Search(Vec<Name>)`. `Action::choose_search` is a compatibility action
-for those legacy inputs; new flows should use the scoped `Selector::select` action.
+return `State::Search(Vec<Name>)`, available through `values.search(key)`.
+Use the scoped `Selector::select` action to add a choice from a nested flow.
 
 ## Application events
 

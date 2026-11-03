@@ -2,7 +2,7 @@ use pelican_ui::{Context, theme::{Theme, Icons}, navigation::NavigationEvent};
 use prism::air::{Instance, Name};
 use ptsd::layout::Offset;
 use crate::{Action, ActionItem, AvatarPurpose, Bumper, Display, Flow, Form, FormAction,
-    FormComplete, FormItem, FormSubmit, FormValidState, ListItem, Page, PageType, Selector, State, Watch};
+    FormComplete, FormItem, FormSubmit, FormValidState, ListItem, Page, PageType, Selector, FormValues, Watch};
 use crate::messages::{ChatRoom, ChatRoomAction};
 use crate::profiles::Profile;
 
@@ -25,7 +25,7 @@ impl GroupMessageInfoPage {
             let data = profile.pending().clone();
             let title = if *name == me {format!("{} (You)", data.username)} else {data.username.clone()};
             let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
-            ListItem::avatar(data.avatar.clone(), &title, &data.name(), None, Some(flow))
+            ListItem::avatar(data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)))
         }).collect();
         let mut display = vec![
             Display::avatar(details.photo.clone(), AvatarPurpose::None),
@@ -49,9 +49,9 @@ impl GroupMessageInfoPage {
             display.push(Display::instructions("You are no longer a member of this group."));
             display.push(Display::data_list("Members", None, items, None));
         }
-        let edit = active.then(|| (Icons::Edit, Box::new(move |_: &mut Context, _: &Theme| {
+        let edit = active.then(|| (Icons::Edit, Action::deferred_flow(move |_: &mut Context, _: &Theme| {
             Flow::new(vec![Page::Static(Box::new(Self::edit(room.clone())))])
-        }) as Box<dyn crate::closure::FlowBuilder>));
+        })));
         PageType::display("Group info", display, edit, Bumper::None, Offset::Start)
     }
 
@@ -59,25 +59,24 @@ impl GroupMessageInfoPage {
         let original = room.pending().group_details();
         let photo = original.photo.clone();
         let name = original.name.clone();
-        let save = Box::new(move |ctx: &mut Context, values: &Vec<State>| {
-            if !room.pending().members.contains(&ctx.air.me()) {return FormComplete::None;}
-            if let Some(State::Avatar(photo)) = values.first() && *photo != original.photo {
+        let save = Box::new(move |ctx: &mut Context, values: &FormValues| {
+            if !room.pending().members.contains(&ctx.air.me()) {return FormComplete::Error("You are no longer a member of this group.".into());}
+            if let Some(photo) = values.avatar("photo") && *photo != original.photo {
                 room.send(ChatRoomAction::SetGroupPhoto(photo.clone()));
             }
-            if let Some(State::Text(name)) = values.get(1) && name.trim() != original.name {
-                room.send(ChatRoomAction::RenameGroup(name.clone()));
+            if let Some(name) = values.text("name") && name.trim() != original.name {
+                room.send(ChatRoomAction::RenameGroup(name.to_owned()));
             }
-            ctx.emit(NavigationEvent::Pop);
-            FormComplete::None
+            FormComplete::Action(Action::custom(|ctx: &mut Context, _: &Theme| ctx.emit(NavigationEvent::Pop)))
         }) as Box<dyn FormSubmit>;
-        PageType::edit_and_display("Edit group", None, vec![
+        PageType::edit("Edit group", None, vec![
             FormItem::avatar_with_preset("Group photo", photo, Action::PickPhoto,
-                |_: &mut Context, _: String| FormValidState::Valid),
+                |_: &mut Context, _: String| FormValidState::Valid).named("photo"),
             FormItem::text_with_preset("Group name", &name, None, |_: &mut Context, name: String| {
                 if name.trim().is_empty() {FormValidState::InvalidWithData("Enter a group name.".into())}
                 else if name.trim().chars().count() > 80 {FormValidState::InvalidWithData("Use 80 characters or fewer.".into())}
                 else {FormValidState::Valid}
-            }),
+            }).named("name"),
         ], vec![], save)
     }
 
@@ -91,11 +90,11 @@ impl GroupMessageInfoPage {
         }).collect();
         items.sort_by_key(|(_, name)| *name);
         items.dedup_by_key(|(_, name)| *name);
-        let selector = Selector::new("profile name", items.into_iter()
+        let selector = Selector::new("contacts", items.into_iter()
             .map(|(item, name)| (item, name.to_string())).collect());
-        let new_contact = Self::new_contact(theme, members, selector.clone());
-        let submit = Box::new(move |ctx: &mut Context, values: &Vec<State>| {
-            let Some(State::Selection(keys)) = values.first() else {return FormComplete::None;};
+        let new_contact = crate::ChatPresets::default().select_contact(theme, selector.clone(), members);
+        let submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
+            let Some(keys) = values.selection("members") else {return FormComplete::None;};
             let Ok(names) = keys.iter().map(|key| key.parse::<Name>()).collect::<Result<Vec<_>, _>>()
                 else {return FormComplete::None;};
             ChatRoom::add_members(ctx, &mut room, names);
@@ -103,29 +102,8 @@ impl GroupMessageInfoPage {
             FormComplete::None
         }) as Box<dyn FormSubmit>;
         Form::flow(theme, vec![FormItem::selection("Add members", selector.with_actions(vec![
-            FormAction::Custom("New contact".into(), None, Icons::Add,
-                Action::flow(Flow::from_form(new_contact))),
-        ]))], None, None, submit)
-    }
-
-    fn new_contact(theme: &Theme, members: Vec<Name>, selector: Selector) -> Form {
-        let submit = Box::new(move |ctx: &mut Context, values: &Vec<State>| {
-            let Some(State::Text(value)) = values.first() else {return FormComplete::None;};
-            let Ok(name) = value.trim().parse::<Name>() else {return FormComplete::None;};
-            let profile = Profile::from_name(ctx, name);
-            let profile = profile.pending();
-            let item = ListItem::avatar(profile.avatar.clone(), &profile.username, &profile.name(), None, None);
-            FormComplete::Return(selector.select(item, name.to_string()).get())
-        }) as Box<dyn FormSubmit>;
-        Form::flow(theme, vec![FormItem::text("New contact", "orange name", Some(vec![
-            FormAction::Paste, FormAction::scan_qr_code("Scan a profile QR code"),
-        ]), move |_: &mut Context, value: String| {
-            match value.trim().parse::<Name>() {
-                Ok(name) if members.contains(&name) => FormValidState::InvalidWithData("Already in this group.".into()),
-                Ok(_) => FormValidState::Valid,
-                Err(_) => FormValidState::InvalidWithData("Enter a valid Orange name.".into()),
-            }
-        })], None, None, submit)
+            FormAction::Custom(ActionItem::new(Action::flow(Flow::from_form(new_contact)), "New contact", Icons::Add)),
+        ])).named("members")], None, None, submit)
     }
 
     pub fn leave(mut room: Instance<ChatRoom>) -> PageType {

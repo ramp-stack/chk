@@ -8,15 +8,15 @@ use prism::hardware::Image;
 use ptsd::layout::{Column, Offset, Padding, Size, Stack};
 use ptsd::navigation::AppPage;
 
-use crate::FlowBuilder;
+use crate::Action;
 
 #[derive(Debug, Component, Clone)]
 pub struct PhotoPage(Column, Header, FittedPhoto);
 impl AppPage for PhotoPage {}
 
 impl PhotoPage {
-    pub fn new(ctx: &mut Context, theme: &Theme, photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
-        let icon = header.map(|(icon, mut flow)| (icon, (flow)(ctx, theme).build(ctx, theme)));
+    pub fn new(_ctx: &mut Context, theme: &Theme, photo: Photo, header: Option<(Icons, Action)>) -> Self {
+        let icon = header.map(|(icon, action)| (icon, action.get()));
         let header = Header::stack(theme, "Photo", icon);
         Self(
             Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None), header,

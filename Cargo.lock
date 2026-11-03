@@ -206,6 +206,7 @@ dependencies = [
  "async-channel",
  "dyn-clone",
  "futures",
+ "include_dir",
  "media2",
  "pelican_ui",
  "postcard",
@@ -1285,8 +1286,6 @@ dependencies = [
 [[package]]
 name = "prism2"
 version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b4de1c17b00613fc65d31ba782ba53179293dbe96ec0f8d862a8370fa034073"
 dependencies = [
  "air",
  "downcast-rs",
@@ -2513,3 +2512,11 @@ checksum = "73ab332fe2f6680068f3582b16a24f90ad7096d5d39b974d1c0aff0125116f02"
 dependencies = [
  "simd-adler32",
 ]
+
+[[patch.unused]]
+name = "maverick_os"
+version = "5.0.2"
+
+[[patch.unused]]
+name = "ramp2"
+version = "3.0.4"

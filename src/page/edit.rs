@@ -1,7 +1,7 @@
 use futures::{StreamExt, stream::FuturesUnordered};
 use prism::events::{ChildEvent, DynEvent, Event, OnEvent, on_event};
 use pelican_ui::drawable::{Component, Drawable};
-use pelican_ui::{Context, Callback};
+use pelican_ui::{Context};
 use ptsd::layout::{Stack, Offset};
 use ptsd::Validate;
 use pelican_ui::interface::general::{
@@ -15,7 +15,7 @@ use std::ops::Range;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::{FormItem, State, FlowBuilder, Icons};
+use crate::{FormItem, FormValues, FormComplete, Action, Icons};
 use crate::items::{Input, Display};
 use crate::closure::FormSubmit;
 
@@ -23,10 +23,15 @@ use crate::closure::FormSubmit;
 pub struct EditPage(
     Stack, pub PelicanPage,
     #[skip] Box<dyn FormSubmit>,
-    #[skip] Option<Vec<State>>,
+    #[skip] Option<FormValues>,
     #[skip] bool,
-    #[skip] Vec<State>,
+    #[skip] FormValues,
     #[skip] bool,
+    #[skip] Vec<(String, Range<usize>)>,
+    #[skip] Content,
+    #[skip] Theme,
+    #[skip] bool,
+    #[skip] Option<pelican_ui::navigation::NavigationEvent>,
 );
 #[on_event]
 impl OnEvent<FormEvent> for EditPage {
@@ -41,7 +46,7 @@ impl OnEvent<FormEvent> for EditPage {
                 // Page handles validation too; include the edit requirement so
                 // a valid, unchanged form cannot re-enable Save downstream.
                 return prism::events![FormEvent::Validated {
-                    id, valid: valid && self.values() != self.5,
+                    id, valid: valid && self.values() != self.5 && !self.10,
                 }];
             }
             _ => {}
@@ -52,32 +57,84 @@ impl OnEvent<FormEvent> for EditPage {
 }
 
 #[derive(Debug, Clone)]
-struct EditSaved(uuid::Uuid, Vec<State>);
-impl Event for EditSaved {
-    fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+struct EditRequest(uuid::Uuid, Option<pelican_ui::navigation::NavigationEvent>);
+impl Event for EditRequest {
+    fn pass(&self, _: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
         for child in children {*child.event = Some(self.clone());}
     }
 }
-
+#[derive(Debug, Clone)]
+struct EditFinished(uuid::Uuid, FormValues, Content, FormComplete);
+impl Event for EditFinished {
+    fn pass(&self, _: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
+    }
+}
+#[derive(Debug, Clone)]
+struct EditDiscard(uuid::Uuid);
+impl Event for EditDiscard {
+    fn pass(&self, _: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
+    }
+}
 #[on_event]
-impl OnEvent<EditSaved> for EditPage {
-    fn on(&mut self, _ctx: &mut Context, event: EditSaved) -> Vec<Box<dyn DynEvent>> {
-        if event.0 == self.1.content.id() {
-            self.5 = event.1;
-            self.update_save_button();
+impl OnEvent<EditRequest> for EditPage {
+    fn on(&mut self, ctx: &mut Context, event: EditRequest) -> Vec<Box<dyn DynEvent>> {
+        if event.0 != self.1.content.id() {return prism::events![event];}
+        if self.10 {return vec![];}
+        if !self.6 {
+            FormComplete::Error("Please correct the highlighted fields before saving.".into()).run(ctx, &self.9);
             return vec![];
         }
-        prism::events![event]
+        if self.values() == self.5 {return vec![];}
+        self.10 = true;
+        self.11 = event.1;
+        self.update_save_button();
+        let saved = self.values();
+        let snapshot = self.1.content.clone();
+        let values = self.3.clone().unwrap_or_else(|| saved.clone());
+        let result = (self.2)(ctx, &values);
+        if let FormComplete::Pending(pending) = result {
+            let id = self.1.content.id();
+            FormComplete::pending(async move {
+                let result = pending.0.await.resolved().await;
+                FormComplete::Action(Action::custom(move |ctx: &mut Context, _: &Theme| {
+                    ctx.emit(EditFinished(id, saved.clone(), snapshot.clone(), result.clone()));
+                }))
+            }).run(ctx, &self.9);
+        } else {self.finish(ctx, saved, snapshot, result);}
+        vec![]
+    }
+}
+#[on_event]
+impl OnEvent<EditFinished> for EditPage {
+    fn on(&mut self, ctx: &mut Context, event: EditFinished) -> Vec<Box<dyn DynEvent>> {
+        if event.0 != self.1.content.id() {return prism::events![event];}
+        self.finish(ctx, event.1, event.2, event.3);
+        vec![]
+    }
+}
+#[on_event]
+impl OnEvent<EditDiscard> for EditPage {
+    fn on(&mut self, ctx: &mut Context, event: EditDiscard) -> Vec<Box<dyn DynEvent>> {
+        if event.0 != self.1.content.id() {return prism::events![event];}
+        self.1.content = self.8.clone();
+        self.3 = None;
+        self.on_change(self.values());
+        ctx.emit(FormEvent::Refresh(self.1.content.id()));
+        vec![]
     }
 }
 impl AppPage for EditPage {}
 impl EditPage {
     pub fn new(
         theme: &Theme, is_mobile: bool, title: String, input: Vec<Input>, display: Vec<Display>,
-        validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>,
+        validations: Vec<Box<dyn ValidationFn>>, ids: Vec<String>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
+        assert_eq!(ids.len(), input.len(), "Each form input needs one field ID");
         let header = Header::stack(theme, &title, None);
-        let content = Self::content(theme, is_mobile, input, display, validations);
+        let (content, ranges) = Self::content(theme, is_mobile, input, display, validations);
+        let ids = ids.into_iter().zip(ranges).collect();
 
         let bumper = PelicanBumper::stack(
             theme, Some("Save"),
@@ -86,28 +143,22 @@ impl EditPage {
         );
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        Self::from_page(page, on_save, false)
+        Self::from_page(page, on_save, false, ids, theme)
     }
 
     pub fn edit_and_display(
         theme: &Theme, is_mobile: bool, title: String,
-        mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
+        mut header: Option<(Icons, Action)>, items: Vec<FormItem>,
         display: Vec<Display>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
-        let header = header.as_mut().map(|(icon, flow)| {
-            let mut flow = flow.clone();
-            (
-                *icon,
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
-                }) as Box<dyn Callback>,
-            )
-        });
+        let header = header.as_mut().map(|(icon, action)| (*icon, action.get()));
 
         let header = Header::stack(theme, &title, header);
+        let ids = FormItem::ids(&items);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let content = Self::content(theme, is_mobile, inputs, display, validations);
+        let (content, ranges) = Self::content(theme, is_mobile, inputs, display, validations);
+        let ids = ids.into_iter().zip(ranges).collect();
 
         let bumper = PelicanBumper::stack(
             theme, Some("Save"),
@@ -116,28 +167,22 @@ impl EditPage {
         );
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        Self::from_page(page, on_save, false)
+        Self::from_page(page, on_save, false, ids, theme)
     }
 
     pub fn root(
         theme: &Theme, is_mobile: bool, title: String,
-        mut header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
+        mut header: Option<(Icons, Action)>, items: Vec<FormItem>,
         display: Vec<Display>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
-        let header = header.as_mut().map(|(icon, flow)| {
-            let mut flow = flow.clone();
-            (
-                *icon,
-                Box::new(move |ctx: &mut Context, theme: &Theme| {
-                    ((flow)(ctx, theme).build(ctx, theme))(ctx, theme)
-                }) as Box<dyn Callback>,
-            )
-        });
+        let header = header.as_mut().map(|(icon, action)| (*icon, action.get()));
 
         let header = Header::home(theme, &title, header);
+        let ids = FormItem::ids(&items);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let content = Self::content(theme, is_mobile, inputs, display, validations);
+        let (content, ranges) = Self::content(theme, is_mobile, inputs, display, validations);
+        let ids = ids.into_iter().zip(ranges).collect();
 
         let bumper = PelicanBumper::home(
             theme,
@@ -146,52 +191,75 @@ impl EditPage {
         );
         let page = PelicanPage::new(header, content, Some(bumper));
 
-        Self::from_page(page, on_save, true)
+        Self::from_page(page, on_save, true, ids, theme)
     }
 
-    fn from_page(mut page: PelicanPage, on_save: Box<dyn FormSubmit>, root: bool) -> Self {
-        let initial = page.content.children().iter()
-            .filter_map(|child| Input::state(&**child)).collect();
+    fn from_page(mut page: PelicanPage, on_save: Box<dyn FormSubmit>, root: bool, ids: Vec<(String, Range<usize>)>, theme: &Theme) -> Self {
+        let snapshot = page.content.clone();
+        let initial = Self::read_values(&page.content, &ids);
         page.bumper.as_mut().unwrap().disable(true);
-        Self(Stack::default(), page, on_save, None, root, initial, false)
+        Self(Stack::default(), page, on_save, None, root, initial, false, ids, snapshot,
+            theme.clone(), false, None)
     }
 
-    fn values(&self) -> Vec<State> {
-        self.1.content.children().iter().filter_map(|child| Input::state(&**child)).collect()
+    fn read_values(content: &Content, fields: &[(String, Range<usize>)]) -> FormValues {
+        let children = content.children();
+        FormValues::new(fields.iter().map(|(id, range)| {
+            let mut states = children[range.clone()].iter().filter_map(|child| Input::state(&**child));
+            let state = states.next().expect("Each form field must produce one value");
+            assert!(states.next().is_none(), "A field must not produce multiple values");
+            (id.clone(), state)
+        }))
+    }
+
+    pub(crate) fn values(&self) -> FormValues {Self::read_values(&self.1.content, &self.7)}
+
+    fn finish(&mut self, ctx: &mut Context, saved: FormValues, snapshot: Content, mut result: FormComplete) {
+        self.10 = false;
+        let leave = self.11.take();
+        if !matches!(result, FormComplete::Error(_)) {
+            self.5 = saved;
+            self.8 = snapshot;
+        }
+        self.update_save_button();
+        if let Some(leave) = leave {
+            if matches!(result, FormComplete::Error(_)) {result.run(ctx, &self.9);}
+            else if self.values() == self.5 {ctx.emit(leave);}
+            // Edits typed during an asynchronous save remain dirty and visible.
+        } else {result.run(ctx, &self.9);}
     }
 
     fn update_save_button(&mut self) {
-        let enabled = self.6 && self.values() != self.5;
+        let enabled = self.6 && self.values() != self.5 && !self.10;
         self.1.bumper.as_mut().unwrap().disable(!enabled);
     }
 
-    fn content(theme: &Theme, is_mobile: bool, inputs: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>) -> Content {
+    fn content(theme: &Theme, is_mobile: bool, inputs: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>) -> (Content, Vec<Range<usize>>) {
         let mut children = Vec::new();
         let mut validators = Vec::new();
+        let mut ranges = Vec::new();
         let mut validations = validations.into_iter();
         for input in inputs {
             let start = children.len();
             children.extend(input.build(theme, is_mobile).unwrap_or_default());
+            ranges.push(start..children.len());
             if let Some(validation) = validations.next() {
                 validators.push((start..children.len(), validation));
             }
         }
         for mut item in display { children.extend(item.build(theme).unwrap_or_default()); }
-        Content::new(Offset::Start, children, Box::new(FormValidation(validators)))
+        (Content::new(Offset::Start, children, Box::new(FormValidation(validators))), ranges)
     }
 
-    pub fn on_change(&mut self, new: Vec<State>) {
+    pub fn on_change(&mut self, new: FormValues) {
         self.update_save_button();
-        if self.3.as_ref() == Some(&new) { return; }
-        self.3 = Some(new.clone());
-        let mut on_save = self.2.clone();
+        self.3 = Some(new);
         let id = self.1.content.id();
-        let values = self.values();
         *self.1.bumper.as_mut().unwrap().on_click()[0] = Box::new(move |ctx: &mut Context| {
-            (on_save)(ctx, &new);
-            ctx.emit(EditSaved(id, values.clone()));
+            ctx.emit(EditRequest(id, None));
         });
     }
+
 }
 
 #[derive(Clone)]
@@ -212,5 +280,141 @@ impl Validate<Vec<&mut Box<dyn Drawable>>, bool> for FormValidation {
             while let Some(update) = waits.next().await { if update.is_some() { return update; } }
             None
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DeferredSubmit(pub crate::PendingSubmit);
+impl Event for DeferredSubmit {
+    fn pass(&self, _: &mut Context, _: &mut [ChildEvent<'_, Self>]) {}
+}
+
+#[derive(Debug, Clone, Default)]
+struct CheckEdits(std::rc::Rc<std::cell::RefCell<Option<(uuid::Uuid, bool)>>>);
+impl Event for CheckEdits {
+    fn pass(&self, _: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
+    }
+}
+#[on_event]
+impl OnEvent<CheckEdits> for EditPage {
+    fn on(&mut self, _: &mut Context, event: CheckEdits) -> Vec<Box<dyn DynEvent>> {
+        if self.10 || self.values() != self.5 {*event.0.borrow_mut() = Some((self.1.content.id(), self.10));}
+        vec![]
+    }
+}
+
+/// Owns deferred submissions and checks the active editor before destructive navigation.
+/// App::build installs one host for the whole interface, including incoming invitations.
+#[derive(Debug, Clone)]
+pub struct FormHost {
+    inner: Box<dyn Drawable>,
+    theme: Theme,
+    pending: Vec<crate::PendingSubmit>,
+}
+impl FormHost {
+    pub fn new(inner: impl Drawable, theme: Theme) -> Self {
+        Self {inner: Box::new(inner), theme, pending: vec![]}
+    }
+
+    fn confirm(&self, ctx: &mut Context, id: uuid::Uuid, navigation: pelican_ui::navigation::NavigationEvent) {
+        use crate::{ActionItem, Bumper, Flow, Page, PageType};
+        use pelican_ui::navigation::NavigationEvent;
+        let save_navigation = navigation.clone();
+        let save = Action::custom(move |ctx: &mut Context, _: &Theme| {
+            let navigation = save_navigation.clone();
+            ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| {
+                ctx.emit(EditRequest(id, Some(navigation.clone())));
+            }));
+        });
+        let discard = Action::custom(move |ctx: &mut Context, _: &Theme| {
+            let navigation = navigation.clone();
+            ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| {
+                ctx.emit(EditDiscard(id));
+                ctx.emit(navigation.clone());
+            }));
+        });
+        let keep = Action::custom(|ctx: &mut Context, _: &Theme| ctx.emit(NavigationEvent::Reset));
+        let page = PageType::display("Unsaved changes", vec![
+            Display::instructions("Save your changes before leaving?"),
+            Display::actions(vec![
+                ActionItem::new(save, "Save and leave", Icons::Forward),
+                ActionItem::new(discard, "Discard changes", Icons::Block),
+                ActionItem::new(keep, "Keep editing", Icons::Edit),
+            ], false),
+        ], None, Bumper::None, Offset::Center);
+        (Flow::new(vec![Page::Static(Box::new(page))]).build(ctx, &self.theme))(ctx, &self.theme);
+    }
+}
+impl Drawable for FormHost {
+    fn request_width(&mut self) -> (f32, f32) {self.inner.request_width()}
+    fn request_height(&mut self, width: f32) -> (f32, f32) {self.inner.request_height(width)}
+    fn layout(&mut self, size: (f32, f32)) -> prism::drawable::LayoutTree {self.inner.layout(size)}
+    fn draw(&self, layout: &prism::drawable::LayoutTree, offset: prism::drawable::Offset,
+        bound: prism::drawable::Rect) -> Vec<prism::drawable::Instruction> {self.inner.draw(layout, offset, bound)}
+    fn event(&mut self, ctx: &mut Context, layout: &prism::drawable::LayoutTree, event: Box<dyn DynEvent>) {
+        use pelican_ui::navigation::NavigationEvent;
+        if let Some(deferred) = event.downcast_ref::<DeferredSubmit>() {
+            self.pending.push(deferred.0.clone());
+            return;
+        }
+        if let Some(navigation) = event.downcast_ref::<NavigationEvent>() {
+            // Push preserves the current page (pickers and dialogs must retain drafts).
+            if !matches!(navigation, NavigationEvent::Error(_)) {
+                let check = CheckEdits::default();
+                self.inner.event(ctx, layout, Box::new(check.clone()));
+                if let Some((id, saving)) = *check.0.borrow() {
+                    if saving {return;}
+                    if !matches!(navigation, NavigationEvent::Push(..)) {
+                        self.confirm(ctx, id, navigation.clone());
+                        return;
+                    }
+                }
+            }
+        }
+        self.inner.event(ctx, layout, event);
+    }
+    fn changed(&mut self) -> prism::events::ListenFuture<'_> {
+        use prism::events::ListenCallback;
+        Box::pin(async move {
+            let pending = self.pending.iter().map(|pending| pending.0.clone()).collect::<Vec<_>>();
+            let pending = Box::pin(async move {
+                if pending.is_empty() {std::future::pending().await}
+                else {
+                    let (result, index, _) = futures::future::select_all(pending).await;
+                    (index, result)
+                }
+            });
+            match futures::future::select(pending, self.inner.as_mut().changed()).await {
+                futures::future::Either::Left(((index, mut result), _)) => {
+                    Box::new(move |target: &mut dyn std::any::Any, ctx: &mut Context| {
+                        let target = target.downcast_mut::<Self>().unwrap();
+                        target.pending.remove(index);
+                        result.run(ctx, &target.theme);
+                    }) as ListenCallback
+                }
+                futures::future::Either::Right((callback, _)) => {
+                    Box::new(move |target: &mut dyn std::any::Any, ctx: &mut Context| {
+                        let target = target.downcast_mut::<Self>().unwrap();
+                        callback(target.inner.as_mut().as_any_mut(), ctx);
+                    }) as ListenCallback
+                }
+            }
+        })
+    }
+}
+
+#[on_event]
+impl OnEvent<CheckEdits> for crate::FormPage {
+    fn on(&mut self, _: &mut Context, event: CheckEdits) -> Vec<Box<dyn DynEvent>> {
+        if self.submitting() {*event.0.borrow_mut() = Some((self.1.content.id(), true));}
+        vec![]
+    }
+}
+#[on_event]
+impl OnEvent<CheckEdits> for crate::ReviewPage {
+    fn on(&mut self, _: &mut Context, event: CheckEdits) -> Vec<Box<dyn DynEvent>> {
+        if self.submitting() {*event.0.borrow_mut() = Some((self.1.content.id(), true));}
+        vec![]
     }
 }

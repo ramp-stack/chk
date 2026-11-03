@@ -1,3 +1,4 @@
+use crate::ActionItem;
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::{Context, Callback};
 use ptsd::layout::{Stack, Offset};
@@ -5,10 +6,9 @@ use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, P
 use pelican_ui::navigation::AppPage;
 use pelican_ui::theme::{Theme, Icons};
 
-use crate::{Bumper, FlowBuilder};
-use crate::items::{Input, Display};
+use crate::{Bumper, Action};
+use crate::items::Item;
 use crate::closure::NavFn;
-use crate::button_label::button_label;
 
 #[derive(Debug, Component, Clone)]
 pub struct StackPage(Stack, PelicanPage);
@@ -16,55 +16,23 @@ pub struct StackPage(Stack, PelicanPage);
 impl AppPage for StackPage {}
 impl StackPage {
     #[allow(clippy::too_many_arguments)]
-    pub fn display(
-        ctx: &mut Context, theme: &Theme, title: String, items: Vec<Display>, offset: Offset,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>,
+    pub fn content(
+        ctx: &mut Context, theme: &Theme, title: String, items: Vec<Item>, offset: Offset,
+        header: Option<(Icons, Action)>, bumper: Bumper, next: Option<NavFn>,
         flow_len: usize,
     ) -> Self {
-        let items = items
-            .into_iter()
-            .filter_map(|mut di| di.build(theme))
-            .flatten()
-            .collect::<Vec<Box<dyn Drawable>>>();
-        StackPage::new(ctx, theme, title, items, offset, header, bumper, next, flow_len)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn input(
-        ctx: &mut Context, theme: &Theme, title: String, item: Input,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>,
-        flow_len: usize,
-    ) -> Self {
-        let offset = item.offset();
-        let item = item.build(theme, ctx.window.is_mobile)
-            .into_iter().flatten().collect();
-        StackPage::new(ctx, theme, title, item, offset, header, bumper, next, flow_len)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn both(
-        ctx: &mut Context, theme: &Theme, title: String, display: Vec<Display>, inputs: Vec<Input>,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, next: Option<NavFn>,
-        flow_len: usize,
-    ) -> Self {
-        let mut items = inputs
-            .into_iter()
-            .filter_map(|di| di.build(theme, ctx.window.is_mobile))
-            .flatten()
-            .collect::<Vec<Box<dyn Drawable>>>();
-        display.into_iter().for_each(|mut di| {
-            if let Some(i) = di.build(theme) { items.extend(i) }
-        });
-        StackPage::new(ctx, theme, title, items, Offset::Start, header, bumper, next, flow_len)
+        let items = items.into_iter().filter_map(|mut item| item.build(theme, ctx.window.is_mobile))
+            .flatten().collect();
+        Self::new(ctx, theme, title, items, offset, header, bumper, next, flow_len)
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        ctx: &mut Context, theme: &Theme, title: String, items: Vec<Box<dyn Drawable>>,
-        offset: Offset, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper,
+        _ctx: &mut Context, theme: &Theme, title: String, items: Vec<Box<dyn Drawable>>,
+        offset: Offset, header: Option<(Icons, Action)>, bumper: Bumper,
         next: Option<NavFn>, flow_len: usize,
     ) -> Self {
-        let icon = header.map(|(i, mut f)| (i, (f)(ctx, theme).build(ctx, theme)));
+        let icon = header.map(|(icon, action)| (icon, action.get()));
         let (header, bumper) = match bumper {
             Bumper::Custom { label, action, secondary } => {
                 let on_click = match next {
@@ -81,7 +49,7 @@ impl StackPage {
                 };
                 let secondary = secondary.clone().map(|(l, a)| {
                     (
-                        button_label(&l),
+                        ActionItem::format_label(&l),
                         Box::new(move |ctx: &mut Context, theme: &Theme| {
                             (a.clone().get())(ctx, theme);
                             (0..1).for_each(|_| {
@@ -90,7 +58,7 @@ impl StackPage {
                         }) as Box<dyn Callback>,
                     )
                 });
-                let bumper = PelicanBumper::stack(theme, Some(&button_label(&label)), on_click, secondary);
+                let bumper = PelicanBumper::stack(theme, Some(&ActionItem::format_label(&label)), on_click, secondary);
                 let header = Header::stack(theme, &title, icon);
                 (header, Some(bumper))
             }

@@ -336,13 +336,13 @@ fn group_info_renders_controls_and_edits_do_not_overwrite_an_unchanged_remote_fi
         assert!(labels.iter().any(|text| text == label), "missing {label}: {labels:?}");
     }
     assert!(!labels.iter().any(|text| text == "Friends" || text == "Group message"));
-    let PageType::EditAndDisplay {mut on_save, ..} = GroupMessageInfoPage::edit(room.clone()) else {panic!()};
+    let PageType::Edit {mut on_save, ..} = GroupMessageInfoPage::edit(room.clone()) else {panic!()};
     // Someone renames the group while this user changes only the photo.
     room.send(ChatRoomAction::RenameGroup("Remote name".into()));
     let photo = AvatarContent::image(media::Image::new((1, 1), vec![media::Pixel {
         red: 255, green: 32, blue: 32, alpha: 255,
     }]));
-    on_save(&mut ctx, &vec![State::Avatar(photo.clone()), State::Text("Friends".into())]);
+    on_save(&mut ctx, &chk::FormValues::new([("photo".into(), State::Avatar(photo.clone())), ("name".into(), State::Text("Friends".into()))]));
     assert_eq!(room.pending().group_details().name, "Remote name");
     assert_eq!(room.pending().group_details().photo, photo);
     ctx.events();
@@ -359,9 +359,9 @@ fn leaving_requires_confirmation_and_stale_pages_cannot_send_or_edit() {
     ctx.air = prism::air::Air::new(MemoryAir::default());
     let mut room = ctx.air.instances::<ChatRoom>().create(Id::from(32));
     for member in &names()[1..] {room.send(ChatRoomAction::Share(*member));}
-    let PageType::EditAndDisplay {mut on_save, ..} = GroupMessageInfoPage::edit(room.clone()) else {panic!()};
+    let PageType::Edit {mut on_save, ..} = GroupMessageInfoPage::edit(room.clone()) else {panic!()};
     let mut messages = MessagesPage::new(&mut ctx, &Theme::default(), room.clone(), 1);
-    let PageType::Display {bumper: Bumper::Custom {action, ..}, ..} = GroupMessageInfoPage::leave(room.clone()) else {panic!()};
+    let PageType::Content {bumper: Bumper::Custom {action, ..}, ..} = GroupMessageInfoPage::leave(room.clone()) else {panic!()};
     assert!(room.pending().members.contains(&names()[0]), "opening the confirmation must not leave");
     (action.get())(&mut ctx, &Theme::default());
     assert!(!room.pending().members.contains(&names()[0]));
@@ -370,7 +370,7 @@ fn leaving_requires_confirmation_and_stale_pages_cannot_send_or_edit() {
         Some(pelican_ui::navigation::NavigationEvent::Root(None))
     )), "leaving must close all nested conversation screens");
     let original = room.pending().clone();
-    on_save(&mut ctx, &vec![State::Avatar(AvatarContent::default()), State::Text("Stale edit".into())]);
+    on_save(&mut ctx, &chk::FormValues::new([("photo".into(), State::Avatar(AvatarContent::default())), ("name".into(), State::Text("Stale edit".into()))]));
     ctx.emit(pelican_ui::components::SendEvent::Photo(chk::messages::Photo::from_image(
         &media::Image::new((1, 1), vec![media::Pixel {red: 0, green: 0, blue: 0, alpha: 255}])
     ).unwrap()));
@@ -395,7 +395,7 @@ fn member_picker_excludes_current_members_and_adds_selected_contacts() {
     }
     let theme = Theme::default();
     let Form::Flow {inputs, mut on_submit, ..} = GroupMessageInfoPage::add_members(&mut ctx, &theme, room.clone()) else {panic!()};
-    assert!(matches!(&inputs[0], FormItem::Selection(..)));
+    assert!(matches!(&inputs[0], FormItem::Named {item, ..} if matches!(**item, FormItem::Selection(..))));
     let mut input = inputs[0].build().build(&theme, true).unwrap().remove(0);
     let labels: Vec<_> = draw_page(&mut input).into_iter().filter_map(|instruction| {
         if let Item::Text(text) = instruction.item {
@@ -405,9 +405,9 @@ fn member_picker_excludes_current_members_and_adds_selected_contacts() {
     assert!(labels.iter().any(|label| label == "Available contact"));
     assert!(labels.iter().any(|label| label == "New Contact"));
     assert!(!labels.iter().any(|label| label.starts_with("Current member")));
-    on_submit(&mut ctx, &vec![State::Selection(vec!["invalid name".into()])]);
+    on_submit(&mut ctx, &chk::FormValues::new([("members".into(), State::Selection(vec!["invalid name".into()]))]));
     assert_eq!(room.pending().members.len(), 2);
-    on_submit(&mut ctx, &vec![State::Selection(vec![names()[2].to_string()])]);
+    on_submit(&mut ctx, &chk::FormValues::new([("members".into(), State::Selection(vec![names()[2].to_string()]))]));
     assert_eq!(room.pending().members, names());
 }
 

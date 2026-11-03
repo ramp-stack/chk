@@ -10,10 +10,9 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt::Debug;
 
-use crate::form::{Form, State, FormComplete};
-use crate::items::Input;
+use crate::form::{Form, FormValues};
 use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
-use crate::closure::{FormSubmit, NavFn};
+use crate::closure::{NavFn};
 use crate::{Listener, PageChanged, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
 
 #[derive(Debug, Clone, Default)]
@@ -50,24 +49,15 @@ impl Flow{
 
     pub fn from_form(form: Form) -> Self {
         match form {
-            Form::Flow {theme, inputs, on_submit, review, success} => {
-                let theme = theme.clone();
+            Form::Flow {theme: _, inputs, on_submit, review, success} => {
                 let mut pages: Vec<Page> = vec![];
 
-                let t = theme.clone();
-                let submit = review.is_none().then(|| on_submit.clone());
-                let mut submit = submit.map(|mut os| Box::new(move |ctx: &mut Context, state: &Vec<State>| {
-                    let theme = t.clone();
-                    let mut on_form_complete = (os)(ctx, state);
-                    on_form_complete.run(ctx, &theme);
-
-                    FormComplete::None
-                }) as Box<dyn FormSubmit>);
+                let mut submit = review.is_none().then(|| on_submit.clone());
 
                 inputs.into_iter().rev().map(|input| {
                     let submit = submit.take();
                     Page::Static(Box::new(PageType::form(
-                        &input.title(), input.build(), input.validation(), submit.clone(),
+                        &input.id(), &input.title(), input.build(), input.validation(), submit.clone(),
                     )))
                 }).collect::<Vec<Page>>().into_iter().rev().for_each(|s| pages.push(s));
 
@@ -88,10 +78,8 @@ impl Flow{
                 Flow(pages)
             },
             Form::Page {title, inputs, display, on_save} => {
-                let validations = inputs.iter().map(|i| i.validation()).collect::<Vec<_>>();
-                let items = inputs.into_iter().map(|i| i.build()).collect::<Vec<_>>();
                 let page = Page::Static(Box::new(PageType::edit(
-                    &title, items.clone(), display.clone(), validations.clone(), on_save.clone(),
+                    &title, None, inputs, display, on_save,
                 )));
                 Flow(vec![page])
             }
@@ -144,27 +132,26 @@ impl FlowWrapper {
     }
 
     fn refresh(&mut self, ctx: &mut Context) {
-        let mut inputs: Vec<_> = self.1.stored.iter().take(self.1.index)
-            .flat_map(|page| Self::inputs(page.as_ref())).collect();
+        let mut inputs = FormValues::default();
+        for page in self.1.stored.iter().take(self.1.index) {
+            inputs.extend(Self::inputs(page.as_ref()));
+        }
         if let Some(current) = &mut self.1.current {
             inputs.extend(Self::inputs(current.as_ref()));
             Self::apply_inputs(current.as_mut(), ctx, inputs);
         }
     }
 
-    fn inputs(page: &dyn AppPage) -> Vec<State> {
+    fn inputs(page: &dyn AppPage) -> FormValues {
         if let Some(listener) = page.downcast_ref::<Listener>() {
             return Self::inputs(listener.page.as_ref());
         }
-        let children = if let Some(page) = page.downcast_ref::<FormPage>() {
-            page.1.content.children()
-        } else if let Some(page) = page.downcast_ref::<EditPage>() {
-            page.1.content.children()
-        } else {return vec![]};
-        children.iter().filter_map(|child| Input::state(&**child)).collect()
+        if let Some(page) = page.downcast_ref::<FormPage>() {page.values()}
+        else if let Some(page) = page.downcast_ref::<EditPage>() {page.values()}
+        else {FormValues::default()}
     }
 
-    fn apply_inputs(page: &mut dyn AppPage, ctx: &mut Context, inputs: Vec<State>) {
+    fn apply_inputs(page: &mut dyn AppPage, ctx: &mut Context, inputs: FormValues) {
         if let Some(listener) = page.downcast_mut::<Listener>() {
             Self::apply_inputs(listener.page.as_mut(), ctx, inputs);
         } else if let Some(page) = page.downcast_mut::<ReviewPage>() {

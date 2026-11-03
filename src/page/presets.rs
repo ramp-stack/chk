@@ -1,3 +1,6 @@
+mod chat;
+pub use chat::ChatPresets;
+
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::Context;
 use ptsd::layout::{Stack, Offset};
@@ -7,7 +10,7 @@ use pelican_ui::navigation::AppPage;
 use pelican_ui::components::text::{Text, TextSize, TextStyle};
 use pelican_ui::theme::Theme;
 
-use crate::form::{State, FormComplete};
+use crate::form::FormValues;
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
 
 mod messages;
@@ -45,7 +48,8 @@ impl Review {
 #[derive(Debug, Component, Clone)]
 pub struct ReviewPage(
     Stack, pub PelicanPage, #[skip] Box<dyn ReviewItemGetter>, #[skip] Theme,
-    #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] Option<Vec<State>>,
+    #[skip] Option<NavFn>, #[skip] Box<dyn FormSubmit>, #[skip] Option<FormValues>,
+    #[skip] crate::form::Submission,
 );
 
 impl AppPage for ReviewPage {}
@@ -59,10 +63,10 @@ impl ReviewPage {
         let page = PelicanPage::new(header, Content::new(
             Offset::Start, Vec::new(), Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         ), Some(bumper));
-        ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone(), None)
+        ReviewPage(Stack::default(), page, item_getter, theme.clone(), next.clone(), on_submit.clone(), None, crate::form::Submission::default())
     }
 
-    pub fn on_change(&mut self, new: Vec<State>) {
+    pub fn on_change(&mut self, new: FormValues) {
         if self.6.as_ref() == Some(&new) {return;}
         self.6 = Some(new.clone());
         let theme = self.3.clone();
@@ -73,25 +77,19 @@ impl ReviewPage {
             Offset::Start, content, Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
         );
 
-        let mut on_submit = self.5.clone();
-        let next = self.4.clone();
+        let id = self.1.content.id();
         *self.1.bumper.as_mut().unwrap().on_click()[0] = Box::new(move |ctx: &mut Context| {
-            let mut completion = (on_submit)(ctx, &new);
-            match &mut completion {
-                FormComplete::None => {
-                    if let Some(next) = &next {(next.borrow_mut())(ctx, &theme);}
-                },
-                _ => completion.run(ctx, &theme),
-            }
+            ctx.emit(crate::form::SubmitRequest(id));
         });
     }
+    pub(crate) fn submitting(&self) -> bool {self.7.pending}
 
 }
 
 #[derive(Debug, Component, Clone)]
 pub struct SuccessPage(
     Stack, pub PelicanPage, #[skip] Box<dyn SuccessGetter>, #[skip] Theme,
-    #[skip] Option<Box<dyn FormSubmit>>, #[skip] Option<Vec<State>>,
+    #[skip] Option<Box<dyn FormSubmit>>, #[skip] Option<FormValues>,
 );
 
 impl AppPage for SuccessPage {}
@@ -105,7 +103,7 @@ impl SuccessPage {
         SuccessPage(Stack::default(), page, getter, theme.clone(), on_submit.clone(), None)
     }
 
-    pub fn on_change(&mut self, ctx: &mut Context, new: Vec<State>) {
+    pub fn on_change(&mut self, ctx: &mut Context, new: FormValues) {
         use pelican_ui::colors;
         use pelican_ui::components::Icon;
         if self.5.as_ref() == Some(&new) {return;}
@@ -119,5 +117,28 @@ impl SuccessPage {
                 &theme, &description, TextSize::H4, TextStyle::Heading, Align::Center, None,
             ))
         ], Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true));
+    }
+}
+
+#[prism::events::on_event]
+impl prism::events::OnEvent<crate::form::SubmitRequest> for ReviewPage {
+    fn on(&mut self, ctx: &mut Context, event: crate::form::SubmitRequest) -> Vec<Box<dyn prism::events::DynEvent>> {
+        if event.0 != self.1.content.id() {return prism::events![event];}
+        if self.7.pending {return vec![];}
+        let Some(values) = self.6.as_ref() else {return vec![];};
+        let result = (self.5)(ctx, values);
+        self.7.start(event.0, result, ctx, &self.3, self.4.clone());
+        if self.7.pending {self.1.bumper.as_mut().unwrap().disable(true);}
+        vec![]
+    }
+}
+#[prism::events::on_event]
+impl prism::events::OnEvent<crate::form::SubmitFinished> for ReviewPage {
+    fn on(&mut self, ctx: &mut Context, event: crate::form::SubmitFinished) -> Vec<Box<dyn prism::events::DynEvent>> {
+        if event.0 != self.1.content.id() {return prism::events![event];}
+        self.7.pending = false;
+        self.1.bumper.as_mut().unwrap().disable(false);
+        event.1.then(self.4.clone()).run(ctx, &self.3);
+        vec![]
     }
 }

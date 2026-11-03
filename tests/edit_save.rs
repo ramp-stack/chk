@@ -1,5 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
-use chk::{Context, FormComplete, FormItem, FormValidState, State, Theme};
+use chk::{Context, FormComplete, FormValues, FormItem, FormValidState, State, Theme};
 use chk::page::EditPage;
 use pelican_ui::components::TextInput;
 use pelican_ui::interface::general::FormEvent;
@@ -20,8 +20,8 @@ impl Editor {
         let theme = Theme::default();
         let saved = Rc::new(RefCell::new(Vec::new()));
         let output = saved.clone();
-        let save = Box::new(move |_: &mut Context, values: &Vec<State>| {
-            output.borrow_mut().push(values.clone());
+        let save = Box::new(move |_: &mut Context, values: &FormValues| {
+            output.borrow_mut().push(vec![values.get("Name").unwrap().clone()]);
             FormComplete::None
         });
         let item = FormItem::text_with_preset("Name", "Original", None,
@@ -32,7 +32,7 @@ impl Editor {
             0 => EditPage::root(&theme, true, "Edit".into(), None, vec![item], vec![], save),
             1 => EditPage::edit_and_display(&theme, true, "Edit".into(), None, vec![item], vec![], save),
             _ => EditPage::new(&theme, true, "Edit".into(),
-                vec![item.build()], vec![], vec![item.validation()], save),
+                vec![item.build()], vec![], vec![item.validation()], vec![item.id()], save),
         };
         let view: Box<dyn Drawable> = if variant == 0 {Box::new(page)} else {
             Box::new(chk::FlowWrapper::new(Flow::new(vec![Box::new(page)])))

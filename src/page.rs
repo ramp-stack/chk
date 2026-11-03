@@ -13,10 +13,10 @@ use std::pin::Pin;
 use crate::blocking::Block;
 use crate::Listener;
 use crate::form::FormItem;
-use crate::items::{Action, Input, Display};
+use crate::items::{Action, Input, Display, Item};
 use crate::closure::{
     PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter,
-    SuccessGetter, FlowBuilder,
+    SuccessGetter,
 };
 use crate::messages::{ChatRoom, Photo, Video};
 use crate::profiles::Profile;
@@ -25,7 +25,7 @@ mod edit;
 pub use edit::*;
 mod form;
 pub use form::*;
-mod presets;
+pub mod presets;
 pub use presets::*;
 mod root;
 pub use root::*;
@@ -129,59 +129,35 @@ pub enum PageType {
         title: String,
         input: Vec<Input>,
         display: Vec<Display>,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>,
-        bumper_a: Option<(String, Box<dyn FlowBuilder>)>,
-        bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
+        header: Option<(Icons, Action)>,
+        bumper_a: Option<(String, Action)>,
+        bumper_b: Option<(String, Action)>,
     },
-    Both {
+    Edit {
         title: String,
-        display: Vec<Display>,
-        inputs: Vec<Input>,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>,
-        bumper: Bumper,
-        next: Option<NavFn>,
-        flow_len: usize,
-    },
-    EditAndDisplay {
-        title: String,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>,
+        header: Option<(Icons, Action)>,
         items: Vec<FormItem>,
         display: Vec<Display>,
         on_save: Box<dyn FormSubmit>,
         flow_len: usize,
     },
-    Display {
+    Content {
         title: String,
-        items: Vec<Display>,
+        items: Vec<Item>,
         offset: Offset,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>,
+        header: Option<(Icons, Action)>,
         bumper: Bumper,
         next: Option<NavFn>,
         flow_len: usize,
-    },
-    Input {
-        title: String,
-        item: Input,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>,
-        bumper: Bumper,
-        flow_len: usize,
-        next: Option<NavFn>,
     },
     Form {
+        id: String,
         title: String,
         item: Input,
         flow_len: usize,
         next: Option<NavFn>,
         validate: Box<dyn ValidationFn>,
         on_submit: Option<Box<dyn FormSubmit>>,
-    },
-    Edit {
-        title: String,
-        input: Vec<Input>,
-        display: Vec<Display>,
-        validations: Vec<Box<dyn ValidationFn>>,
-        on_save: Box<dyn FormSubmit>,
-        flow_len: usize,
     },
     Review {
         title: String,
@@ -197,48 +173,45 @@ pub enum PageType {
         on_submit: Option<Box<dyn FormSubmit>>,
     },
     Messaging { room: Instance<ChatRoom>, flow_len: usize },
-    Photo { photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)> },
-    Video { video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)> },
+    Photo { photo: Photo, header: Option<(Icons, Action)> },
+    Video { video: Video, header: Option<(Icons, Action)> },
     Playback { title: String, player: prism::hardware::Player, size: (u32, u32) },
 }
 
 impl PageType {
     pub fn root(
         title: &str, input: Vec<Input>, display: Vec<Display>,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>,
-        bumper_a: Option<(String, Box<dyn FlowBuilder>)>,
-        bumper_b: Option<(String, Box<dyn FlowBuilder>)>,
+        header: Option<(Icons, Action)>,
+        bumper_a: Option<(String, Action)>,
+        bumper_b: Option<(String, Action)>,
     ) -> Self {
         PageType::Root { title: title.to_string(), input, display, header, bumper_a, bumper_b }
     }
 
     pub fn display_and_input(
         title: &str, inputs: Vec<Input>, display: Vec<Display>,
-        header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper,
+        header: Option<(Icons, Action)>, bumper: Bumper,
     ) -> Self {
-        PageType::Both {
-            title: title.to_string(),
-            display, inputs, header, bumper,
-            flow_len: 1,
-            next: None,
-        }
+        Self::content(title, inputs.into_iter().map(Item::Input)
+            .chain(display.into_iter().map(Item::Display)).collect(), header, bumper, Offset::Start)
     }
 
-    pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper, offset: Offset) -> Self {
-        PageType::Display {
-            title: title.to_string(),
-            items, header, bumper, offset,
-            flow_len: 1,
-            next: None,
-        }
+    pub fn content(title: &str, items: Vec<Item>, header: Option<(Icons, Action)>, bumper: Bumper, offset: Offset) -> Self {
+        Self::Content {title: title.into(), items, header, bumper, offset, flow_len: 1, next: None}
     }
 
-    pub fn input(title: &str, item: Input, header: Option<(Icons, Box<dyn FlowBuilder>)>, bumper: Bumper) -> Self {
-        PageType::Input { title: title.to_string(), item, header, bumper, flow_len: 1, next: None }
+    pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Action)>, bumper: Bumper, offset: Offset) -> Self {
+        Self::content(title, items.into_iter().map(Item::Display).collect(), header, bumper, offset)
     }
 
-    pub fn form(title: &str, item: Input, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
+    pub fn input(title: &str, item: Input, header: Option<(Icons, Action)>, bumper: Bumper) -> Self {
+        let offset = item.offset();
+        Self::content(title, vec![Item::Input(item)], header, bumper, offset)
+    }
+
+    pub fn form(id: &str, title: &str, item: Input, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
         PageType::Form {
+            id: id.into(),
             title: title.to_string(),
             validate, item,
             flow_len: 1,
@@ -247,19 +220,11 @@ impl PageType {
         }
     }
 
-    pub fn edit(title: &str, input: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>, on_save: Box<dyn FormSubmit>) -> Self {
-        PageType::Edit {
-            title: title.to_string(),
-            input, display, validations, on_save,
-            flow_len: 1,
-        }
-    }
-
-    pub fn edit_and_display(
-        title: &str, header: Option<(Icons, Box<dyn FlowBuilder>)>, items: Vec<FormItem>,
+    pub fn edit(
+        title: &str, header: Option<(Icons, Action)>, items: Vec<FormItem>,
         display: Vec<Display>, on_save: Box<dyn FormSubmit>,
     ) -> Self {
-        PageType::EditAndDisplay {
+        PageType::Edit {
             title: title.to_string(),
             header, items, display, on_save,
             flow_len: 1,
@@ -276,11 +241,11 @@ impl PageType {
 
     pub fn messaging(room: Instance<ChatRoom>) -> Self { PageType::Messaging { room, flow_len: 1 } }
 
-    pub fn photo(photo: Photo, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn photo(photo: Photo, header: Option<(Icons, Action)>) -> Self {
         PageType::Photo { photo, header }
     }
 
-    pub fn video(video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn video(video: Video, header: Option<(Icons, Action)>) -> Self {
         PageType::Video { video, header }
     }
 
@@ -314,12 +279,9 @@ impl PageType {
             | PageType::Video { .. }
             | PageType::Playback { .. }
             | PageType::Edit { .. }
-            | PageType::EditAndDisplay { .. }
             | PageType::Success { .. } => None,
-            PageType::Display { next, .. }
-            | PageType::Input { next, .. }
+            PageType::Content { next, .. }
             | PageType::Form { next, .. }
-            | PageType::Both { next, .. }
             | PageType::Review { next, .. } => Some(next),
         }
     }
@@ -332,12 +294,9 @@ impl PageType {
             | PageType::Playback { .. }
             | PageType::Root { .. } => None,
             PageType::Edit { flow_len, .. }
-            | PageType::Display { flow_len, .. }
-            | PageType::Input { flow_len, .. }
+            | PageType::Content { flow_len, .. }
             | PageType::Form { flow_len, .. }
             | PageType::Success { flow_len, .. }
-            | PageType::Both { flow_len, .. }
-            | PageType::EditAndDisplay { flow_len, .. }
             | PageType::Review { flow_len, .. } => Some(flow_len),
         }
     }
@@ -360,37 +319,19 @@ impl PageType {
     pub fn build(&self, ctx: &mut Context, theme: &Theme) -> Box<dyn AppPage> {
         match self {
             PageType::Root { .. } => self.build_root(theme, ctx.window.is_mobile),
-            PageType::Both { title, inputs, display, header, bumper, next, flow_len } => {
-                Box::new(StackPage::both(
-                    ctx, theme, title.to_string(), display.to_vec(), inputs.to_vec(),
-                    header.clone(), bumper.clone(), next.clone(), *flow_len,
-                ))
-            }
-            PageType::Display { title, items, offset, header, bumper, next, flow_len } => {
-                Box::new(StackPage::display(
-                    ctx, theme, title.to_string(), items.to_vec(), *offset, header.clone(),
+            PageType::Content { title, items, offset, header, bumper, next, flow_len } => {
+                Box::new(StackPage::content(
+                    ctx, theme, title.to_string(), items.clone(), *offset, header.clone(),
                     bumper.clone(), next.clone(), *flow_len,
                 ))
             }
-            PageType::Input { title, item, header, bumper, next, flow_len } => {
-                Box::new(StackPage::input(
-                    ctx, theme, title.to_string(), item.clone(), header.clone(), bumper.clone(),
-                    next.clone(), *flow_len,
-                ))
-            }
-            PageType::Form { title, item, next, flow_len: _, validate, on_submit } => {
+            PageType::Form { id, title, item, next, flow_len: _, validate, on_submit } => {
                 Box::new(FormPage::new(
-                    theme, ctx.window.is_mobile, title.to_string(), item.clone(),
+                    theme, ctx.window.is_mobile, id.clone(), title.to_string(), item.clone(),
                     next.clone(), validate.clone(), on_submit.clone(),
                 ))
             }
-            PageType::Edit { title, input, display, validations, on_save, flow_len: _ } => {
-                Box::new(EditPage::new(
-                    theme, ctx.window.is_mobile, title.to_string(), input.clone(),
-                    display.clone(), validations.clone(), on_save.clone(),
-                ))
-            }
-            PageType::EditAndDisplay { title, header, items, display, on_save, flow_len: _ } => {
+            PageType::Edit { title, header, items, display, on_save, flow_len: _ } => {
                 Box::new(EditPage::edit_and_display(
                     theme, ctx.window.is_mobile, title.to_string(), header.clone(),
                     items.clone(), display.clone(), on_save.clone(),

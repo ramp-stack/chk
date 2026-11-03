@@ -8,13 +8,11 @@ pub use ptsd::{Validate, Validator, Watched};
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 
-mod button_label;
 mod selection;
 pub use selection::Selector;
 
 pub mod invitations;
 pub use invitations::{Invitations, InvitationLinks};
-mod contact_invitations;
 
 pub mod listener;
 pub use listener::*;
@@ -33,11 +31,30 @@ pub use air::*;
 
 pub struct RootInfo(pub PelicanRootInfo);
 impl RootInfo {
+    pub fn messages(ctx: &mut Context, theme: &Theme, invitations: &Invitations<prism::air::Name>) -> Self {
+        let page = ChatPresets::new(invitations.clone()).messages(ctx);
+        Self::icon(ctx, theme, Icons::Messages, "Messages", page)
+    }
+
+    pub fn contacts(ctx: &mut Context, theme: &Theme, invitations: &Invitations<prism::air::Name>) -> Self {
+        Self::icon(ctx, theme, Icons::Group, "Contacts", ChatPresets::new(invitations.clone()).contacts())
+    }
+
+    pub fn profile(ctx: &mut Context, theme: &Theme, invitations: &Invitations<prism::air::Name>) -> Self {
+        let avatar = pelican_ui::components::avatar::AvatarValue::watch(
+            profiles::Profile::me(ctx),
+            async |profile| {profile.next().await;},
+            |profile| profile.pending().avatar.clone(),
+        );
+        let page = ChatPresets::new(invitations.clone()).profile(ctx);
+        Self::avatar(ctx, theme, avatar, "Profile", page)
+    }
+
     pub fn icon(ctx: &mut Context, theme: &Theme, icon: Icons, label: &str, page: Root) -> RootInfo {
         RootInfo(PelicanRootInfo::icon(icon, label, page.0.build_root(ctx, theme)))
     }
 
-    pub fn avatar(ctx: &mut Context, theme: &Theme, avatar: AvatarContent, label: &str, page: Root) -> RootInfo {
+    pub fn avatar(ctx: &mut Context, theme: &Theme, avatar: impl Into<pelican_ui::components::avatar::AvatarValue>, label: &str, page: Root) -> RootInfo {
         RootInfo(PelicanRootInfo::avatar(avatar, label, page.0.build_root(ctx, theme)))
     }
 }
@@ -62,28 +79,43 @@ impl ChkTheme {
 impl Default for ChkTheme { fn default() -> Self {ChkTheme::Dark(Color::from_hex("#ffdd00", 255))} }
 
 pub trait App: Sized + 'static {
-    fn roots(&self, ctx: &mut Context, theme: &Theme) -> Vec<RootInfo>;
+    type Invitation: Clone + std::fmt::Debug + 'static;
+
+    fn name() -> String;
+    fn new(ctx: &mut Context) -> Self;
+    fn roots(&self, ctx: &mut Context, theme: &Theme,
+        invitations: Option<&Invitations<Self::Invitation>>) -> Vec<RootInfo>;
     fn theme(&self) -> ChkTheme {ChkTheme::default()}
-    /// App-owned configuration, supplied before any GIF picker is created.
-    fn giphy_api_key(&self) -> Option<&str> {None}
+    fn assets(&self) -> Assets {Assets::new(Vec::new())}
     fn keyboard(&self, _ctx: &Context, _theme: &Theme) -> Option<Box<dyn prism::drawable::Drawable>> {None}
 
-    /// Build the standard interface and deliver queued invitations to it.
-    fn build_with_invitations<T: Clone + std::fmt::Debug + 'static>(self, ctx: &mut Context, assets: Assets,
-        invitations: &Invitations<T>) -> InvitationLinks<T> {
-        let theme = self.theme().to_pelican(assets.clone());
-        invitations.wrap(self.build(ctx, assets), theme)
-    }
+    /// Called once during setup. The app supplies its format, parser, and action;
+    /// CHK owns native registration, queued delivery, and UI dispatch.
+    fn invitations(&self, _ctx: &mut Context) -> Option<Invitations<Self::Invitation>> {None}
 
-    fn build(self, ctx: &mut Context, assets: Assets) -> pelican_ui::interface::general::Interface {
-        let theme = self.theme().to_pelican(assets);
-        if let Some(key) = self.giphy_api_key().filter(|key| !key.trim().is_empty()) {
+    fn build(self, ctx: &mut Context) -> Box<dyn prism::drawable::Drawable> {
+        let theme = self.theme().to_pelican(self.assets());
+        if let Some(key) = option_env!("GIPHY_API_KEY").filter(|key| !key.trim().is_empty()) {
             theme.gifs().set_api_key(key);
         }
+        let invitations = self.invitations(ctx);
+        if let Some(invitations) = &invitations {invitations.attach(ctx);}
         let keyboard = self.keyboard(ctx, &theme);
-        let roots = self.roots(ctx, &theme).into_iter().map(|root| root.0).collect();
-        pelican_ui::interface::general::Interface::new(ctx, &theme, roots, keyboard)
+        let roots = self.roots(ctx, &theme, invitations.as_ref()).into_iter().map(|root| root.0).collect();
+        let interface = pelican_ui::interface::general::Interface::new(ctx, &theme, roots, keyboard);
+        let interface = FormHost::new(interface, theme.clone());
+        match invitations {
+            Some(invitations) => Box::new(invitations.wrap(interface, theme)),
+            None => Box::new(interface),
+        }
     }
+}
+
+/// Runs a CHK App through Prism without platform-specific setup in the app.
+pub struct Application<A>(std::marker::PhantomData<fn() -> A>);
+impl<A: App> prism::Application for Application<A> {
+    fn name() -> String {A::name()}
+    fn new(ctx: &mut Context) -> impl prism::drawable::Drawable {A::new(ctx).build(ctx)}
 }
 
 extern crate self as chk;

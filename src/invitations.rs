@@ -1,60 +1,79 @@
-//! App-defined invitation payloads and behavior, queued until the UI is ready.
-use std::any::Any;
+//! Typed invitation setup supplied by an app and managed by CHK.
+use std::{any::Any, cell::RefCell, collections::HashSet, rc::Rc};
 use async_channel::{Receiver, Sender};
 use prism::{drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
     events::{DynEvent, ListenCallback, ListenFuture}};
 use crate::{Action, Context, Theme};
 
-/// An application's link format, invitation inbox, and open handler.
-/// `T` can represent a contact, document, group, or any app-defined destination.
-/// The parser must validate incoming URLs before returning a payload.
-/// CHK delivers that payload to `on_open`; it does not create contacts or DMs.
-#[derive(Clone, Debug)]
+/// URL formatting, validation, and the action to run for an accepted payload.
+/// `T` is app-defined: a contact name, document ID, password invitation token, etc.
+/// Clones share the same inbox. No action runs inside the native URL callback.
+#[derive(Clone)]
 pub struct Invitations<T> {
-    format: fn(T) -> String,
-    parse: fn(&str) -> Option<T>,
-    on_open: fn(&mut Context, &Theme, T),
-    inbox: (Sender<T>, Receiver<T>),
+    url: Rc<dyn Fn(T) -> String>,
+    parse: Rc<dyn Fn(&str) -> Option<T>>,
+    on_open: Rc<dyn Fn(&mut Context, T) -> Action>,
+    inbox: (Sender<(String, T)>, Receiver<(String, T)>),
+    pending: Rc<RefCell<HashSet<String>>>,
+}
+
+impl<T> std::fmt::Debug for Invitations<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Invitations").finish_non_exhaustive()
+    }
 }
 
 impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
-    /// Clones share one inbox between the platform receiver and root interface.
-    /// `on_open` runs with the UI context after startup, not in the native callback.
-    pub fn new(format: fn(T) -> String, parse: fn(&str) -> Option<T>,
-        on_open: fn(&mut Context, &Theme, T)) -> Self {
-        Self {format, parse, on_open, inbox: async_channel::bounded(16)}
+    pub fn new(url: impl Fn(T) -> String + 'static,
+        parse: impl Fn(&str) -> Option<T> + 'static,
+        on_open: impl Fn(&mut Context, T) -> Action + 'static) -> Self {
+        Self {url: Rc::new(url), parse: Rc::new(parse), on_open: Rc::new(on_open),
+            inbox: async_channel::bounded(16), pending: Rc::new(RefCell::new(HashSet::new()))}
     }
 
-    pub fn url(&self, payload: T) -> String {(self.format)(payload)}
-
+    pub fn url(&self, payload: T) -> String {(self.url)(payload)}
     pub fn parse_invite(&self, input: &str) -> Option<T> {(self.parse)(input.trim())}
-
-    /// Validate and queue a platform URL, including before the UI exists.
-    /// Returns false for an invalid URL or a full queue. Does not call `on_open`.
-    pub fn receive(&self, url: &str) -> bool {
-        let Some(payload) = self.parse_invite(url) else {return false};
-        self.inbox.0.try_send(payload).is_ok()
-    }
-
-    /// Attach one consumer to the root interface. When several links are waiting,
-    /// the latest pending destination wins, without suppressing future taps.
-    pub fn wrap(&self, inner: impl Drawable, theme: Theme) -> InvitationLinks<T> {
-        let (sender, receiver) = &self.inbox;
-        InvitationLinks {inner: Box::new(inner), theme, on_open: self.on_open,
-            receiver: receiver.clone(), _sender: sender.clone()}
-    }
-
     pub fn share_action(&self, payload: T) -> Action {Action::share(&self.url(payload))}
+
+    pub fn receive(&self, url: &str) -> bool {
+        let url = url.trim();
+        let Some(payload) = self.parse_invite(url) else {return false};
+        let mut pending = self.pending.borrow_mut();
+        if pending.contains(url) {return true;}
+        if self.inbox.0.try_send((url.to_owned(), payload)).is_err() {return false;}
+        pending.insert(url.to_owned());
+        true
+    }
+
+    /// CHK owns registration. An unavailable platform still supports manual links
+    /// and sharing, but cannot deliver native incoming URLs yet.
+    pub(crate) fn attach(&self, ctx: &Context) -> bool {
+        let invitations = self.clone();
+        ctx.hardware.listen_app_links(move |url| invitations.receive(url))
+    }
+
+    pub(crate) fn wrap(&self, inner: impl Drawable, theme: Theme) -> InvitationLinks<T> {
+        let (sender, receiver) = &self.inbox;
+        InvitationLinks {inner: Box::new(inner), theme, on_open: self.on_open.clone(),
+            receiver: receiver.clone(), _sender: sender.clone(), pending: self.pending.clone()}
+    }
 }
 
 /// Root drawable that delivers accepted invitations to the application handler.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InvitationLinks<T> {
     inner: Box<dyn Drawable>,
     theme: Theme,
-    on_open: fn(&mut Context, &Theme, T),
-    receiver: Receiver<T>,
-    _sender: Sender<T>,
+    on_open: Rc<dyn Fn(&mut Context, T) -> Action>,
+    receiver: Receiver<(String, T)>,
+    _sender: Sender<(String, T)>,
+    pending: Rc<RefCell<HashSet<String>>>,
+}
+
+impl<T> std::fmt::Debug for InvitationLinks<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InvitationLinks").field("inner", &self.inner).finish_non_exhaustive()
+    }
 }
 
 impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
@@ -71,13 +90,14 @@ impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
         Box::pin(async move {
             let receive = Box::pin(self.receiver.recv());
             match futures::future::select(receive, self.inner.as_mut().changed()).await {
-                futures::future::Either::Left((Ok(mut name), _)) => {
-                    // UIKit may report a cold launch through both launch options and
-                    // openURL. Collapse pending deliveries without suppressing future taps.
-                    while let Ok(next) = self.receiver.try_recv() {name = next;}
+                futures::future::Either::Left((Ok((url, payload)), _)) => {
+                    // Deliver distinct invitations in order. Only duplicate deliveries
+                    // still waiting in the queue are coalesced; later taps work again.
+                    self.pending.borrow_mut().remove(&url);
                     Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
                         let target = target.downcast_mut::<Self>().unwrap();
-                        (target.on_open)(ctx, &target.theme, name);
+                        let action = (target.on_open)(ctx, payload);
+                        (action.get())(ctx, &target.theme);
                     }) as ListenCallback
                 }
                 futures::future::Either::Right((callback, _)) => {

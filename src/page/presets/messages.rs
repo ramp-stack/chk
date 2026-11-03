@@ -13,7 +13,7 @@ use crate::blocking::Block;
 use crate::{Page, PageType, Bumper};
 use crate::flow::Flow;
 use crate::items::{Action, Display};
-use crate::closure::FlowBuilder;
+
 
 use prism::air::Instance;
 use super::typing::{TypingPanel, TypingPublisher};
@@ -248,8 +248,8 @@ impl MessageDetails {
         Self::page(ctx, theme, room, message, 1)
     }
 
-    pub fn icon(room: Instance<ChatRoom>, message: Message) -> (Icons, Box<dyn FlowBuilder>) {
-        (Icons::Info, Box::new(move |ctx: &mut Context, theme: &Theme| {
+    pub fn icon(room: Instance<ChatRoom>, message: Message) -> (Icons, Action) {
+        (Icons::Info, Action::deferred_flow(move |ctx: &mut Context, theme: &Theme| {
             Flow::new(vec![Page::Static(Box::new(Self::page(
                 ctx, theme, room.clone(), message.clone(), 2,
             )))])

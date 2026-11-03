@@ -20,7 +20,6 @@ use std::any::Any;
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
-use crate::FlowBuilder;
 use super::media::{Badge, Fit, FittedPhoto};
 
 #[derive(Debug, Component, Clone)]
@@ -45,9 +44,9 @@ pub struct VideoPage {
 impl AppPage for VideoPage {}
 
 impl VideoPage {
-    pub fn new(ctx: &mut Context, theme: &Theme, video: Video, header: Option<(Icons, Box<dyn FlowBuilder>)>) -> Self {
+    pub fn new(ctx: &mut Context, theme: &Theme, video: Video, header: Option<(Icons, crate::Action)>) -> Self {
         let token = Uuid::new_v4();
-        let icon = header.map(|(icon, mut flow)| (icon, (flow)(ctx, theme).build(ctx, theme)));
+        let icon = header.map(|(icon, action)| (icon, action.get()));
         let header = Header::stack(theme, "Video", icon);
         let mut page = Self {
             layout: Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None), header,

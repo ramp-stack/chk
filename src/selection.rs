@@ -13,8 +13,7 @@ use prism::events::{ChildEvent, DynEvent, Event, OnEvent, on_event};
 use ptsd::layout::{Column, Offset, Stack, Wrap};
 use uuid::Uuid;
 
-use crate::{Action, FormAction, InputAction, ListItem, State};
-use crate::button_label::button_label;
+use crate::{Action, FormAction, ActionItem, ListItem, State};
 
 /// A searchable list of application-owned keys. Clones address the same selector.
 /// Create a separate handle for each independent input, including identical lists.
@@ -111,19 +110,19 @@ impl SelectionInput {
     }
 
     pub(crate) fn legacy(theme: &Theme, id: Uuid, label: &str,
-        items: Vec<(ListItem, Name)>, actions: Vec<InputAction>) -> Self {
+        items: Vec<(ListItem, Name)>, actions: Vec<ActionItem>) -> Self {
         let mut selector = Selector::new(label, items.into_iter()
             .map(|(item, name)| (item, name.to_string())).collect());
         selector.id = id;
         Self::build(theme, selector, actions, true)
     }
 
-    fn build(theme: &Theme, mut selector: Selector, actions: Vec<InputAction>, legacy_names: bool) -> Self {
+    fn build(theme: &Theme, mut selector: Selector, actions: Vec<ActionItem>, legacy_names: bool) -> Self {
         let mut seen = std::collections::HashSet::new();
         selector.items.retain(|(_, key)| !key.is_empty() && seen.insert(key.clone()));
         let actions = (!actions.is_empty()).then(|| QuickActions::new(theme, Offset::Start,
-            actions.iter().map(|(label, active, icon, action)| ActionData {
-                label: button_label(label), active: active.as_deref().map(button_label),
+            actions.iter().map(|ActionItem(action, label, active, icon)| ActionData {
+                label: ActionItem::format_label(label), active: active.as_deref().map(ActionItem::format_label),
                 icon: *icon, on_click: action.get(),
             }).collect()));
         let mut result = Self {

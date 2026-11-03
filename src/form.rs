@@ -12,14 +12,13 @@ use pelican_ui::utils::ValidationFn;
 use prism::air::Name;
 use uuid::Uuid;
 
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
 
 use crate::{Flow, Page, Review, Success};
-use crate::items::{EnumItem, Input, ListItem, Action, Display};
-use crate::closure::{FormSubmit, FormClosure, ValidityFn};
+use crate::items::{ValueItem, ActionItem, Input, ListItem, Action, Display};
+use crate::closure::{FormSubmit, ValidityFn};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
@@ -30,6 +29,47 @@ pub enum State {
     Search(Vec<Name>),
     Selection(Vec<String>),
     ScanCode(Option<String>),
+}
+
+/// Form values are addressed by field ID, independently of visual order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FormValues(std::collections::BTreeMap<String, State>);
+impl FormValues {
+    pub fn new(values: impl IntoIterator<Item = (String, State)>) -> Self {
+        let mut result = Self::default();
+        for (id, value) in values {
+            assert!(!id.trim().is_empty(), "Form field IDs must not be empty");
+            assert!(result.0.insert(id.clone(), value).is_none(), "Duplicate form field ID: {id}");
+        }
+        result
+    }
+    pub fn get(&self, id: &str) -> Option<&State> {self.0.get(id)}
+    pub fn text(&self, id: &str) -> Option<&str> {
+        match self.get(id)? {State::Text(value) => Some(value), _ => None}
+    }
+    pub fn number(&self, id: &str) -> Option<&str> {
+        match self.get(id)? {State::Number(value) => Some(value), _ => None}
+    }
+    pub fn avatar(&self, id: &str) -> Option<&AvatarContent> {
+        match self.get(id)? {State::Avatar(value) => Some(value), _ => None}
+    }
+    pub fn selection(&self, id: &str) -> Option<&[String]> {
+        match self.get(id)? {State::Selection(value) => Some(value), _ => None}
+    }
+    pub fn search(&self, id: &str) -> Option<&[Name]> {
+        match self.get(id)? {State::Search(value) => Some(value), _ => None}
+    }
+    pub fn enumerator(&self, id: &str) -> Option<usize> {
+        match self.get(id)? {State::Enumerator(value) => Some(*value), _ => None}
+    }
+    pub fn scan_code(&self, id: &str) -> Option<&Option<String>> {
+        match self.get(id)? {State::ScanCode(value) => Some(value), _ => None}
+    }
+    pub fn extend(&mut self, other: Self) {
+        for (id, value) in other.0 {
+            assert!(self.0.insert(id.clone(), value).is_none(), "Duplicate form field ID: {id}");
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +99,7 @@ pub enum Form {
 
 impl Form {
     pub fn flow(theme: &Theme, inputs: Vec<FormItem>, review: Option<Review>, success: Option<Success>, on_submit: Box<dyn FormSubmit>) -> Self {
+        FormItem::ids(&inputs);
         Form::Flow {
             inputs,
             theme: Box::new(theme.clone()),
@@ -69,6 +110,7 @@ impl Form {
     }
 
     pub fn page(title: &str, inputs: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
+        FormItem::ids(&inputs);
         Form::Page {
             title: title.to_string(),
             inputs,
@@ -83,11 +125,40 @@ impl Form {
 #[derive(Debug, Clone)]
 pub enum FormComplete {
     Next(Page),
+    Action(Action),
+    Error(String),
+    Pending(PendingSubmit),
     Return(Box<dyn pelican_ui::Callback>),
     None,
 }
 
+/// Cloneable completion future; CHK polls it on the UI thread.
+#[derive(Clone)]
+pub struct PendingSubmit(pub(crate) futures::future::Shared<futures::future::LocalBoxFuture<'static, FormComplete>>);
+impl std::fmt::Debug for PendingSubmit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {f.write_str("PendingSubmit")}
+}
 impl FormComplete {
+    pub fn pending(future: impl Future<Output = FormComplete> + 'static) -> Self {
+        use futures::FutureExt;
+        Self::Pending(PendingSubmit(future.boxed_local().shared()))
+    }
+
+    pub(crate) async fn resolved(mut self) -> Self {
+        while let Self::Pending(pending) = self {self = pending.0.await;}
+        self
+    }
+
+    pub(crate) fn then(self, next: Option<crate::NavFn>) -> Self {
+        match self {
+            Self::None => next.map(|next| Self::Action(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                (next.borrow_mut())(ctx, theme);
+            }))).unwrap_or(Self::None),
+            Self::Pending(pending) => Self::pending(async move {pending.0.await.resolved().await.then(next)}),
+            other => other,
+        }
+    }
+
     pub fn run(&mut self, ctx: &mut Context, theme: &Theme) {
         match self {
             FormComplete::Return(function) => {
@@ -99,6 +170,13 @@ impl FormComplete {
                 let flow = Flow::new(vec![page.clone()]).build_as_flow(ctx, theme);
                 ctx.emit(NavigationEvent::restart(flow));
             },
+            FormComplete::Action(action) => (action.get())(ctx, theme),
+            FormComplete::Error(message) => {
+                let page = crate::PageType::display("Unable to complete", vec![Display::instructions(message)],
+                    None, crate::Bumper::Done, crate::Offset::Center);
+                (Flow::new(vec![Page::Static(Box::new(page))]).build(ctx, theme))(ctx, theme);
+            },
+            FormComplete::Pending(pending) => ctx.emit(crate::page::DeferredSubmit(pending.clone())),
             FormComplete::None => {}
         }
     }
@@ -136,7 +214,7 @@ impl FormValidState {
 pub enum FormAction {
     Paste,
     ScanQRCode(String),
-    Custom(String, Option<String>, Icons, Action)
+    Custom(ActionItem)
 }
 
 impl FormAction {
@@ -144,24 +222,21 @@ impl FormAction {
         FormAction::ScanQRCode(instructions.to_string())
     }
 
-    pub fn get(&self, id: Uuid) -> (String, Option<String>, Icons, Action) {
+    pub fn get(&self, id: Uuid) -> ActionItem {
         match self {
-            FormAction::Paste => (
-                "Paste clipboard".to_string(), Some("Pasted".to_string()), Icons::Paste, Action::Paste {id},
-            ),
-            FormAction::ScanQRCode(instructions) => (
-                "Scan QR code".to_string(), None, Icons::QrCode, Action::scan_qr(instructions, id),
-            ),
-            FormAction::Custom(l, al, i, a) => (l.to_string(), al.clone(), *i, a.clone())
+            Self::Paste => ActionItem::new_with_active(Action::Paste {id}, "Paste clipboard", "Pasted", Icons::Paste),
+            Self::ScanQRCode(instructions) => ActionItem::new(Action::scan_qr(instructions, id), "Scan QR code", Icons::QrCode),
+            Self::Custom(action) => action.clone(),
         }
     }
 }
 #[derive(Debug, Clone)]
 pub enum FormItem {
-    Text(String, String, Box<dyn FormClosure>, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
-    TextWithPreset(String, String, Box<dyn FormClosure>, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
+    Named {id: String, item: Box<FormItem>},
+    Text(String, String, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
+    TextWithPreset(String, String, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
-    Enum(String, Vec<EnumItem>),
+    Enum(String, Vec<ValueItem>),
     Search(String, String, Vec<(ListItem, Name)>, Option<Vec<FormAction>>),
     Selection(String, Selector),
     ScanQR(String, String, Option<(String, Icons, Action)>),
@@ -169,21 +244,34 @@ pub enum FormItem {
     AvatarWithPreset(String, AvatarContent, Action, Box<dyn ValidityFn>),
 }
 
-pub struct FormStorage(pub HashMap<String, String>);
-
 impl FormItem {
+    /// Use a stable ID when the visible label may change or repeat.
+    pub fn named(self, id: &str) -> Self {
+        assert!(!id.trim().is_empty(), "Form field IDs must not be empty");
+        let item = match self {Self::Named {item, ..} => item, item => Box::new(item)};
+        Self::Named {id: id.into(), item}
+    }
+
+    pub fn id(&self) -> String {
+        match self {Self::Named {id, ..} => id.clone(), _ => self.title()}
+    }
+
+    pub(crate) fn ids(items: &[Self]) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        items.iter().map(|item| {
+            let id = item.id();
+            assert!(!id.trim().is_empty() && seen.insert(id.clone()), "Empty or duplicate form field ID: {id}");
+            id
+        }).collect()
+    }
+
     pub fn text(text: &str, request: &str, actions: Option<Vec<FormAction>>, valid: impl ValidityFn + 'static) -> Self {
         let text = text.to_string();
-        FormItem::Text(text.to_string(), request.to_string(), Box::new(
-            move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}
-        ), actions, Box::new(valid))
+        FormItem::Text(text, request.to_string(), actions, Box::new(valid))
     }
 
     pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<FormAction>>, valid: impl ValidityFn + 'static) -> Self {
-        let text = text.to_string();
-        FormItem::TextWithPreset(text.to_string(), preset.to_string(), Box::new(
-            move |storage: &mut FormStorage, value: String| {storage.0.insert(text.to_string(), value);}
-        ), actions, Box::new(valid))
+        FormItem::TextWithPreset(text.to_string(), preset.to_string(), actions, Box::new(valid))
     }
 
     pub fn number(title: &str, number: NumberVariant, valid: impl ValidityFn + 'static) -> Self {
@@ -192,8 +280,8 @@ impl FormItem {
 
     pub fn enumerator(label: &str, items: Vec<(&str, &str)>) -> Self {
         let items = items.into_iter().map(|(a, b)| {
-            EnumItem::new(a, b)
-        }).collect::<Vec<EnumItem>>();
+            ValueItem::new(a, b)
+        }).collect::<Vec<ValueItem>>();
         FormItem::Enum(label.to_string(), items)
     }
 
@@ -220,6 +308,7 @@ impl FormItem {
 
     pub fn title(&self) -> String {
         match self {
+            Self::Named {item, ..} => item.title(),
             FormItem::Search(title, ..) |
             FormItem::Selection(title, ..) |
             FormItem::Text(title, ..) |
@@ -234,7 +323,8 @@ impl FormItem {
 
     pub fn validation(&self) -> Box<dyn ValidationFn> {
         match self {
-            FormItem::Text(_, _, _, _, validation) | FormItem::TextWithPreset(_, _, _, _, validation) |
+            Self::Named {item, ..} => item.validation(),
+            FormItem::Text(_, _, _, validation) | FormItem::TextWithPreset(_, _, _, validation) |
             FormItem::Number(_, _, validation) | FormItem::Avatar(_, _, _, validation) |
             FormItem::AvatarWithPreset(_, _, _, validation) => Box::new(InputValidation(validation.clone())),
             FormItem::Search(..) | FormItem::Selection(..) => Box::new(|_ctx: &mut Context, children: Vec<&mut Box<dyn Drawable>>| {
@@ -247,13 +337,14 @@ impl FormItem {
 
     pub fn build(&self) -> Input {
         match self {
-            FormItem::Text(_, request, _, actions, _) => {
+            Self::Named {item, ..} => item.build(),
+            FormItem::Text(_, request, actions, _) => {
                 let id = Uuid::new_v4();
                 let request = request.clone();
                 let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
                 Input::text(id, &request, false, None, actions)
             },
-            FormItem::TextWithPreset(title, preset, _, actions, _) => {
+            FormItem::TextWithPreset(title, preset, actions, _) => {
                 let id = Uuid::new_v4();
                 let title = title.clone();
                 let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
@@ -307,4 +398,38 @@ impl Validate<Vec<&mut Box<dyn Drawable>>, bool> for InputValidation {
         matches!(result, FormValidState::Valid | FormValidState::ValidWithData(_))
     }
     fn change(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>> {self.0.change()}
+}
+
+
+#[derive(Debug, Clone)]
+pub(crate) struct SubmitRequest(pub Uuid);
+impl prism::events::Event for SubmitRequest {
+    fn pass(&self, _: &mut Context, children: &mut [prism::events::ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
+    }
+}
+#[derive(Debug, Clone)]
+pub(crate) struct SubmitFinished(pub Uuid, pub FormComplete);
+impl prism::events::Event for SubmitFinished {
+    fn pass(&self, _: &mut Context, children: &mut [prism::events::ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
+    }
+}
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Submission {pub pending: bool}
+impl Submission {
+    pub fn start(&mut self, id: Uuid, result: FormComplete, ctx: &mut Context, theme: &Theme, next: Option<crate::NavFn>) {
+        match result {
+            FormComplete::Pending(pending) => {
+                self.pending = true;
+                FormComplete::pending(async move {
+                    let result = pending.0.await.resolved().await;
+                    FormComplete::Action(Action::custom(move |ctx: &mut Context, _: &Theme| {
+                        ctx.emit(SubmitFinished(id, result.clone()));
+                    }))
+                }).run(ctx, theme);
+            }
+            result => result.then(next).run(ctx, theme),
+        }
+    }
 }
