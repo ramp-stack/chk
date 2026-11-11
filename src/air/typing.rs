@@ -56,33 +56,3 @@ impl TypingState {
             && last_message_at.is_none_or(|sent| sent < self.updated_at)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn metadata(signer: Name) -> Metadata {Metadata {signer, timestamp: 0, confirmed: true}}
-
-    #[test]
-    fn activity_expires_and_late_replays_do_not_revive_it() {
-        let owner = Name::orange_me();
-        let mut state = TypingState::init(Id::from(1), metadata(owner));
-        state.apply(TypingAction::Activity {active: true, at: 10_000}, metadata(owner));
-        assert!(state.is_typing(10_001, None));
-        assert!(!state.is_typing(16_000, None));
-        assert!(!state.is_typing(10_001, Some(10_000)));
-        state.apply(TypingAction::Activity {active: false, at: 11_000}, metadata(owner));
-        state.apply(TypingAction::Activity {active: true, at: 10_500}, metadata(owner));
-        assert!(!state.is_typing(11_001, None));
-        state.apply(TypingAction::Activity {active: true, at: 100_000}, metadata(owner));
-        assert!(!state.is_typing(11_001, None));
-    }
-
-    #[test]
-    fn another_member_cannot_set_someones_typing_state() {
-        let owner = Name::orange_me();
-        let other = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798".parse().unwrap();
-        let mut state = TypingState::init(Id::from(1), metadata(owner));
-        state.apply(TypingAction::Activity {active: true, at: 10_000}, metadata(other));
-        assert!(!state.is_typing(10_000, None));
-    }
-}

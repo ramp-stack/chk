@@ -8,11 +8,10 @@ pub use ptsd::{Validate, Validator, Watched};
 
 use pelican_ui::interface::navigation::RootInfo as PelicanRootInfo;
 
-mod selection;
-pub use selection::Selector;
+pub use pelican_ui::components::Selector;
 
 pub mod invitations;
-pub use invitations::{Invitations, InvitationLinks};
+pub use invitations::{Invitations, InvitationLinks, ContactInvitations};
 
 pub mod listener;
 pub use listener::*;
@@ -28,16 +27,18 @@ pub mod page;
 pub use page::*;
 pub mod air;
 pub use air::*;
+#[path = "typing.rs"]
+mod typing_ui;
 
 pub struct RootInfo(pub PelicanRootInfo);
 impl RootInfo {
     pub fn messages(ctx: &mut Context, theme: &Theme, invitations: &Invitations<prism::air::Name>) -> Self {
-        let page = ChatPresets::new(invitations.clone()).messages(ctx);
+        let page = Root::messages(ctx, &ContactInvitations::new(invitations.clone()));
         Self::icon(ctx, theme, Icons::Messages, "Messages", page)
     }
 
     pub fn contacts(ctx: &mut Context, theme: &Theme, invitations: &Invitations<prism::air::Name>) -> Self {
-        Self::icon(ctx, theme, Icons::Group, "Contacts", ChatPresets::new(invitations.clone()).contacts())
+        Self::icon(ctx, theme, Icons::Group, "Contacts", Root::contacts(&ContactInvitations::new(invitations.clone())))
     }
 
     pub fn profile(ctx: &mut Context, theme: &Theme, invitations: &Invitations<prism::air::Name>) -> Self {
@@ -46,7 +47,7 @@ impl RootInfo {
             async |profile| {profile.next().await;},
             |profile| profile.pending().avatar.clone(),
         );
-        let page = ChatPresets::new(invitations.clone()).profile(ctx);
+        let page = Root::profile(ctx, &ContactInvitations::new(invitations.clone()));
         Self::avatar(ctx, theme, avatar, "Profile", page)
     }
 

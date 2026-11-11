@@ -4,6 +4,7 @@ use async_channel::{Receiver, Sender};
 use prism::{drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
     events::{DynEvent, ListenCallback, ListenFuture}};
 use crate::{Action, Context, Theme};
+use prism::air::Name;
 
 /// URL formatting, validation, and the action to run for an accepted payload.
 /// `T` is app-defined: a contact name, document ID, password invitation token, etc.
@@ -109,5 +110,40 @@ impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
                 _ => unreachable!("the invitation view retains its sender"),
             }
         })
+    }
+}
+
+
+
+#[derive(Clone, Debug, Default)]
+pub struct ContactInvitations {
+    pub(crate) invitations: Option<Invitations<Name>>,
+}
+
+impl ContactInvitations {
+    pub fn new(invitations: Invitations<Name>) -> Self {Self {invitations: Some(invitations)}}
+
+    pub fn selected_recipients(keys: &[String]) -> Result<Vec<Name>, &'static str> {
+        if keys.is_empty() {
+            return Err("Choose at least one contact.");
+        }
+        let mut recipients = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for key in keys {
+            let name = key
+                .parse::<Name>()
+                .map_err(|_| "One of the selected contacts is invalid. Choose your contacts again.")?;
+            if seen.insert(name) {
+                recipients.push(name);
+            }
+        }
+        Ok(recipients)
+    }
+
+    pub(crate) fn parse_contact(&self, value: &str) -> Option<Name> {
+        match &self.invitations {
+            Some(invitations) => invitations.parse_invite(value).or_else(|| value.trim().parse().ok()),
+            None => value.trim().parse().ok(),
+        }
     }
 }

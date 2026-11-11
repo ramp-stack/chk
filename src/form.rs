@@ -1,3 +1,8 @@
+use crate::{ContactInvitations, PageType, Bumper};
+use crate::messages::ChatRoom;
+use crate::profiles::Profile;
+use prism::air::Instance;
+use ptsd::layout::Offset;
 use pelican_ui::Context;
 use pelican_ui::theme::{Theme, Icons};
 use pelican_ui::drawable::Drawable;
@@ -5,7 +10,7 @@ use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
 use pelican_ui::navigation::NavigationEvent;
 
 use pelican_ui::components::{TextInput, NumericalInput};
-use crate::selection::{Selector, SelectionInput};
+use pelican_ui::components::{Selector, SelectionInput};
 use ptsd::Validate;
 use pelican_ui::utils::ValidationFn;
 
@@ -117,6 +122,112 @@ impl Form {
             display,
             on_save,
         }
+    }
+
+    pub fn new_message(invitations: &ContactInvitations, ctx: &mut Context, theme: &Theme) -> Form {
+        let submit = Box::new(|ctx: &mut Context, state: &FormValues| {
+            let Some(keys) = state.selection("recipients") else {
+                return FormComplete::None;
+            };
+            let recipients = match ContactInvitations::selected_recipients(keys) {
+                Ok(recipients) => recipients,
+                Err(error) => {
+                    return FormComplete::Next(Page::Static(Box::new(PageType::display(
+                        "New message",
+                        vec![Display::instructions(error)],
+                        None,
+                        Bumper::Done,
+                        Offset::Center,
+                    ))));
+                }
+            };
+            let mut room = ChatRoom::create(ctx, recipients);
+            room.notify(true);
+            FormComplete::Next(Page::messaging(ctx, &mut room))
+        }) as Box<dyn FormSubmit>;
+        let me = ctx.air.me();
+        let items = ctx
+            .air
+            .instances::<Profile>()
+            .list()
+            .into_values()
+            .filter_map(|profile| ListItem::profile_row(&profile.pending(), me))
+            .collect();
+        let selector = Selector::new("contacts", items);
+        let add_contact = Self::select_contact(invitations, theme, selector.clone(), vec![]);
+        let selector = selector.with_actions(vec![FormAction::Custom(ActionItem::new(Action::flow(Flow::from_form(add_contact)), "New contact", Icons::Add))]);
+        Form::flow(
+            theme,
+            vec![FormItem::selection("New message", selector).named("recipients")],
+            None,
+            None,
+            submit,
+        )
+    }
+
+    pub fn select_contact(invitations: &ContactInvitations, theme: &Theme, selector: Selector, excluded: Vec<Name>) -> Form {
+        let excluded_on_submit = excluded.clone();
+        let parse = invitations.clone();
+        Self::contact_form(invitations, theme, excluded, true, Box::new(move |ctx: &mut Context, values: &FormValues| {
+            let Some(value) = values.text("airname") else {return FormComplete::None;};
+            let Some(name) = parse.parse_contact(value) else {return FormComplete::None;};
+            if excluded_on_submit.contains(&name) {return FormComplete::None;}
+            let profile = Profile::from_name(ctx, name);
+            let Some((row, key)) = ListItem::profile_row(&profile.pending(), ctx.air.me()) else {return FormComplete::None;};
+            FormComplete::Return(selector.select(row, key))
+        }))
+    }
+
+    fn contact_form(invitations: &ContactInvitations, theme: &Theme, excluded: Vec<Name>, allow_self: bool, submit: Box<dyn FormSubmit>) -> Form {
+        let invitations = invitations.clone();
+        Form::flow(theme, vec![FormItem::text("New contact", "AirName", Some(vec![
+            FormAction::Paste, FormAction::scan_qr_code("Scan an AirName QR code"),
+        ]), move |ctx: &mut Context, value: String| {
+            if value.trim().is_empty() {return FormValidState::Invalid;}
+            match invitations.parse_contact(&value) {
+                Some(name) if !allow_self && name == ctx.air.me() => FormValidState::InvalidWithData("You cannot add yourself as a contact.".into()),
+                Some(name) if excluded.contains(&name) => FormValidState::InvalidWithData("Already in this group.".into()),
+                Some(_) => FormValidState::Valid,
+                None => FormValidState::InvalidWithData("Enter a valid AirName or contact link.".into()),
+            }
+        }).named("airname")], None, None, submit)
+    }
+
+    pub fn new_contact(invitations: &ContactInvitations, theme: &Theme) -> Form {
+        let parse = invitations.clone();
+        Self::contact_form(invitations, theme, vec![], false, Box::new(move |ctx: &mut Context, values: &FormValues| {
+            let Some(value) = values.text("airname") else {return FormComplete::None;};
+            let Some(name) = parse.parse_contact(value) else {return FormComplete::None;};
+            if name == ctx.air.me() {return FormComplete::None;}
+            let mut profile = Profile::from_name(ctx, name);
+            FormComplete::Next(Page::profile(ctx, &mut profile))
+        }))
+    }
+
+    pub fn add_members(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>) -> Form {
+        let members = room.pending().members.clone();
+        let mut items: Vec<_> = ctx.air.instances::<Profile>().list().into_values().filter_map(|profile| {
+            let profile = profile.pending();
+            let name = profile.name?;
+            if members.contains(&name) {return None;}
+            Some((ListItem::avatar(profile.avatar.clone(), &profile.username, &profile.name(), None, None), name))
+        }).collect();
+        items.sort_by_key(|(_, name)| *name);
+        items.dedup_by_key(|(_, name)| *name);
+        let selector = Selector::new("contacts", items.into_iter()
+            .map(|(item, name)| (item, name.to_string())).collect());
+        let new_contact = Self::select_contact(&ContactInvitations::default(), theme, selector.clone(), members);
+        let submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
+            let Some(keys) = values.selection("members") else {return FormComplete::None;};
+            let Ok(names) = keys.iter().map(|key| key.parse::<Name>()).collect::<Result<Vec<_>, _>>()
+                else {return FormComplete::None;};
+            ChatRoom::add_members(ctx, &mut room, names);
+            ctx.emit(NavigationEvent::Pop);
+            FormComplete::None
+        }) as Box<dyn FormSubmit>;
+        Form::flow(theme, vec![FormItem::selection("Add members", selector.with_actions(vec![
+            FormAction::Custom(ActionItem::new(Action::flow(Flow::from_form(new_contact)), "New contact", Icons::Add)),
+        ])).named("members")], None, None, submit)
     }
 }
 
@@ -233,6 +344,7 @@ impl FormAction {
 #[derive(Debug, Clone)]
 pub enum FormItem {
     Named {id: String, item: Box<FormItem>},
+    InputId {id: Uuid, item: Box<FormItem>},
     Text(String, String, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
     TextWithPreset(String, String, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
     Number(String, NumberVariant, Box<dyn ValidityFn>),
@@ -252,8 +364,28 @@ impl FormItem {
         Self::Named {id: id.into(), item}
     }
 
+    /// Bind a text or legacy search input to a UUID used by `Action::set_text`.
+    /// This is independent of the field ID used by `FormValues`; built-in Paste
+    /// and Scan actions use the same UUID. Other input kinds are not supported.
+    pub fn with_input_id(self, id: Uuid) -> Self {
+        match self {
+            Self::Named {id: name, item} => Self::Named {
+                id: name, item: Box::new(item.with_input_id(id)),
+            },
+            Self::InputId {item, ..} => Self::InputId {id, item},
+            item @ (Self::Text(..) | Self::TextWithPreset(..) | Self::Search(..)) => {
+                Self::InputId {id, item: Box::new(item)}
+            },
+            _ => panic!("Only text and search fields support an input UUID"),
+        }
+    }
+
     pub fn id(&self) -> String {
-        match self {Self::Named {id, ..} => id.clone(), _ => self.title()}
+        match self {
+            Self::Named {id, ..} => id.clone(),
+            Self::InputId {item, ..} => item.id(),
+            _ => self.title(),
+        }
     }
 
     pub(crate) fn ids(items: &[Self]) -> Vec<String> {
@@ -308,7 +440,7 @@ impl FormItem {
 
     pub fn title(&self) -> String {
         match self {
-            Self::Named {item, ..} => item.title(),
+            Self::Named {item, ..} | Self::InputId {item, ..} => item.title(),
             FormItem::Search(title, ..) |
             FormItem::Selection(title, ..) |
             FormItem::Text(title, ..) |
@@ -323,7 +455,7 @@ impl FormItem {
 
     pub fn validation(&self) -> Box<dyn ValidationFn> {
         match self {
-            Self::Named {item, ..} => item.validation(),
+            Self::Named {item, ..} | Self::InputId {item, ..} => item.validation(),
             FormItem::Text(_, _, _, validation) | FormItem::TextWithPreset(_, _, _, validation) |
             FormItem::Number(_, _, validation) | FormItem::Avatar(_, _, _, validation) |
             FormItem::AvatarWithPreset(_, _, _, validation) => Box::new(InputValidation(validation.clone())),
@@ -335,17 +467,20 @@ impl FormItem {
         }
     }
 
-    pub fn build(&self) -> Input {
+    pub fn build(&self) -> Input {self.build_with_input_id(None)}
+
+    fn build_with_input_id(&self, id: Option<Uuid>) -> Input {
         match self {
-            Self::Named {item, ..} => item.build(),
+            Self::Named {item, ..} => item.build_with_input_id(id),
+            Self::InputId {id, item} => item.build_with_input_id(Some(*id)),
             FormItem::Text(_, request, actions, _) => {
-                let id = Uuid::new_v4();
+                let id = id.unwrap_or_else(Uuid::new_v4);
                 let request = request.clone();
                 let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
                 Input::text(id, &request, false, None, actions)
             },
             FormItem::TextWithPreset(title, preset, actions, _) => {
-                let id = Uuid::new_v4();
+                let id = id.unwrap_or_else(Uuid::new_v4);
                 let title = title.clone();
                 let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
                 Input::text(id, &title, true, Some(preset.to_string()), actions)
@@ -362,7 +497,7 @@ impl FormItem {
                 Input::enumerator(items.clone())
             },
             FormItem::Search(_, search, items, actions) => {
-                let id = Uuid::new_v4();
+                let id = id.unwrap_or_else(Uuid::new_v4);
                 let actions = actions.clone().map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
                 Input::search(id, search, items.clone(), actions)
             },
@@ -432,4 +567,8 @@ impl Submission {
             result => result.then(next).run(ctx, theme),
         }
     }
+}
+
+impl pelican_ui::components::SelectorAction for FormAction {
+    fn action(&self, id: Uuid) -> pelican_ui::components::button::ActionData {self.get(id).selection_action()}
 }

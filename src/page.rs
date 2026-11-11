@@ -19,14 +19,20 @@ use crate::closure::{
     SuccessGetter,
 };
 use crate::messages::{ChatRoom, Photo, Video};
-use crate::profiles::Profile;
+use crate::profiles::{Profile, ProfileAction};
+use crate::{ContactInvitations, Flow, ListItem, ActionItem, AvatarPurpose, AvatarIconStyle, Form, FormValues, FormComplete, FormValidState};
+use prism::air::Name;
+use crate::messages::ChatRoomAction;
+use pelican_ui::navigation::NavigationEvent;
 
 mod edit;
 pub use edit::*;
 mod form;
 pub use form::*;
-pub mod presets;
-pub use presets::*;
+mod review;
+pub use review::*;
+mod messages;
+pub use messages::*;
 mod root;
 pub use root::*;
 mod stack;
@@ -60,7 +66,7 @@ impl Page {
         let my_name = profile.pending().name.unwrap();
         let is_me = my_name == ctx.air.me();
         match is_me {
-            true => Page::Static(Box::new(ProfilePage::editing(
+            true => Page::Static(Box::new(PageType::editing(
                 is_me, profile.clone(), ctx.window.is_mobile,
             ))),
             false => Page::watching(
@@ -68,7 +74,7 @@ impl Page {
                 |ctx: &mut Context,
                  _: &Theme,
                  (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
-                    chk::ProfileView::build(ctx, profile)
+                    PageType::profile_view(ctx, profile)
                 },
             ),
         }
@@ -113,6 +119,13 @@ impl Page {
                 Box::new(Listener::new(ctx, theme, page_builder.clone(), true, None, 0))
             }
         }
+    }
+
+    pub fn group_info(room: Instance<ChatRoom>) -> Page {
+        Page::watching((Watch::contract(room), Watch::list::<Profile>()),
+            |ctx: &mut Context, _: &Theme, (room, _): (Instance<ChatRoom>, Vec<Instance<Profile>>)| {
+                PageType::group_info(ctx, room)
+            })
     }
 }
 
@@ -173,6 +186,7 @@ pub enum PageType {
         on_submit: Option<Box<dyn FormSubmit>>,
     },
     Messaging { room: Instance<ChatRoom>, flow_len: usize },
+    Camera { on_capture: Box<dyn PhotoCaptured> },
     Photo { photo: Photo, header: Option<(Icons, Action)> },
     Video { video: Video, header: Option<(Icons, Action)> },
     Playback { title: String, player: prism::hardware::Player, size: (u32, u32) },
@@ -241,6 +255,10 @@ impl PageType {
 
     pub fn messaging(room: Instance<ChatRoom>) -> Self { PageType::Messaging { room, flow_len: 1 } }
 
+    pub fn camera(on_capture: impl PhotoCaptured + 'static) -> Self {
+        Self::Camera {on_capture: Box::new(on_capture)}
+    }
+
     pub fn photo(photo: Photo, header: Option<(Icons, Action)>) -> Self {
         PageType::Photo { photo, header }
     }
@@ -271,10 +289,212 @@ impl PageType {
         )
     }
 
+    pub fn qr_page(invitations: &ContactInvitations, name: Name) -> PageType {
+        PageType::display("Share AirName",
+            vec![Display::qr_code(&name.to_string(), "Scan to share this AirName.")], None,
+            Bumper::custom("Share", Action::share_contact(invitations, name)), Offset::Center)
+    }
+
+    pub fn group_info(ctx: &mut Context, room: Instance<ChatRoom>) -> PageType {
+        let data = room.pending().clone();
+        let details = data.group_details();
+        let me = ctx.air.me();
+        let active = data.is_group() && data.members.contains(&me);
+        let items = data.members.iter().map(|name| {
+            let mut profile = Profile::from_name(ctx, *name);
+            let data = profile.pending().clone();
+            let title = if *name == me {format!("{} (You)", data.username)} else {data.username.clone()};
+            let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
+            ListItem::avatar(data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)))
+        }).collect();
+        let mut display = vec![
+            Display::avatar(details.photo.clone(), AvatarPurpose::None),
+        ];
+        if active {
+            let add_room = room.clone();
+            let leave_room = room.clone();
+            display.push(Display::data_list("Group members", Some(&format!("This group has {} members.", data.members.len())), items, Some(vec![
+                ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                    let form = Form::add_members(ctx, theme, add_room.clone());
+                    (Flow::from_form(form).build(ctx, theme))(ctx, theme);
+                }), "Add Members", Icons::Add),
+            ])));
+            display.push(Display::cta("Leave group", None, "Remove yourself from this group.", vec![
+                ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                    (Flow::new(vec![Page::Static(Box::new(Self::leave(leave_room.clone())))])
+                        .build(ctx, theme))(ctx, theme);
+                }), "Leave Group", Icons::Block),
+            ]));
+        } else {
+            display.push(Display::instructions("You are no longer a member of this group."));
+            display.push(Display::data_list("Members", None, items, None));
+        }
+        let edit = active.then(|| (Icons::Edit, Action::deferred_flow(move |_: &mut Context, _: &Theme| {
+            Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
+        })));
+        PageType::display("Group info", display, edit, Bumper::None, Offset::Start)
+    }
+
+    pub fn edit_group(mut room: Instance<ChatRoom>) -> PageType {
+        let original = room.pending().group_details();
+        let photo = original.photo.clone();
+        let name = original.name.clone();
+        let save = Box::new(move |ctx: &mut Context, values: &FormValues| {
+            if !room.pending().members.contains(&ctx.air.me()) {return FormComplete::Error("You are no longer a member of this group.".into());}
+            if let Some(photo) = values.avatar("photo") && *photo != original.photo {
+                room.send(ChatRoomAction::SetGroupPhoto(photo.clone()));
+            }
+            if let Some(name) = values.text("name") && name.trim() != original.name {
+                room.send(ChatRoomAction::RenameGroup(name.to_owned()));
+            }
+            FormComplete::Action(Action::custom(|ctx: &mut Context, _: &Theme| ctx.emit(NavigationEvent::Pop)))
+        }) as Box<dyn FormSubmit>;
+        PageType::edit("Edit group", None, vec![
+            FormItem::avatar_with_preset("Group photo", photo, Action::PickPhoto,
+                |_: &mut Context, _: String| FormValidState::Valid).named("photo"),
+            FormItem::text_with_preset("Group name", &name, None, |_: &mut Context, name: String| {
+                if name.trim().is_empty() {FormValidState::InvalidWithData("Enter a group name.".into())}
+                else if name.trim().chars().count() > 80 {FormValidState::InvalidWithData("Use 80 characters or fewer.".into())}
+                else {FormValidState::Valid}
+            }).named("name"),
+        ], vec![], save)
+    }
+
+    pub fn leave(mut room: Instance<ChatRoom>) -> PageType {
+        let details = room.pending().group_details();
+        PageType::display("Leave group", vec![
+            Display::avatar(details.photo, AvatarPurpose::Custom { icon: Icons::Leave, style: AvatarIconStyle::Danger }),
+            Display::confirmation_message(&format!("Leave {}?", details.name)),
+        ], None, Bumper::double("Leave", Action::custom(move |ctx: &mut Context, _: &Theme| {
+            room.send(ChatRoomAction::LeaveGroup);
+            room.notify(false);
+            ctx.emit(NavigationEvent::Root(None));
+        }), "Cancel", Action::None), Offset::Center)
+    }
+
+    pub fn editing(is_me: bool, profile: Instance<Profile>, is_mobile: bool) -> PageType {
+        Self::editing_with_contact_actions(is_me, profile, is_mobile, None)
+    }
+
+    pub fn profile_view(ctx: &mut Context, profile: Instance<Profile>) -> PageType {
+        let p = profile.clone();
+        let profile = profile.pending().clone();
+        let profile_name = profile.name.unwrap();
+        let my_name = ctx.air.me();
+        let is_me = profile_name == my_name;
+        let about_me = if profile.notes.is_empty() { "No bio yet." } else { &profile.notes };
+
+        let is_blocked = !is_me && Block::did_i_block(ctx, profile.name.unwrap());
+
+        let block_action = match is_blocked {
+            true => ActionItem::new(crate::Action::unblock(p.clone()), "Unblock", Icons::Unblock),
+            false => ActionItem::new(crate::Action::block(p.clone()), "Block", Icons::Block),
+        };
+
+        PageType::display(
+            &profile.username,
+            vec![
+                Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
+                Display::actions(
+                    vec![
+                        ActionItem::new(Action::message(profile_name), "Message", Icons::Messages),
+                        block_action,
+                    ], true,
+                ), Display::cta("About me", None, about_me, vec![]),
+                Display::cta(
+                    "AirName", None, &profile_name.to_string(),
+                    vec![
+                        ActionItem::new_with_active(
+                            Action::copy(&profile_name.to_string()), "Copy", "Copied", Icons::Copy,
+                        ),
+                        ActionItem::new(
+                            Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
+                                "Share AirName", &profile_name.to_string(),
+                                "Scan to share AirName.", ctx.window.is_mobile,
+                            )))])), "Display QR Code", Icons::QrCode,
+                        ),
+                    ],
+                ),
+            ],
+            Some((
+                Icons::Edit,
+                Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
+                    Flow::new(vec![Page::Static(Box::new(PageType::editing(
+                        is_me, p.clone(), ctx.window.is_mobile,
+                    )))])
+                }),
+            )), Bumper::None, Offset::Start,
+        )
+    }
+
+    pub(crate) fn editing_with_contact_actions(is_me: bool, profile: Instance<Profile>,
+        is_mobile: bool, contact_actions: Option<Vec<ActionItem>>) -> PageType {
+        let mut p = profile.clone();
+        let closure = Box::new(move |_ctx: &mut Context, objects: &FormValues| {
+            if let Some(result) = objects.text("username") {
+                p.send(ProfileAction::ChangeUsername(result.to_string()));
+            }
+            if let Some(result) = objects.text("about") {
+                p.send(ProfileAction::ChangeNotes(result.to_string()));
+            }
+            if let Some(result) = objects.avatar("avatar") {
+                p.send(ProfileAction::ChangeAvatar(result.clone()));
+            }
+            FormComplete::None
+        }) as Box<dyn FormSubmit>;
+
+        let p = (*profile.pending()).clone();
+        let my_name = p.name.unwrap();
+        let title = if is_me { "My profile" } else { "Edit profile" };
+        let display = if is_me {
+            vec![Display::cta(
+                "AirName", None, &my_name.to_string(),
+                contact_actions.unwrap_or_else(|| vec![
+                    ActionItem::new_with_active(
+                        Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy,
+                    ),
+                    ActionItem::new(
+                        Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
+                            "Share AirName", &my_name.to_string(), "Scan to share AirName.",
+                            is_mobile,
+                        )))])), "Display QR Code", Icons::QrCode,
+                    ),
+                ]),
+            )]
+        } else {
+            vec![]
+        };
+
+        PageType::edit(
+            title, None,
+            vec![
+                FormItem::avatar_with_preset(
+                    "Avatar", p.avatar.clone(), Action::PickPhoto,
+                    |_ctx: &mut Context, _: String| FormValidState::Valid,
+                ).named("avatar"),
+                FormItem::text_with_preset(
+                    "Username", &p.username, None,
+                    |_ctx: &mut Context, value: String| {
+                        if value.trim().is_empty() {
+                            FormValidState::InvalidWithData("Username cannot be empty".to_string())
+                        } else {
+                            FormValidState::Valid
+                        }
+                    },
+                ).named("username"),
+                FormItem::text_with_preset(
+                    "About me", &p.notes, None,
+                    |_ctx: &mut Context, _: String| FormValidState::Valid,
+                ).named("about"),
+            ], display, closure,
+        )
+    }
+
     pub fn nav_fn(&mut self) -> Option<&mut Option<NavFn>> {
         match self {
             PageType::Root { .. }
             | PageType::Messaging { .. }
+            | PageType::Camera { .. }
             | PageType::Photo { .. }
             | PageType::Video { .. }
             | PageType::Playback { .. }
@@ -289,6 +509,7 @@ impl PageType {
     pub fn length(&mut self) -> Option<&mut usize> {
         match self {
             PageType::Messaging { .. }
+            | PageType::Camera { .. }
             | PageType::Photo { .. }
             | PageType::Video { .. }
             | PageType::Playback { .. }
@@ -349,6 +570,7 @@ impl PageType {
             PageType::Messaging { room, flow_len } => {
                 Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len))
             }
+            PageType::Camera { on_capture } => Box::new(CameraPage::new(theme, on_capture.clone())),
             PageType::Photo { photo, header } => {
                 Box::new(PhotoPage::new(ctx, theme, photo.clone(), header.clone()))
             }

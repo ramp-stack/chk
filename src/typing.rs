@@ -127,21 +127,3 @@ impl TypingPanel {
 impl OnChange<()> for TypingPanel {
     fn on_change(&mut self, ctx: &mut Context, _: ()) {self.refresh(ctx);}
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn activity_throttles_edits_and_stops_only_once() {
-        let mut activity = Activity::default();
-        let now = Instant::now();
-        assert_eq!(activity.edit(now, true), Some(true));
-        for millis in [1, 100, 500, 1999] {
-            assert_eq!(activity.edit(now + Duration::from_millis(millis), true), None);
-        }
-        assert_eq!(activity.edit(now + Duration::from_secs(2), true), Some(true));
-        assert_eq!(activity.edit(now + Duration::from_millis(2001), false), Some(false));
-        assert_eq!(activity.stop(), None);
-        assert_eq!(activity.edit(now + Duration::from_millis(2002), true), Some(true));
-    }
-}

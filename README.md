@@ -14,7 +14,7 @@ Instead of choosing specific UI components such as text inputs, radio selectors,
 
 CHK currently targets **Pelican UI**, with plans to support additional Prism-based UI systems in the future.
 
-## Page items and presets
+## Page items and standard screens
 
 `Item::Input(Input::...)` and `Item::Display(Display::...)` explicitly distinguish
 editable controls from presentation. `PageType::content` accepts an ordered list
@@ -33,7 +33,7 @@ accepts those fields directly with optional display content and a header action;
 there is no separate `EditAndDisplay` variant. `Form::page` uses the same editor.
 `Form::flow` still provides one field per step, with optional `Review` and `Success`.
 
-`chk::presets` exposes the standard page presets. Chat applications can construct
+Standard screens are associated functions on `Root`, `Page`, `PageType`, and `Form`. Chat applications can construct
 their navigation directly, including the user's avatar on the Profile tab.
 The Profile tab watches the saved avatar, including synced changes, and refreshes
 when shown if changes arrived while navigation was hidden:
@@ -47,13 +47,14 @@ vec![
 ```
 
 `RootInfo::messages` starts CHK's membership-aware notification subscription service.
-`ChatPresets` supplies the underlying pages and the new-message, new-contact,
-and contact selection flows for applications that need them individually.
+`Root::{messages, contacts, profile}` supplies the underlying root pages.
+`Form::{new_message, new_contact, select_contact}` supplies the individual flows,
+with a `ContactInvitations` argument for contact link parsing.
 The message list watches rooms, profiles, and per-reader read state. Contacts and
 messages retain their existing navigation, sorting, unread badges, and previews.
 All contact identity labels use **AirName**. Apps provide their invitation URL,
 parser, and receive action through `App::invitations`; no Orange URLs or branding
-are embedded in these presets. `ChatPresets::default()` supports raw AirNames
+are embedded in these screens. `ContactInvitations::default()` supports raw AirNames
 without requiring an invitation configuration. `select_contact` also supports
 an exclusion list, used by the group-member picker.
 
@@ -68,8 +69,10 @@ API migration from the previous descriptions:
 - Unused form-storage callbacks and unused closure traits have been removed.
 - Headers, root bumper actions, and `ListItem::action` accept `Action`. Use
   `Action::deferred_flow` when a flow needs current context at activation time.
-- Chat actions live on `ChatPresets::message`, `block`, and `unblock`; generic
-  `Action` no longer has chat-specific variants.
+- Chat actions live on `Action::{message, block, unblock}`.
+- The selector lives in `pelican_ui::components::selector`; CHK re-exports
+  `Selector` and converts its list items and form actions for use there.
+  `Selector::select` returns a Pelican callback directly.
 - Form submit, review, and success callbacks receive `FormValues`, replacing
   positional state vectors.
 

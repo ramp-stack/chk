@@ -1,6 +1,3 @@
-mod chat;
-pub use chat::ChatPresets;
-
 use pelican_ui::drawable::{Component, Drawable};
 use pelican_ui::Context;
 use ptsd::layout::{Stack, Offset};
@@ -12,14 +9,6 @@ use pelican_ui::theme::Theme;
 
 use crate::form::FormValues;
 use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
-
-mod messages;
-mod typing;
-mod groups;
-pub use groups::GroupMessageInfoPage;
-pub use messages::{MessagesPage, MessageDetails};
-mod profiles;
-pub use profiles::{ProfilePage, ProfileView};
 
 #[derive(Debug, Clone)]
 pub struct Success {

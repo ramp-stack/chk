@@ -1,7 +1,7 @@
 use pelican_ui::{Context, colors};
 use pelican_ui::components::{Circle, Icon, Rectangle, Video, VideoClip};
 use pelican_ui::components::text::{Text, TextSize, TextStyle};
-use pelican_ui::interface::general::Header;
+use pelican_ui::interface::general::{Header, FullScreen};
 use pelican_ui::theme::{Icons, Theme};
 use prism::drawable::{
     Component, Drawable, Instruction, LayoutTree, Rect, Shape, text::Align,
@@ -12,7 +12,7 @@ use prism::air::{Instance, Instances};
 use prism::events::{on_change, on_event, ListenCallback, ListenFuture, OnChange, OnEvent};
 use ptsd::{emitters, events};
 use ptsd::display::Bin;
-use ptsd::layout::{Column, Offset, Padding, Row, Size, Slider as SliderLayout, Stack};
+use ptsd::layout::{Offset, Padding, Row, Size, Slider as SliderLayout, Stack};
 use ptsd::navigation::AppPage;
 use uuid::Uuid;
 
@@ -24,10 +24,8 @@ use super::media::{Badge, Fit, FittedPhoto};
 
 #[derive(Debug, Component, Clone)]
 pub struct VideoPage {
-    layout: Column,
-    header: Header,
-    screen: VideoScreen,
-    controls: Controls,
+    layout: Stack,
+    page: FullScreen<VideoScreen, Controls>,
     #[skip]
     video: Option<Video>,
     #[skip]
@@ -49,11 +47,11 @@ impl VideoPage {
         let icon = header.map(|(icon, action)| (icon, action.get()));
         let header = Header::stack(theme, "Video", icon);
         let mut page = Self {
-            layout: Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None), header,
-            screen: VideoScreen(ScreenBody(
+            layout: Stack::fill(),
+            page: FullScreen::new(theme, header, VideoScreen(ScreenBody(
                 Stack::fill(), Box::new(FittedPhoto::new(&video.poster)),
                 Some(Badge::label(theme, "Loading\u{2026}")),
-            )), controls: Controls::new(theme, token), video: Some(video), theme: theme.clone(), token,
+            )), Controls::new(theme, token)), video: Some(video), theme: theme.clone(), token,
             state: State::Waiting, shown: None, clips: Some(ctx.air.instances::<VideoClip>()),
         };
         page.load(ctx);
@@ -65,10 +63,10 @@ impl VideoPage {
     pub fn from_player(theme: &Theme, title: &str, player: Player, size: (u32, u32)) -> Self {
         let token = Uuid::new_v4();
         let mut page = Self {
-            layout: Column::new(12.0, Offset::Center, Size::Fill, Padding::default(), None),
-            header: Header::stack(theme, title, None),
-            screen: VideoScreen(ScreenBody(Stack::fill(), Box::new(Bin(Fit::new(size), player.clone())), None)),
-            controls: Controls::new(theme, token), video: None, clips: None,
+            layout: Stack::fill(),
+            page: FullScreen::new(theme, Header::stack(theme, title, None),
+                VideoScreen(ScreenBody(Stack::fill(), Box::new(Bin(Fit::new(size), player.clone())), None)),
+                Controls::new(theme, token)), video: None, clips: None,
             theme: theme.clone(), token, state: State::Ready { player: player.clone(), scrubbing: None },
             shown: None,
         };
@@ -90,7 +88,7 @@ impl VideoPage {
             self.state = match player {
                 Ok((player, size)) => {
                     player.start();
-                    self.screen.0.1 = Box::new(Bin(Fit::new(size), player.clone()));
+                    self.page.content.0.1 = Box::new(Bin(Fit::new(size), player.clone()));
                     State::Ready { player, scrubbing: None }
                 }
                 Err(_) => State::Unplayable,
@@ -118,7 +116,7 @@ impl VideoPage {
                     BadgeKind::None
                 } else { BadgeKind::Play };
                 if scrubbing.is_none() {
-                    self.controls.scrubber.value = if duration.is_zero() {
+                    self.page.footer.content.scrubber.value = if duration.is_zero() {
                         0.0
                     } else {
                         (position.as_secs_f64() / duration.as_secs_f64()).clamp(0.0, 1.0) as f32
@@ -133,7 +131,7 @@ impl VideoPage {
             duration: duration.as_secs_f64().round() as u64,
         };
         if self.shown.as_ref().is_none_or(|old| old.badge != shown.badge) {
-            self.screen.0.2 = match badge {
+            self.page.content.0.2 = match badge {
                 BadgeKind::Loading => Some(Badge::label(&self.theme, "Loading\u{2026}")),
                 BadgeKind::Unplayable => {
                     Some(Badge::label(&self.theme, "This video can't be played here"))
@@ -142,13 +140,13 @@ impl VideoPage {
             };
         }
         if self.shown.as_ref().is_none_or(|old| old.playing != shown.playing) {
-            self.controls.toggle.1.show(&self.theme, playing);
+            self.page.footer.content.toggle.1.show(&self.theme, playing);
         }
         if self.shown.as_ref().is_none_or(|old| old.second != shown.second) {
-            self.controls.position.1 = Controls::time(&self.theme, shown.second);
+            self.page.footer.content.position.1 = Controls::time(&self.theme, shown.second);
         }
         if self.shown.as_ref().is_none_or(|old| old.duration != shown.duration) {
-            self.controls.duration.1 = Controls::time(&self.theme, shown.duration);
+            self.page.footer.content.duration.1 = Controls::time(&self.theme, shown.duration);
         }
         self.shown = Some(shown);
     }
