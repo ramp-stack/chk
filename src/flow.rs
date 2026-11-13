@@ -1,7 +1,8 @@
-use pelican_ui::{Callback, Context};
-use pelican_ui::navigation::{NavigationEvent, NavigationChanged, Flow as PelicanFlow, FlowContainer, AppPage};
-use pelican_ui::interface::general::{Content, FormEvent};
-use pelican_ui::theme::Theme;
+use crate::ContentSurface;
+use crate::design_system::{Callback, Context};
+use ptsd::navigation::{NavigationEvent, NavigationChanged, Flow as NavigationFlow, FlowContainer, AppPage};
+use crate::design_system::{Content, FormEvent};
+use crate::design_system::Theme;
 use prism::drawable::Component;
 use ptsd::layout::Stack;
 use prism::events::{on_event, OnEvent, DynEvent, on_change, OnChange};
@@ -20,11 +21,12 @@ pub struct Flow(pub Vec<Page>);
 impl Flow{
     pub fn new(builders: Vec<Page>) -> Self {Flow(builders)}
 
-    pub fn action_target(action: (&str, Action), past_action: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
+    pub fn action_target(action: (&str, Action), past_action: &str, target_kind: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
         let (action_str, action) = action;
         let action_caps = action_str.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]).unwrap_or_default();
+        let target_caps = target_kind.chars().next().map(|c| c.to_uppercase().collect::<String>() + &target_kind[c.len_utf8()..]).unwrap_or_default();
 
-        let prompt = PageType::display(&format!("{} user", action_caps),
+        let prompt = PageType::display(&format!("{} {}", action_caps, target_kind),
             vec![
                 Display::avatar(avatar.clone(), purpose.clone()),
                 Display::confirmation_message(&format!("Are you sure you want to {} {}", action_str, target)),
@@ -34,7 +36,7 @@ impl Flow{
             Offset::Center
         );
 
-        let complete = PageType::display(&format!("User {}", past_action),
+        let complete = PageType::display(&format!("{} {}", target_caps, past_action),
             vec![
                 Display::avatar(avatar, purpose),
                 Display::confirmation_message(&format!("{} has been {}", target, past_action)),
@@ -97,7 +99,7 @@ impl Flow{
     pub fn build_as_flow(&mut self, ctx: &mut Context, theme: &Theme) -> FlowWrapper {
         let mut new: Vec<Box<dyn AppPage>> = vec![];
         let length = self.0.len();
-        if self.0.is_empty() { return FlowWrapper::new(PelicanFlow::new(vec![])) }
+        if self.0.is_empty() { return FlowWrapper::new(NavigationFlow::new(vec![])) }
 
         let mut pages = self.0.clone();
         let first = pages.remove(0);
@@ -113,22 +115,22 @@ impl Flow{
         new.push(first.build(ctx, theme, next_fn.clone(), length));
         new.reverse();
 
-        FlowWrapper::new(PelicanFlow::new(new.clone()))
+        FlowWrapper::new(NavigationFlow::new(new.clone()))
     }
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct FlowWrapper(Stack, PelicanFlow, #[skip] bool);
+pub struct FlowWrapper(Stack, NavigationFlow, #[skip] bool);
 impl FlowWrapper {
-    pub fn new(flow: PelicanFlow) -> Self {Self(Stack::default(), flow, true)}
+    pub fn new(flow: NavigationFlow) -> Self {Self(Stack::default(), flow, true)}
 
     fn content(page: &dyn AppPage) -> Option<&Content> {
         if let Some(listener) = page.downcast_ref::<Listener>() {
             Self::content(listener.page.as_ref())
-        } else if let Some(page) = page.downcast_ref::<FormPage>() {Some(&page.1.content)}
-        else if let Some(page) = page.downcast_ref::<EditPage>() {Some(&page.1.content)}
-        else if let Some(page) = page.downcast_ref::<ReviewPage>() {Some(&page.1.content)}
-        else {page.downcast_ref::<SuccessPage>().map(|page| &page.1.content)}
+        } else if let Some(page) = page.downcast_ref::<FormPage>() {Some(page.1.content())}
+        else if let Some(page) = page.downcast_ref::<EditPage>() {Some(page.1.content())}
+        else if let Some(page) = page.downcast_ref::<ReviewPage>() {Some(page.1.content())}
+        else {page.downcast_ref::<SuccessPage>().map(|page| page.1.content())}
     }
 
     fn refresh(&mut self, ctx: &mut Context) {
@@ -208,5 +210,5 @@ impl OnEvent<PageChanged> for FlowWrapper {
 }
 
 impl FlowContainer for FlowWrapper {
-    fn flow(&mut self) -> &mut PelicanFlow {&mut self.1}
+    fn flow(&mut self) -> &mut NavigationFlow {&mut self.1}
 }

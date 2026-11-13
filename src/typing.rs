@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
-use futures::{FutureExt, select};
-use pelican_ui::{Context, theme::Theme, components::TypingIndicator};
+use std::{future::{Future, poll_fn}, pin::pin, task::Poll};
+use crate::design_system::{Theme, TypingIndicator};
+use prism::Context;
 use prism::{air::{Instance, Name}, drawable::Component, events::{Timer, OnChange, on_change}};
 use ptsd::layout::Column;
 use crate::{Watch, Watcher, ListWatch, messages::ChatRoom, profiles::Profile, blocking::Block};
@@ -68,10 +69,12 @@ struct Feed {
 }
 impl Feed {
     async fn next(&mut self) {
-        select! {
-            _ = self.watch.next().fuse() => {},
-            _ = self.expiry.next().fuse() => {},
-        }
+        let mut watch = pin!(self.watch.next());
+        let mut expiry = pin!(self.expiry.next());
+        poll_fn(|cx| {
+            if watch.as_mut().poll(cx).is_ready() || expiry.as_mut().poll(cx).is_ready() {Poll::Ready(())}
+            else {Poll::Pending}
+        }).await;
     }
 }
 
@@ -115,7 +118,7 @@ impl TypingPanel {
         shown.sort_by_key(|(name, _)| *name);
         shown.dedup_by_key(|(name, _)| *name);
         if shown != self.shown {
-            self.indicators = shown.iter().map(|(_, name)| TypingIndicator::new(&self.theme, group.then_some(name.as_str()))).collect();
+            self.indicators = shown.iter().map(|(_, name)| self.theme.typing_indicator(group.then_some(name.as_str()))).collect();
             self.shown = shown;
         }
         if self.shown.is_empty() {self.feed.expiry.cancel();}

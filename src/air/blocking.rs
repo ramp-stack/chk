@@ -1,5 +1,5 @@
-use pelican_ui::Context;
-pub use pelican_ui::components::{MessageContent, Sticker, Gif};
+use prism::Context;
+pub use crate::design_system::{MessageContent, Sticker, Gif};
 
 use prism::air::{Id, Name, Metadata, Contract, Instance};
 

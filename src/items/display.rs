@@ -3,6 +3,7 @@ use super::*;
 #[derive(Debug, Clone)]
 pub enum Display {
     Text { text: String, size: TextSize, style: TextStyle, align: Align },
+    Alert { text: String },
     Icon { icon: Icons },
     Image { image: String, size: (f32, f32) },
     Cta { label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem> },
@@ -18,6 +19,8 @@ pub enum Display {
 }
 
 impl Display {
+    pub fn alert(text: &str) -> Self {Display::Alert { text: text.to_string() }}
+
     pub fn text(text: &str) -> Self {
         Display::Text {
             text: text.to_string(),
@@ -108,135 +111,38 @@ impl Display {
         Display::Actions { actions, as_icons }
     }
 
-    pub fn messages(ctx: &mut Context, theme: &Theme, messages: Vec<PelicanMessage>) -> Self {
-        Display::Messages { messages: MessageGroups::new(ctx, theme, messages, false, false) }
+    pub fn messages(ctx: &mut Context, theme: &Theme, messages: Vec<MessageView>) -> Self {
+        Display::Messages { messages: theme.message_group(ctx, messages, false) }
     }
 
     pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
-            Display::Icon { icon } => vec![Box::new(Icon::new(
-                theme, *icon, Some(theme.colors().get(colors::Text::Heading)), 128.0,
-            ))],
-            Display::Image { image, size } => match theme.brand().images.get(image) {
-                Some(image) => vec![Box::new(pelican_ui::components::AspectRatioImage::new(
-                    image.clone(), size.0,
-                ))],
-                None => vec![Box::new(pelican_ui::components::AspectRatioImage::svg(
-                    theme.brand().svgs.get(image).unwrap().clone(), size.0,
-                ))],
-            },
-            Display::Text { text, size, style, align } if !text.is_empty() => {
-                vec![Box::new(Text::new(theme, text, *size, *style, *align, None))]
+            Self::Alert {text} => vec![theme.alert_view(text)],
+            Self::Icon {icon} => vec![theme.icon_view(*icon, 128.0)],
+            Self::Image {image, size} => vec![theme.image_view(image, size.0)],
+            Self::Text {text, size, style, align} if !text.is_empty() => vec![theme.text_view(text, *size, *style, *align)],
+            Self::Cta {label, data, instructions, actions} => vec![theme.data_text(label, data.as_deref(), instructions,
+                Some(actions.iter().map(ActionItem::presentation).collect()))],
+            Self::Table {label, items, actions} => vec![theme.data_table(label,
+                items.iter().map(|item| (item.title.clone(), item.data.clone())).collect(),
+                actions.as_ref().map(|actions| actions.iter().map(ActionItem::presentation).collect()))],
+            Self::DataList {label, instructions, items, actions} => vec![theme.data_list(label, instructions.as_deref(),
+                items.clone(),
+                actions.as_ref().map(|actions| actions.iter().map(ActionItem::presentation).collect()))],
+            Self::Currency {amount, instructions} => vec![theme.currency_view(amount.clone(), instructions)],
+            Self::Number {number, instructions} => vec![theme.number_view(number.clone(), instructions)],
+            Self::List {label, items, instructions} => vec![theme.list_section(label.clone(), instructions.clone(),
+                items.clone())],
+            Self::QRCode {data, instructions} => vec![theme.qr_code(data),
+                theme.text_view(instructions, TextSize::Md, TextStyle::Secondary, Align::Center)],
+            Self::Avatar {content, purpose} => {
+                let flair = match purpose {AvatarPurpose::None => None, AvatarPurpose::Custom {icon, style} => Some((*icon, *style))};
+                vec![theme.avatar_display(content.clone(), flair)]
             }
-            Display::Cta { label, data, instructions, actions } => vec![Box::new(DataItem::text(
-                theme, label, data.as_deref(), instructions,
-                Some(
-                    actions
-                        .iter()
-                        .map(|ActionItem(action, label, active, icon)| {
-                            let on_click: Box<dyn Callback> = action.get();
-                            ActionData {
-                                label: ActionItem::format_label(label),
-                                active: active.as_deref().map(ActionItem::format_label),
-                                icon: *icon,
-                                on_click,
-                            }
-                        })
-                        .collect::<Vec<ActionData>>(),
-                ),
-            ))],
-            Display::Table { label, items, actions } => {
-                let actions = actions.clone().map(|a| {
-                    a.iter()
-                        .map(|ActionItem(action, label, active, icon)| {
-                            let on_click: Box<dyn Callback> = action.get();
-                            ActionData {
-                                label: ActionItem::format_label(label),
-                                active: active.as_deref().map(ActionItem::format_label),
-                                icon: *icon,
-                                on_click,
-                            }
-                        })
-                        .collect::<Vec<ActionData>>()
-                });
-                vec![Box::new(DataItem::table(
-                    theme, label,
-                    items
-                        .iter()
-                        .map(|ValueItem { title, data }| (title.clone(), data.clone()))
-                        .collect(),
-                    actions,
-                ))]
-            }
-            Display::DataList { label, instructions, items, actions } => {
-                let actions = actions.as_ref().map(|actions| actions.iter()
-                    .map(|ActionItem(action, label, active, icon)| ActionData {
-                        label: ActionItem::format_label(label), active: active.as_deref().map(ActionItem::format_label),
-                        icon: *icon, on_click: action.get(),
-                    }).collect());
-                vec![Box::new(DataItem::list(
-                    theme, label, instructions.as_deref(),
-                    items.iter().map(|item| item.build(theme)).collect(), actions,
-                ))]
-            }
-            Display::Currency { amount, instructions } => vec![Box::new(
-                NumericalInput::display_currency(theme, amount.clone(), instructions),
-            )],
-            Display::Number { number, instructions } => {
-                vec![Box::new(NumericalInput::display_number(theme, number.clone(), instructions))]
-            }
-            Display::List { label, items, instructions, .. } => {
-                let items = items.iter_mut().map(|i| i.build(theme)).collect::<Vec<_>>();
-                vec![Box::new(ListItemSection::new(
-                    &theme.clone(), label.clone(), instructions.clone(), items,
-                ))]
-            }
-            Display::QRCode { data, instructions } => vec![
-                Box::new(QRCode::new(theme, data)),
-                Box::new(Text::new(
-                    theme, instructions, TextSize::Md, TextStyle::Secondary, Align::Center, None,
-                )),
-            ],
-            Display::Avatar { content, purpose } => {
-                let style = match purpose {
-                    AvatarPurpose::None => None,
-                    AvatarPurpose::Custom { icon, style } => Some((*icon, *style)),
-                };
-
-                vec![Box::new(Avatar::new(
-                    theme, content.clone(), style, AvatarSize::Xxl, None,
-                ))]
-            }
-            Display::Actions { actions, as_icons } => match as_icons {
-                true => {
-                    let items = actions
-                        .iter_mut()
-                        .map(|ActionItem(action, _, _, icon)| {
-                            let action: Box<dyn Callback> = action.get();
-                            (*icon, action)
-                        })
-                        .collect::<Vec<_>>();
-                    vec![Box::new(IconButtonGroup::new(theme, items))]
-                }
-                false => {
-                    vec![Box::new(QuickActions::new(
-                        theme, Offset::Start,
-                        actions
-                            .iter_mut()
-                            .map(|ActionItem(action, label, _, icon)| {
-                                let on_click: Box<dyn Callback> = action.get();
-                                ActionData {
-                                    label: ActionItem::format_label(label),
-                                    active: None,
-                                    icon: *icon,
-                                    on_click,
-                                }
-                            })
-                            .collect::<Vec<ActionData>>(),
-                    ))]
-                }
-            },
-            Display::Messages { messages } => vec![Box::new(messages.clone())],
+            Self::Actions {actions, as_icons} if *as_icons => vec![theme.icon_actions(actions.iter().map(|ActionItem(action, _, _, icon)| (*icon, action.get())).collect())],
+            Self::Actions {actions, ..} => vec![theme.quick_actions(Offset::Start,
+                actions.iter().map(|action| {let mut item = action.presentation(); item.active = None; item}).collect())],
+            Self::Messages {messages} => vec![messages.clone()],
             _ => return None,
         })
     }

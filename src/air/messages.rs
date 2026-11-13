@@ -1,7 +1,7 @@
-use pelican_ui::{Context, theme::Theme};
-use pelican_ui::utils::Timestamp;
-pub use pelican_ui::components::{MessageContent, SystemMessage, Sticker, StickerPack, Gif};
-pub use pelican_ui::components::{Photo, Video, VideoClip};
+use prism::Context;
+use crate::design_system::Theme;
+pub use crate::design_system::{MessageContent, SystemMessage, Sticker, StickerPack, Gif};
+pub use crate::design_system::{Photo, Video, VideoClip};
 
 use prism::air::{Id, Name, Metadata, Contract, Instance};
 
@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::profiles::Profile;
-use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::theme::Icons;
+use crate::design_system::{AvatarContent, AvatarIconStyle};
+use crate::design_system::Icons;
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ChatRoomAction {
@@ -31,15 +31,14 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn to_pel(&self, ctx: &mut Context, on_click: impl FnMut(&mut Context, &Theme) + Clone + 'static) -> pelican_ui::components::Message {
+    pub fn to_view(&self, ctx: &mut Context, on_click: impl FnMut(&mut Context, &Theme) + Clone + 'static) -> crate::design_system::MessageView {
         let display_author = match &self.body {
             MessageContent::System(notice) => notice.member(),
             _ => self.author,
         };
-        pelican_ui::components::Message {
-            body: self.body.clone(), timestamp: Timestamp::from_u64(self.timestamp),
-            author: Profile::from_name(ctx, display_author).pending().to_pel(),
-            on_click: Box::new(on_click),
+        crate::design_system::MessageView {
+            body: self.body.clone(), timestamp: ptsd::utils::Timestamp::from_u64(self.timestamp),
+            author: Profile::from_name(ctx, display_author).pending().to_view(), on_click: Box::new(on_click),
         }
     }
 
@@ -101,6 +100,54 @@ impl RoomReadState {
 
     pub fn unread<'a>(&'a self, room: &'a ChatRoom) -> impl Iterator<Item = Id> + 'a {
         room.messages(self.owner).filter(|message| !self.is_read(message)).map(|message| message.id)
+    }
+}
+
+/// Private notification preferences; never shared with the room's other members.
+#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
+pub struct RoomNotificationState {
+    pub room: Id,
+    pub owner: Name,
+    muted: bool,
+}
+
+impl Contract for RoomNotificationState {
+    type Init = Id;
+    type Message = bool;
+    type Result = ();
+
+    fn id() -> Id {Id::hash("CHK.RoomNotificationState.v1")}
+    fn init(room: Id, metadata: Metadata) -> Self {
+        Self {room, owner: metadata.signer, muted: false}
+    }
+    fn apply(&mut self, muted: bool, metadata: Metadata) {
+        if metadata.signer == self.owner {self.muted = muted;}
+    }
+}
+
+impl RoomNotificationState {
+    pub fn open(ctx: &Context, room: Id) -> Instance<Self> {
+        let instances = ctx.air.instances::<Self>();
+        let owner = ctx.air.me();
+        // Creating an existing instance still notifies list watchers. Keep reads
+        // quiet so rebuilding chat info cannot trigger another rebuild itself.
+        instances.list().into_values().find(|instance| {
+            let preferences = instance.pending();
+            preferences.room == room && preferences.owner == owner
+        }).unwrap_or_else(|| instances.create(room))
+    }
+
+    pub fn is_muted(&self) -> bool {self.muted}
+
+    pub fn set_muted(ctx: &Context, room: &Instance<ChatRoom>, muted: bool) {
+        let mut preferences = Self::open(ctx, room.id());
+        if preferences.pending().is_muted() != muted {preferences.send(muted);}
+        Self::apply_to(ctx, room);
+    }
+
+    pub fn apply_to(ctx: &Context, room: &Instance<ChatRoom>) {
+        let preferences = Self::open(ctx, room.id());
+        room.notify(room.pending().members.contains(&ctx.air.me()) && !preferences.pending().is_muted());
     }
 }
 
@@ -247,6 +294,20 @@ impl Contract for ChatRoom {
 }
 
 impl ChatRoom {
+    pub fn find_direct(ctx: &Context, recipient: Name) -> Option<Instance<Self>> {
+        let me = ctx.air.me();
+        // Received and older DMs may have a different creator or init ID.
+        ctx.air.instances::<Self>().list().into_values().filter(|instance| {
+            let room = instance.pending();
+            !room.is_group() && room.members.contains(&me) && room.members.contains(&recipient)
+                && room.members.iter().all(|name| *name == me || *name == recipient)
+        }).min_by_key(|instance| {
+            // Prefer actual conversations over empty duplicates, with a
+            // stable tie-breaker independent of HashMap iteration order.
+            (instance.pending().messages.is_empty(), instance.id())
+        })
+    }
+
     pub fn create(ctx: &mut Context, mut recipients: Vec<Name>) -> Instance<ChatRoom> {
         let me = ctx.air.me();
         recipients.retain(|name| *name != me);
@@ -255,18 +316,7 @@ impl ChatRoom {
         let rooms = ctx.air.instances::<ChatRoom>();
         let id = if recipients.len() <= 1 {
             let recipient = recipients.first().copied().unwrap_or(me);
-            // Received and older DMs may have a different creator or init ID.
-            // Reopen their existing history before creating our name-hashed room.
-            let existing = rooms.list().into_values().filter(|instance| {
-                let room = instance.pending();
-                !room.is_group() && room.members.contains(&me) && room.members.contains(&recipient)
-                    && room.members.iter().all(|name| *name == me || *name == recipient)
-            }).min_by_key(|instance| {
-                // Prefer actual conversations over empty duplicates, with a
-                // stable tie-breaker independent of HashMap iteration order.
-                (instance.pending().messages.is_empty(), instance.id())
-            });
-            if let Some(room) = existing {return room;}
+            if let Some(room) = Self::find_direct(ctx, recipient) {return room;}
             Id::hash(&recipient)
         } else {
             Id::random()
@@ -300,7 +350,7 @@ impl ChatRoom {
         }
     }
 
-    pub fn messages(&self, me: Name) -> impl Iterator<Item = &Message> {
+    pub fn messages(&self, me: Name) -> impl DoubleEndedIterator<Item = &Message> {
         self.messages.iter().filter(move |m| !m.hidden_from.contains(&me))
     }
 

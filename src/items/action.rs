@@ -1,4 +1,5 @@
 use super::*;
+use crate::messages::RoomNotificationState;
 
 
 #[derive(Debug, Clone)]
@@ -47,33 +48,60 @@ impl Action {
     pub fn flow(flow: Flow) -> Self { Action::Flow { flow } }
 
     pub fn deferred_flow(mut build: impl FnMut(&mut Context, &Theme) -> Flow + Clone + 'static) -> Self {
-        Self::custom(move |ctx: &mut Context, theme: &Theme| {
+        Self::Custom {action: Box::new(move |ctx: &mut Context, theme: &Theme| {
             (build(ctx, theme).build(ctx, theme))(ctx, theme);
-        })
+        })}
     }
 
     pub fn block(profile: Instance<Profile>) -> Action {
         let profile = profile.pending();
         let name = profile.name.unwrap();
-        Action::flow(Flow::action_target(
-            ("block", Action::custom(move |ctx: &mut Context, _: &Theme| {
+        Action::Flow {flow: Flow::action_target(
+            ("block", Action::Custom {action: Box::new(move |ctx: &mut Context, _: &Theme| {
                 Block::create(ctx, name).send(BlockAction::Block);
-            })), 
-            "blocked", &profile.username, profile.avatar.clone(), 
+            })}),
+            "blocked", "user", &profile.username, profile.avatar.clone(),
             AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)
-        ))
+        )}
     }
 
     pub fn unblock(profile: Instance<Profile>) -> Action {
         let profile = profile.pending();
         let name = profile.name.unwrap();
-        Action::flow(Flow::action_target(
-            ("unblock", Action::custom(move |ctx: &mut Context, _: &Theme| {
+        Action::Flow {flow: Flow::action_target(
+            ("unblock", Action::Custom {action: Box::new(move |ctx: &mut Context, _: &Theme| {
                 Block::create(ctx, name).send(BlockAction::Unblock);
-            })), 
-            "unblocked", &profile.username, profile.avatar.clone(), 
+            })}),
+            "unblocked", "user", &profile.username, profile.avatar.clone(),
             AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)
-        ))
+        )}
+    }
+
+    pub fn mute(ctx: &mut Context, room: &Instance<ChatRoom>, muted: bool) -> Action {
+        let data = room.pending();
+        let (kind, target, avatar) = if data.is_group() {
+            let details = data.group_details();
+            ("group", details.name, details.photo)
+        } else {
+            let me = ctx.air.me();
+            let name = data.members.iter().copied().find(|name| *name != me).unwrap_or(me);
+            let profile = Profile::from_name(ctx, name);
+            let profile = profile.pending();
+            let target = if name == me {format!("{} (You)", profile.username)} else {profile.username.clone()};
+            (if name == me {"chat"} else {"user"}, target, profile.avatar.clone())
+        };
+        let (label, past_action, icon, style) = if muted {
+            ("mute", "muted", Icons::Mute, AvatarIconStyle::Danger)
+        } else {
+            ("unmute", "unmuted", Icons::Unmute, AvatarIconStyle::Success)
+        };
+        let room = room.clone();
+        Action::Flow {flow: Flow::action_target(
+            (label, Action::Custom {action: Box::new(move |ctx: &mut Context, _: &Theme| {
+                RoomNotificationState::set_muted(ctx, &room, muted);
+            })}),
+            past_action, kind, &target, avatar, AvatarPurpose::new(icon, style)
+        )}
     }
 
     pub fn get(&self) -> Box<dyn Callback> {
@@ -130,17 +158,18 @@ impl Action {
     }
 
     pub fn message(name: Name) -> Action {
-        Action::deferred_flow(move |ctx, _| {
+        Action::Custom {action: Box::new(move |ctx: &mut Context, theme: &Theme| {
             let mut room = ChatRoom::create(ctx, vec![name]);
-            Flow::new(vec![Page::messaging(ctx, &mut room)])
-        })
+            let mut flow = Flow::new(vec![Page::messaging(ctx, &mut room)]);
+            (flow.build(ctx, theme))(ctx, theme);
+        })}
     }
 
     pub fn share_contact(invitations: &ContactInvitations, name: Name) -> Action {
-        match &invitations.invitations {
-            Some(invitations) => invitations.share_action(name),
-            None => Action::share(&name.to_string()),
-        }
+        Action::Share {data: match &invitations.invitations {
+            Some(invitations) => invitations.url(name),
+            None => name.to_string(),
+        }}
     }
 
 }
@@ -180,16 +209,25 @@ impl ActionItem {
 
     pub fn contact_actions(invitations: &ContactInvitations, name: Name) -> Vec<ActionItem> {
         vec![
-            ActionItem::new_with_active(Action::copy(&name.to_string()), "Copy", "Copied", Icons::Copy),
-            ActionItem::new(Action::flow(Flow::new(vec![Page::Static(Box::new(crate::PageType::qr_page(invitations, name)))])),
-                "Display QR Code", Icons::QrCode),
-            ActionItem::new(Action::share_contact(invitations, name), "Share", Icons::Send),
+            ActionItem(Action::copy(&name.to_string()), "Copy".into(), Some("Copied".into()), Icons::Copy),
+            ActionItem(Action::flow(Flow::new(vec![Page::Static(Box::new(crate::PageType::qr_page(invitations, name)))])),
+                "Display QR Code".into(), None, Icons::QrCode),
+            ActionItem(Action::share_contact(invitations, name), "Share".into(), None, Icons::Send),
         ]
     }
 }
 
+/// Ready-to-render action data; CHK owns labels and callbacks.
+#[derive(Clone, Debug)]
+pub struct ActionPresentation {
+    pub label: String,
+    pub active: Option<String>,
+    pub icon: Icons,
+    pub on_click: Box<dyn Callback>,
+}
 impl ActionItem {
-    pub(crate) fn selection_action(&self) -> ActionData {
-        ActionData {label: Self::format_label(&self.1), active: self.2.as_deref().map(Self::format_label), icon: self.3, on_click: self.0.get()}
+    pub fn presentation(&self) -> ActionPresentation {
+        ActionPresentation {label: Self::format_label(&self.1), active: self.2.as_deref().map(Self::format_label),
+            icon: self.3, on_click: self.0.get()}
     }
 }

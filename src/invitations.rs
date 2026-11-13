@@ -1,6 +1,6 @@
 //! Typed invitation setup supplied by an app and managed by CHK.
-use std::{any::Any, cell::RefCell, collections::HashSet, rc::Rc};
-use async_channel::{Receiver, Sender};
+use std::{any::Any, cell::RefCell, collections::{HashSet, VecDeque}, rc::{Rc, Weak},
+    future::poll_fn, task::{Poll, Waker}};
 use prism::{drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
     events::{DynEvent, ListenCallback, ListenFuture}};
 use crate::{Action, Context, Theme};
@@ -14,8 +14,13 @@ pub struct Invitations<T> {
     url: Rc<dyn Fn(T) -> String>,
     parse: Rc<dyn Fn(&str) -> Option<T>>,
     on_open: Rc<dyn Fn(&mut Context, T) -> Action>,
-    inbox: (Sender<(String, T)>, Receiver<(String, T)>),
-    pending: Rc<RefCell<HashSet<String>>>,
+    inbox: Rc<RefCell<InvitationInbox<T>>>,
+}
+
+struct InvitationInbox<T> {
+    queue: VecDeque<(String, T)>,
+    pending: HashSet<String>,
+    waiters: Vec<Weak<RefCell<Option<Waker>>>>,
 }
 
 impl<T> std::fmt::Debug for Invitations<T> {
@@ -29,7 +34,9 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
         parse: impl Fn(&str) -> Option<T> + 'static,
         on_open: impl Fn(&mut Context, T) -> Action + 'static) -> Self {
         Self {url: Rc::new(url), parse: Rc::new(parse), on_open: Rc::new(on_open),
-            inbox: async_channel::bounded(16), pending: Rc::new(RefCell::new(HashSet::new()))}
+            inbox: Rc::new(RefCell::new(InvitationInbox {
+                queue: VecDeque::new(), pending: HashSet::new(), waiters: Vec::new(),
+            }))}
     }
 
     pub fn url(&self, payload: T) -> String {(self.url)(payload)}
@@ -39,10 +46,17 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
     pub fn receive(&self, url: &str) -> bool {
         let url = url.trim();
         let Some(payload) = self.parse_invite(url) else {return false};
-        let mut pending = self.pending.borrow_mut();
-        if pending.contains(url) {return true;}
-        if self.inbox.0.try_send((url.to_owned(), payload)).is_err() {return false;}
-        pending.insert(url.to_owned());
+        let mut inbox = self.inbox.borrow_mut();
+        if inbox.pending.contains(url) {return true;}
+        if inbox.queue.len() == 16 {return false;}
+        inbox.queue.push_back((url.to_owned(), payload));
+        inbox.pending.insert(url.to_owned());
+        let waiters = std::mem::take(&mut inbox.waiters);
+        drop(inbox);
+        for waiter in waiters.into_iter().filter_map(|waiter| waiter.upgrade()) {
+            let waker = waiter.borrow_mut().take();
+            if let Some(waker) = waker {waker.wake();}
+        }
         true
     }
 
@@ -54,9 +68,8 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
     }
 
     pub(crate) fn wrap(&self, inner: impl Drawable, theme: Theme) -> InvitationLinks<T> {
-        let (sender, receiver) = &self.inbox;
         InvitationLinks {inner: Box::new(inner), theme, on_open: self.on_open.clone(),
-            receiver: receiver.clone(), _sender: sender.clone(), pending: self.pending.clone()}
+            inbox: self.inbox.clone()}
     }
 }
 
@@ -66,9 +79,7 @@ pub struct InvitationLinks<T> {
     inner: Box<dyn Drawable>,
     theme: Theme,
     on_open: Rc<dyn Fn(&mut Context, T) -> Action>,
-    receiver: Receiver<(String, T)>,
-    _sender: Sender<(String, T)>,
-    pending: Rc<RefCell<HashSet<String>>>,
+    inbox: Rc<RefCell<InvitationInbox<T>>>,
 }
 
 impl<T> std::fmt::Debug for InvitationLinks<T> {
@@ -89,26 +100,33 @@ impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
     }
     fn changed(&mut self) -> ListenFuture<'_> {
         Box::pin(async move {
-            let receive = Box::pin(self.receiver.recv());
-            match futures::future::select(receive, self.inner.as_mut().changed()).await {
-                futures::future::Either::Left((Ok((url, payload)), _)) => {
+            let mut inner = self.inner.as_mut().changed();
+            let waiter = Rc::new(RefCell::new(None::<Waker>));
+            poll_fn(|cx| {
+                let mut inbox = self.inbox.borrow_mut();
+                if let Some((url, payload)) = inbox.queue.pop_front() {
                     // Deliver distinct invitations in order. Only duplicate deliveries
                     // still waiting in the queue are coalesced; later taps work again.
-                    self.pending.borrow_mut().remove(&url);
-                    Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
+                    inbox.pending.remove(&url);
+                    return Poll::Ready(Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
                         let target = target.downcast_mut::<Self>().unwrap();
                         let action = (target.on_open)(ctx, payload);
                         (action.get())(ctx, &target.theme);
-                    }) as ListenCallback
+                    }) as ListenCallback);
                 }
-                futures::future::Either::Right((callback, _)) => {
+                *waiter.borrow_mut() = Some(cx.waker().clone());
+                inbox.waiters.retain(|waiter| waiter.strong_count() > 0);
+                if !inbox.waiters.iter().any(|existing| existing.ptr_eq(&Rc::downgrade(&waiter))) {
+                    inbox.waiters.push(Rc::downgrade(&waiter));
+                }
+                drop(inbox);
+                inner.as_mut().poll(cx).map(|callback| {
                     Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
                         let target = target.downcast_mut::<Self>().unwrap();
                         callback(target.inner.as_mut().as_any_mut(), ctx);
                     }) as ListenCallback
-                }
-                _ => unreachable!("the invitation view retains its sender"),
-            }
+                })
+            }).await
         })
     }
 }

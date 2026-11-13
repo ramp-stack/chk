@@ -1,10 +1,10 @@
-use pelican_ui::theme::Theme;
+use crate::design_system::Theme;
 use prism::drawable::Component;
 use ptsd::layout::Stack;
 use prism::events::{on_change, OnChange, Event, ChildEvent};
 use uuid::Uuid;
-use pelican_ui::navigation::AppPage;
-use pelican_ui::Context;
+use ptsd::navigation::AppPage;
+use prism::Context;
 
 use crate::{MessagesPage, PageBuilder, NavFn};
 

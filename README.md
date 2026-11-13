@@ -1,5 +1,67 @@
 # CHK Overview
 
+## Design-system selection
+
+Each app chooses a type implementing `chk::DesignSystem`:
+
+```rust
+impl chk::App for MyApp {
+    type DesignSystem = chk::PelicanUi;
+    type Invitation = MyInvitation;
+    // name, new, roots, and the app's other configuration...
+}
+```
+
+The optional feature makes the bundled Pelican adapter available:
+
+```toml
+chk = { version = "2.0.0", features = ["pelican_ui"] }
+```
+
+For an external design system, omit that feature and choose the external type:
+
+```toml
+chk = { version = "2.0.0", default-features = false }
+my_design_system = "1.0"
+```
+
+```rust
+impl chk::App for MyApp {
+    type DesignSystem = my_design_system::MyDesignSystem;
+    type Invitation = MyInvitation;
+    // ...
+}
+```
+
+CHK compiles without Pelican. `App::DesignSystem` has no default, so every app
+must provide its implementation. The selected backend travels with the app's
+`Theme`; no global registration or CHK source changes are needed for another
+adapter. Explicit theme creation uses `ChkTheme::build::<MyDesignSystem>(assets)`.
+
+`DesignSystem` maps prepared descriptions to native constructors. For example,
+its `list_item` method reads CHK's public `ListItem` fields and constructs the
+native row. The Pelican mappings live in `src/pelican_ui.rs`. Controls implement
+ordinary Rust traits such as `chk::Slider::value`, `TextField`, and `InputControl`.
+`Control::boxed` preserves their state interface inside a drawable tree.
+
+`src/pelican_ui.rs` is the complete Pelican adapter template: widget construction,
+callback translation, control/surface implementations, and the legacy
+`ChkTheme::to_pelican` convenience method all live there. Other adapters can copy
+its structure and supply their own widgets. Adapters in other crates use `chk::`
+for CHK types and wrap foreign widgets in owned newtypes to implement CHK's traits
+where Rust's orphan rules require it. Outside that file, Pelican implementation
+references appear only in the optional dependency/feature and module/export declarations.
+
+CHK owns page assembly, labels, validation, filtering, navigation, submission,
+read receipts, typing, and media lifecycles. Page composition stays alongside
+its struct. Shared content, events, and serialized models live in PTSD, so
+adapters reuse the same form behavior and stored data. Native widgets own their
+layout and pointer handling.
+
+CHK functions are associated with their types, and constructors initialize their
+own types directly. CHK has no direct `futures` or `async-channel` dependency;
+its asynchronous state uses standard-library futures and wakers.
+
 ## Frontend development setup
 
 Cargo retrieves Pelican UI 3.0.0 and PTSD 0.2.0 from pinned Git revisions, with backend
@@ -12,7 +74,7 @@ CHK is a Rust application-building layer designed to sit on top of UI systems bu
 
 Instead of choosing specific UI components such as text inputs, radio selectors, or tables, developers simply define the information a user should interact with. CHK then determines how that information should be presented within the underlying UI system.
 
-CHK currently targets **Pelican UI**, with plans to support additional Prism-based UI systems in the future.
+CHK currently supplies a **Pelican UI** adapter; its public `DesignSystem` trait accepts adapters from external crates.
 
 ## Page items and standard screens
 
@@ -70,9 +132,9 @@ API migration from the previous descriptions:
 - Headers, root bumper actions, and `ListItem::action` accept `Action`. Use
   `Action::deferred_flow` when a flow needs current context at activation time.
 - Chat actions live on `Action::{message, block, unblock}`.
-- The selector lives in `pelican_ui::components::selector`; CHK re-exports
-  `Selector` and converts its list items and form actions for use there.
-  `Selector::select` returns a Pelican callback directly.
+- CHK's `Selector` describes choices and scoped actions independently of the UI.
+  The selected design-system adapter creates its selection control;
+  `Selector::select` returns a CHK callback.
 - Form submit, review, and success callbacks receive `FormValues`, replacing
   positional state vectors.
 
@@ -201,7 +263,7 @@ Use the scoped `Selector::select` action to add a choice from a nested flow.
 `App::build` constructs the interface without retaining the application in an event callback.
 Handle application events with `#[on_event] impl OnEvent<E>` on the component that owns the
 behavior. Pages handle local actions; an application-owned root wrapping the built interface
-can handle actions shared by multiple pages. That root receives events before Pelican, and
+can handle actions shared by multiple pages. That root receives events before the interface, and
 returns the events that should continue to the interface.
 
 ## Refreshing pages

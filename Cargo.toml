@@ -13,15 +13,17 @@ documentation = "https://docs.rs/chk"
 name = "chk"
 path = "src/lib.rs"
 
+[features]
+default = []
+pelican_ui = ["dep:pelican_ui"]
+
 [dependencies]
 serde = "1.0.219"
-pelican_ui = {version = "3.0.0", git = "https://github.com/ramp-stack/pelican_ui", rev = "4522d2919738a6e042faa530c3f04f8bca66a5cf"}
+pelican_ui = {optional = true, version = "3.0.0", git = "https://github.com/ramp-stack/pelican_ui", rev = "4522d2919738a6e042faa530c3f04f8bca66a5cf"}
 prism = {package = "prism2", version = "3.1.0"}
 ptsd = {package = "ptsd2", version = "0.2.0", git = "https://github.com/ramp-stack/ptsd", rev = "965e94c3094e0e871381b34d9b0ba9976232b10e"}
 dyn-clone = "1.0.20"
 rand = "0.8"
 uuid = {version = "1.16.0", features = ["v4", "js"]}
 
-futures = "0.3.34"
-async-channel = "2.5"
 include_dir = "0.7.4"

@@ -1,10 +1,10 @@
 use prism::air::{Instance, Contract};
-use pelican_ui::Context;
-use pelican_ui::components::QrCodeFound;
+use prism::Context;
+use crate::design_system::QrCodeFound;
 use ptsd::layout::Offset;
-use pelican_ui::navigation::AppPage;
-use pelican_ui::theme::{Theme, Icons};
-use pelican_ui::utils::ValidationFn;
+use ptsd::navigation::AppPage;
+use crate::design_system::{Theme, Icons};
+use ptsd::utils::ValidationFn;
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -18,12 +18,12 @@ use crate::closure::{
     PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter,
     SuccessGetter,
 };
-use crate::messages::{ChatRoom, Photo, Video};
+use crate::messages::{ChatRoom, RoomNotificationState, Photo, Video};
 use crate::profiles::{Profile, ProfileAction};
 use crate::{ContactInvitations, Flow, ListItem, ActionItem, AvatarPurpose, AvatarIconStyle, Form, FormValues, FormComplete, FormValidState};
 use prism::air::Name;
 use crate::messages::ChatRoomAction;
-use pelican_ui::navigation::NavigationEvent;
+use ptsd::navigation::NavigationEvent;
 
 mod edit;
 pub use edit::*;
@@ -39,9 +39,9 @@ mod stack;
 pub use stack::*;
 mod watch;
 pub use watch::*;
-mod media;
+pub(crate) mod media;
 pub use media::*;
-mod video;
+pub(crate) mod video;
 pub use video::*;
 
 #[derive(Debug, Clone)]
@@ -54,12 +54,12 @@ impl Page {
 
     pub fn contract_updates<C: Contract>(contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
         let builder: Box<dyn PageBuilderContractFn<C>> = Box::new(builder);
-        Page::watching(Watch::contract(contract), builder)
+        Page::Refreshing(Box::new(Watching::new(Watch::contract(contract), builder)))
     }
 
     pub fn updates_list_changes<C: Contract>(_ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
         let builder: Box<dyn PageBuilderContractMultiplesFn<C>> = Box::new(builder);
-        Page::watching(Watch::list::<C>(), builder)
+        Page::Refreshing(Box::new(Watching::new(Watch::list::<C>(), builder)))
     }
 
     pub fn profile(ctx: &mut Context, profile: &mut Instance<Profile>) -> Self {
@@ -69,26 +69,27 @@ impl Page {
             true => Page::Static(Box::new(PageType::editing(
                 is_me, profile.clone(), ctx.window.is_mobile,
             ))),
-            false => Page::watching(
-                (Watch::contract(profile.clone()), Watch::list::<Block>()),
+            false => Page::Refreshing(Box::new(Watching::new(
+                (Watch::contract(profile.clone()), Watch::list::<Block>(),
+                 Watch::list::<ChatRoom>(), Watch::list::<RoomNotificationState>()),
                 |ctx: &mut Context,
                  _: &Theme,
-                 (profile, _blocks): (Instance<Profile>, Vec<Instance<Block>>)| {
+                 (profile, _, _, _): (Instance<Profile>, Vec<Instance<Block>>, Vec<Instance<ChatRoom>>, Vec<Instance<RoomNotificationState>>)| {
                     PageType::profile_view(ctx, profile)
                 },
-            ),
+            ))),
         }
     }
 
     pub fn messaging(_ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
-        Page::watching(
+        Page::Refreshing(Box::new(Watching::new(
             (Watch::contract(room.clone()), Watch::list::<Block>(), Watch::list::<Profile>()),
             |_ctx: &mut Context,
              _theme: &Theme,
              (room, _blocks, _profiles): (Instance<ChatRoom>, Vec<Instance<Block>>, Vec<Instance<Profile>>)| {
                 PageType::messaging(room)
             },
-        )
+        )))
     }
 
     pub fn builder(&self) -> Option<Box<dyn PageBuilder>> {
@@ -122,10 +123,19 @@ impl Page {
     }
 
     pub fn group_info(room: Instance<ChatRoom>) -> Page {
-        Page::watching((Watch::contract(room), Watch::list::<Profile>()),
-            |ctx: &mut Context, _: &Theme, (room, _): (Instance<ChatRoom>, Vec<Instance<Profile>>)| {
-                PageType::group_info(ctx, room)
-            })
+        Page::Refreshing(Box::new(Watching::new(
+            (Watch::contract(room), Watch::list::<Profile>(), Watch::list::<Block>(), Watch::list::<RoomNotificationState>()),
+            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, Vec<Instance<Profile>>, Vec<Instance<Block>>, Vec<Instance<RoomNotificationState>>)| {
+                PageType::chat_info(ctx, room)
+            },
+        )))
+    }
+
+    pub fn chat_info(room: Instance<ChatRoom>) -> Page {
+        Page::Refreshing(Box::new(Watching::new((Watch::contract(room), Watch::list::<Profile>(), Watch::list::<Block>(), Watch::list::<RoomNotificationState>()),
+            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, Vec<Instance<Profile>>, Vec<Instance<Block>>, Vec<Instance<RoomNotificationState>>)| {
+                PageType::chat_info(ctx, room)
+            })))
     }
 }
 
@@ -206,8 +216,12 @@ impl PageType {
         title: &str, inputs: Vec<Input>, display: Vec<Display>,
         header: Option<(Icons, Action)>, bumper: Bumper,
     ) -> Self {
-        Self::content(title, inputs.into_iter().map(Item::Input)
-            .chain(display.into_iter().map(Item::Display)).collect(), header, bumper, Offset::Start)
+        Self::Content {
+            title: title.into(),
+            items: inputs.into_iter().map(Item::Input)
+                .chain(display.into_iter().map(Item::Display)).collect(),
+            header, bumper, offset: Offset::Start, flow_len: 1, next: None,
+        }
     }
 
     pub fn content(title: &str, items: Vec<Item>, header: Option<(Icons, Action)>, bumper: Bumper, offset: Offset) -> Self {
@@ -215,12 +229,15 @@ impl PageType {
     }
 
     pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Action)>, bumper: Bumper, offset: Offset) -> Self {
-        Self::content(title, items.into_iter().map(Item::Display).collect(), header, bumper, offset)
+        Self::Content {
+            title: title.into(), items: items.into_iter().map(Item::Display).collect(),
+            header, bumper, offset, flow_len: 1, next: None,
+        }
     }
 
     pub fn input(title: &str, item: Input, header: Option<(Icons, Action)>, bumper: Bumper) -> Self {
         let offset = item.offset();
-        Self::content(title, vec![Item::Input(item)], header, bumper, offset)
+        Self::Content {title: title.into(), items: vec![Item::Input(item)], header, bumper, offset, flow_len: 1, next: None}
     }
 
     pub fn form(id: &str, title: &str, item: Input, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
@@ -273,29 +290,79 @@ impl PageType {
     }
 
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>, on_find: Box<dyn QrCodeFound>) -> Self {
-        PageType::input(
-            "Scan QR code", Input::qr_code_scanner(instructions, alt, on_find), None,
-            crate::Bumper::None,
-        )
+        let item = Input::qr_code_scanner(instructions, alt, on_find);
+        let offset = item.offset();
+        Self::Content {
+            title: "Scan QR code".into(), items: vec![Item::Input(item)], header: None,
+            bumper: Bumper::None, offset, flow_len: 1, next: None,
+        }
     }
 
     pub fn display_qr_code(title: &str, data: &str, instructions: &str, share: bool) -> Self {
-        PageType::display(
-            title, vec![Display::qr_code(data, instructions)], None,
-            Bumper::custom(
+        Self::Content {
+            title: title.into(), items: vec![Item::Display(Display::qr_code(data, instructions))], header: None,
+            bumper: Bumper::custom(
                 if share { "Share" } else { "Copy" },
                 if share { Action::share(data) } else { Action::copy(data) },
-            ), Offset::Center,
-        )
+            ), offset: Offset::Center, flow_len: 1, next: None,
+        }
     }
 
     pub fn qr_page(invitations: &ContactInvitations, name: Name) -> PageType {
-        PageType::display("Share AirName",
-            vec![Display::qr_code(&name.to_string(), "Scan to share this AirName.")], None,
-            Bumper::custom("Share", Action::share_contact(invitations, name)), Offset::Center)
+        Self::Content {
+            title: "Share AirName".into(),
+            items: vec![Item::Display(Display::qr_code(&name.to_string(), "Scan to share this AirName."))],
+            header: None, bumper: Bumper::custom("Share", Action::share_contact(invitations, name)),
+            offset: Offset::Center, flow_len: 1, next: None,
+        }
+    }
+
+    pub fn chat_info(ctx: &mut Context, room: Instance<ChatRoom>) -> PageType {
+        if room.pending().is_group() {
+            let (items, header) = Self::group_info_fields(ctx, room);
+            return Self::Content {
+                title: "Group info".into(), items, header,
+                bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
+            };
+        }
+        let me = ctx.air.me();
+        let name = room.pending().members.iter().copied().find(|name| *name != me).unwrap_or(me);
+        let profile = Profile::from_name(ctx, name);
+        if name == me {
+            let profile = profile.pending();
+            return Self::Content {
+                title: "Chat info".into(),
+                items: vec![
+                    Item::Display(Display::avatar(profile.avatar.clone(), AvatarPurpose::None)),
+                    Item::Display(Display::label(&format!("{} (You)", profile.username))),
+                    Item::Display(Display::actions(vec![Self::mute_action(ctx, room)], true)),
+                ],
+                header: None, bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
+            };
+        }
+        let (title, items, header) = Self::profile_view_fields(ctx, profile, Some(room));
+        Self::Content {
+            title, items, header, bumper: Bumper::None,
+            offset: Offset::Start, flow_len: 1, next: None,
+        }
     }
 
     pub fn group_info(ctx: &mut Context, room: Instance<ChatRoom>) -> PageType {
+        let (items, header) = Self::group_info_fields(ctx, room);
+        Self::Content {
+            title: "Group info".into(), items, header,
+            bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
+        }
+    }
+
+    fn mute_action(ctx: &mut Context, room: Instance<ChatRoom>) -> ActionItem {
+        let muted = RoomNotificationState::open(ctx, room.id()).pending().is_muted();
+        let action = Action::mute(ctx, &room, !muted);
+        if muted {ActionItem::new(action, "Unmute", Icons::Unmute)}
+        else {ActionItem::new(action, "Mute", Icons::Mute)}
+    }
+
+    fn group_info_fields(ctx: &mut Context, room: Instance<ChatRoom>) -> (Vec<Item>, Option<(Icons, Action)>) {
         let data = room.pending().clone();
         let details = data.group_details();
         let me = ctx.air.me();
@@ -311,6 +378,7 @@ impl PageType {
             Display::avatar(details.photo.clone(), AvatarPurpose::None),
         ];
         if active {
+            display.push(Display::actions(vec![Self::mute_action(ctx, room.clone())], true));
             let add_room = room.clone();
             let leave_room = room.clone();
             display.push(Display::data_list("Group members", Some(&format!("This group has {} members.", data.members.len())), items, Some(vec![
@@ -332,7 +400,7 @@ impl PageType {
         let edit = active.then(|| (Icons::Edit, Action::deferred_flow(move |_: &mut Context, _: &Theme| {
             Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
         })));
-        PageType::display("Group info", display, edit, Bumper::None, Offset::Start)
+        (display.into_iter().map(Item::Display).collect(), edit)
     }
 
     pub fn edit_group(mut room: Instance<ChatRoom>) -> PageType {
@@ -349,7 +417,7 @@ impl PageType {
             }
             FormComplete::Action(Action::custom(|ctx: &mut Context, _: &Theme| ctx.emit(NavigationEvent::Pop)))
         }) as Box<dyn FormSubmit>;
-        PageType::edit("Edit group", None, vec![
+        Self::Edit { title: "Edit group".into(), header: None, items: vec![
             FormItem::avatar_with_preset("Group photo", photo, Action::PickPhoto,
                 |_: &mut Context, _: String| FormValidState::Valid).named("photo"),
             FormItem::text_with_preset("Group name", &name, None, |_: &mut Context, name: String| {
@@ -357,26 +425,39 @@ impl PageType {
                 else if name.trim().chars().count() > 80 {FormValidState::InvalidWithData("Use 80 characters or fewer.".into())}
                 else {FormValidState::Valid}
             }).named("name"),
-        ], vec![], save)
+        ], display: vec![], on_save: save, flow_len: 1 }
     }
 
     pub fn leave(mut room: Instance<ChatRoom>) -> PageType {
         let details = room.pending().group_details();
-        PageType::display("Leave group", vec![
-            Display::avatar(details.photo, AvatarPurpose::Custom { icon: Icons::Leave, style: AvatarIconStyle::Danger }),
-            Display::confirmation_message(&format!("Leave {}?", details.name)),
-        ], None, Bumper::double("Leave", Action::custom(move |ctx: &mut Context, _: &Theme| {
+        Self::Content { title: "Leave group".into(), items: vec![
+            Item::Display(Display::avatar(details.photo, AvatarPurpose::Custom { icon: Icons::Leave, style: AvatarIconStyle::Danger })),
+            Item::Display(Display::confirmation_message(&format!("Leave {}?", details.name))),
+        ], header: None, bumper: Bumper::double("Leave", Action::custom(move |ctx: &mut Context, _: &Theme| {
             room.send(ChatRoomAction::LeaveGroup);
             room.notify(false);
             ctx.emit(NavigationEvent::Root(None));
-        }), "Cancel", Action::None), Offset::Center)
+        }), "Cancel", Action::None), offset: Offset::Center, flow_len: 1, next: None }
     }
 
     pub fn editing(is_me: bool, profile: Instance<Profile>, is_mobile: bool) -> PageType {
-        Self::editing_with_contact_actions(is_me, profile, is_mobile, None)
+        let (items, display, on_save) = Self::editing_fields(is_me, profile, is_mobile, None);
+        Self::Edit {
+            title: if is_me { "My profile" } else { "Edit profile" }.into(),
+            header: None, items, display, on_save, flow_len: 1,
+        }
     }
 
     pub fn profile_view(ctx: &mut Context, profile: Instance<Profile>) -> PageType {
+        let room = profile.pending().name.and_then(|name| ChatRoom::find_direct(ctx, name));
+        let (title, items, header) = Self::profile_view_fields(ctx, profile, room);
+        Self::Content {
+            title, items, header, bumper: Bumper::None,
+            offset: Offset::Start, flow_len: 1, next: None,
+        }
+    }
+
+    fn profile_view_fields(ctx: &mut Context, profile: Instance<Profile>, room: Option<Instance<ChatRoom>>) -> (String, Vec<Item>, Option<(Icons, Action)>) {
         let p = profile.clone();
         let profile = profile.pending().clone();
         let profile_name = profile.name.unwrap();
@@ -385,37 +466,50 @@ impl PageType {
         let about_me = if profile.notes.is_empty() { "No bio yet." } else { &profile.notes };
 
         let is_blocked = !is_me && Block::did_i_block(ctx, profile.name.unwrap());
+        let blocked_by_them = !is_me && Block::am_i_blocked(ctx, profile_name);
 
         let block_action = match is_blocked {
             true => ActionItem::new(crate::Action::unblock(p.clone()), "Unblock", Icons::Unblock),
             false => ActionItem::new(crate::Action::block(p.clone()), "Block", Icons::Block),
         };
 
-        PageType::display(
-            &profile.username,
-            vec![
-                Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
-                Display::actions(
-                    vec![
-                        ActionItem::new(Action::message(profile_name), "Message", Icons::Messages),
-                        block_action,
-                    ], true,
-                ), Display::cta("About me", None, about_me, vec![]),
-                Display::cta(
-                    "AirName", None, &profile_name.to_string(),
-                    vec![
-                        ActionItem::new_with_active(
-                            Action::copy(&profile_name.to_string()), "Copy", "Copied", Icons::Copy,
-                        ),
-                        ActionItem::new(
-                            Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
-                                "Share AirName", &profile_name.to_string(),
-                                "Scan to share AirName.", ctx.window.is_mobile,
-                            )))])), "Display QR Code", Icons::QrCode,
-                        ),
-                    ],
-                ),
-            ],
+        let mut display = Vec::new();
+        let blocked_message = match (is_blocked, blocked_by_them) {
+            (true, true) => Some("This user blocked you."),
+            (true, false) => Some("You blocked this user."),
+            (false, true) => Some("This user blocked you."),
+            (false, false) => None,
+        };
+
+        let mut actions = vec![
+            ActionItem::new(Action::message(profile_name), "Message", Icons::Messages),
+            block_action,
+        ];
+
+        if let Some(room) = room {actions.push(Self::mute_action(ctx, room));}
+
+        if let Some(message) = blocked_message {display.push(Display::alert(message));}
+        display.extend([
+            Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
+            Display::actions(actions, true),
+            Display::cta("About me", None, about_me, vec![]),
+            Display::cta(
+                "AirName", None, &profile_name.to_string(),
+                vec![
+                    ActionItem::new_with_active(
+                        Action::copy(&profile_name.to_string()), "Copy", "Copied", Icons::Copy,
+                    ),
+                    ActionItem::new(
+                        Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
+                            "Share AirName", &profile_name.to_string(),
+                            "Scan to share AirName.", ctx.window.is_mobile,
+                        )))])), "Display QR Code", Icons::QrCode,
+                    ),
+                ],
+            ),
+        ]);
+        (
+            profile.username, display.into_iter().map(Item::Display).collect(),
             Some((
                 Icons::Edit,
                 Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
@@ -423,12 +517,21 @@ impl PageType {
                         is_me, p.clone(), ctx.window.is_mobile,
                     )))])
                 }),
-            )), Bumper::None, Offset::Start,
+            )),
         )
     }
 
     pub(crate) fn editing_with_contact_actions(is_me: bool, profile: Instance<Profile>,
         is_mobile: bool, contact_actions: Option<Vec<ActionItem>>) -> PageType {
+        let (items, display, on_save) = Self::editing_fields(is_me, profile, is_mobile, contact_actions);
+        Self::Edit {
+            title: if is_me { "My profile" } else { "Edit profile" }.into(),
+            header: None, items, display, on_save, flow_len: 1,
+        }
+    }
+
+    fn editing_fields(is_me: bool, profile: Instance<Profile>, is_mobile: bool,
+        contact_actions: Option<Vec<ActionItem>>) -> (Vec<FormItem>, Vec<Display>, Box<dyn FormSubmit>) {
         let mut p = profile.clone();
         let closure = Box::new(move |_ctx: &mut Context, objects: &FormValues| {
             if let Some(result) = objects.text("username") {
@@ -445,7 +548,6 @@ impl PageType {
 
         let p = (*profile.pending()).clone();
         let my_name = p.name.unwrap();
-        let title = if is_me { "My profile" } else { "Edit profile" };
         let display = if is_me {
             vec![Display::cta(
                 "AirName", None, &my_name.to_string(),
@@ -465,8 +567,7 @@ impl PageType {
             vec![]
         };
 
-        PageType::edit(
-            title, None,
+        (
             vec![
                 FormItem::avatar_with_preset(
                     "Avatar", p.avatar.clone(), Action::PickPhoto,
@@ -488,6 +589,10 @@ impl PageType {
                 ).named("about"),
             ], display, closure,
         )
+    }
+
+    pub(crate) fn always_valid() -> Box<dyn ValidationFn> {
+        Box::new(|_: &mut Context, _: Vec<&mut Box<dyn prism::drawable::Drawable>>| true)
     }
 
     pub fn nav_fn(&mut self) -> Option<&mut Option<NavFn>> {

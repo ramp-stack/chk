@@ -12,7 +12,7 @@ impl AvatarPurpose {
 #[derive(Clone, Component)]
 pub struct AvatarInput {
     layout: Stack,
-    avatar: Avatar,
+    avatar: crate::design_system::AvatarView,
     #[skip]
     id: Id,
     #[skip]
@@ -22,7 +22,7 @@ pub struct AvatarInput {
 }
 
 impl AvatarInput {
-    pub(super) fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
+    pub(crate) fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
         let id = Id::random();
         let on_click = action.map(|action| match action {
             Action::PickPhoto => {
@@ -33,7 +33,7 @@ impl AvatarInput {
         });
         Self {
             layout: Stack::default(),
-            avatar: Avatar::new(theme, content, flair, AvatarSize::Xxl, on_click),
+            avatar: theme.avatar_input(content, flair, on_click),
             id,
             picked: None,
             form: None,
@@ -78,4 +78,9 @@ impl OnEvent<FormEvent> for AvatarInput {
         if let FormEvent::Bind(id) = event { self.form = Some(id); }
         prism::events![event]
     }
+}
+
+impl crate::InputControl for AvatarInput {
+    fn state(&self) -> State {State::Avatar(self.content().clone())}
+    fn validation_value(&self) -> Option<String> {Some(self.content().get_image().unwrap_or_default().to_string())}
 }

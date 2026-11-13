@@ -1,30 +1,21 @@
-use pelican_ui::{colors, Context, Callback};
-use pelican_ui::drawable::Drawable;
+use crate::design_system::{Context, Callback};
+use prism::drawable::Drawable;
 use prism::drawable::{Component, text::Align};
 use prism::events::{on_change, on_event, ChildEvent, DynEvent, Event, OnEvent, OnChange};
 use prism::hardware::{Image, Picked};
 use ptsd::layout::Stack;
 use uuid::Uuid;
-use pelican_ui::components::QrCodeFound;
+use crate::design_system::QrCodeFound;
 use prism::hardware::Data;
-use pelican_ui::theme::{Theme, Icons};
+use crate::design_system::{Theme, Icons};
 use ptsd::layout::Offset;
-use pelican_ui::utils::{TitleSubtitle};
-use pelican_ui::components::list_item::{
-    ListItemSection, ListItemInfoLeft, ListItem as PelicanListItem,
-};
-use pelican_ui::components::{
-    QRCodeScanner, TextInput, RadioSelector, Icon, DataItem, QRCode, NumericalInput,
-};
-pub use pelican_ui::components::Number;
-use pelican_ui::components::text::{Text, TextStyle, TextSize};
-use pelican_ui::components::avatar::{Avatar, AvatarSize};
-pub use pelican_ui::components::avatar::{AvatarContent, AvatarIconStyle};
-use pelican_ui::components::button::{QuickActions, IconButtonGroup, ActionData};
-use pelican_ui::components::{Keypad, TextInputEvent};
-use pelican_ui::components::{Selector, SelectionInput};
-use pelican_ui::interface::general::FormEvent;
-use pelican_ui::components::{MessageGroups, Message as PelicanMessage};
+use crate::design_system::ListItemView;
+pub use crate::design_system::Number;
+use crate::design_system::{TextStyle, TextSize};
+pub use crate::design_system::{AvatarContent, AvatarIconStyle};
+use crate::design_system::TextInputEvent;
+use crate::design_system::FormEvent;
+use crate::design_system::{MessageGroups, MessageView};
 use prism::air::{Id, Name, Instance};
 use crate::profiles::Profile;
 use crate::blocking::{Block, BlockAction};
@@ -64,14 +55,14 @@ impl Item {
 /// A labeled value shared by tables and enumerated choices.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueItem {
-    title: String,
-    data: String,
+    pub(crate) title: String,
+    pub(crate) data: String,
 }
 impl ValueItem {
     pub fn new(title: &str, data: &str) -> Self {
         Self {title: title.to_string(), data: data.to_string()}
     }
-    fn get(&self) -> (&str, &str, Box<dyn Callback>) {
+    pub(crate) fn get(&self) -> (&str, &str, Box<dyn Callback>) {
         (&self.title, &self.data, Box::new(|_, _| {}))
     }
 }

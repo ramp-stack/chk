@@ -1,11 +1,12 @@
-use futures::FutureExt;
-use futures::future::{LocalBoxFuture, Shared, select_all};
-use pelican_ui::{Context, theme::Theme};
+use prism::Context;
+use crate::design_system::Theme;
 use prism::air::{Contract, Id, Instance, Instances};
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::future::Future;
+use std::future::{Future, poll_fn, ready};
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll, Waker};
 
 use crate::{PageBuilder, PageType};
 
@@ -44,10 +45,16 @@ impl<C: Contract> Watcher for ListWatch<C> {
     async fn next(&mut self) -> Option<()> {
         let instances = self.instances.as_mut()?;
         let added = {
-            let mut waits: Vec<LocalBoxFuture<'_, Option<Instance<C>>>> = self.current.values_mut()
-                .map(|instance| async move {instance.next().await; None}.boxed_local()).collect();
-            waits.push(async move {Some(instances.next().await)}.boxed_local());
-            select_all(waits).await.0
+            let mut waits: Vec<Pin<Box<dyn Future<Output = Option<Instance<C>>> + '_>>> = self.current.values_mut()
+                .map(|instance| Box::pin(async move {instance.next().await; None})
+                    as Pin<Box<dyn Future<Output = Option<Instance<C>>> + '_>>).collect();
+            waits.push(Box::pin(async move {Some(instances.next().await)}));
+            poll_fn(|cx| {
+                for wait in &mut waits {
+                    if let Poll::Ready(update) = wait.as_mut().poll(cx) {return Poll::Ready(update);}
+                }
+                Poll::Pending
+            }).await
         };
         if let Some(instance) = added {self.current.entry(instance.id()).or_insert(instance);}
         Some(())
@@ -75,15 +82,20 @@ macro_rules! impl_watcher_for_tuple {
             #[allow(non_snake_case)]
             async fn next(&mut self) -> Option<()> {
                 let ($($w,)+) = self;
-                let mut waits: Vec<LocalBoxFuture<'_, Option<()>>> = vec![
-                    $($w.next().boxed_local(),)+
+                let mut waits: Vec<Pin<Box<dyn Future<Output = Option<()>> + '_>>> = vec![
+                    $(Box::pin($w.next()),)+
                 ];
-                while !waits.is_empty() {
-                    let (update, _, remaining) = select_all(waits).await;
-                    if update.is_some() {return update}
-                    waits = remaining;
-                }
-                None
+                poll_fn(|cx| {
+                    let mut index = 0;
+                    while index < waits.len() {
+                        match waits[index].as_mut().poll(cx) {
+                            Poll::Ready(Some(())) => return Poll::Ready(Some(())),
+                            Poll::Ready(None) => {drop(waits.swap_remove(index));}
+                            Poll::Pending => {index += 1;}
+                        }
+                    }
+                    if waits.is_empty() {Poll::Ready(None)} else {Poll::Pending}
+                }).await
             }
             #[allow(non_snake_case)]
             fn get(&mut self, ctx: &mut Context) -> Self::Output {
@@ -106,7 +118,7 @@ impl Watch {
 pub struct Watching<W: Watcher, F> {
     watcher: W,
     builder: F,
-    pending: Option<Shared<LocalBoxFuture<'static, Option<()>>>>,
+    pending: Option<Pin<Box<dyn Future<Output = Option<()>>>>>,
 }
 impl<W: Watcher, F> Watching<W, F> {
     pub fn new(watcher: W, builder: F) -> Self {
@@ -117,7 +129,7 @@ impl<W: Watcher, F: Clone> Clone for Watching<W, F> {
     fn clone(&self) -> Self {
         Self {
             watcher: self.watcher.clone(), builder: self.builder.clone(),
-            pending: Some(async {Some(())}.boxed_local().shared()),
+            pending: Some(Box::pin(ready(Some(())))),
         }
     }
 }
@@ -127,9 +139,9 @@ impl<W: Watcher, F> Debug for Watching<W, F> {
     }
 }
 impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static> PageBuilder for Watching<W, F> {
-    fn next(&mut self) -> LocalBoxFuture<'_, Option<()>> {
+    fn next(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>> {
         Box::pin(async {
-            let update = self.pending.as_ref()?.clone().await;
+            let update = self.pending.as_mut()?.await;
             self.pending = None;
             update
         })
@@ -139,8 +151,10 @@ impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone +
         self.watcher.get(ctx);
         let mut watcher = self.watcher.clone();
         // Prime deferred subscriptions before the final snapshot and retain them while hidden.
-        let pending = async move {watcher.next().await}.boxed_local().shared();
-        let _ = pending.clone().now_or_never();
+        let mut pending: Pin<Box<dyn Future<Output = Option<()>>>> = Box::pin(async move {watcher.next().await});
+        if let Poll::Ready(update) = pending.as_mut().poll(&mut TaskContext::from_waker(Waker::noop())) {
+            pending = Box::pin(ready(update));
+        }
         self.pending = Some(pending);
         let value = self.watcher.get(ctx);
         (self.builder)(ctx, theme, value)

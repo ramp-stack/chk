@@ -1,17 +1,18 @@
 use crate::ActionItem;
-use pelican_ui::drawable::{Component, Drawable};
-use pelican_ui::{Context, Callback};
+use prism::drawable::{Component, Drawable};
+use crate::design_system::{Context, Callback};
 use ptsd::layout::{Stack, Offset};
-use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
-use pelican_ui::navigation::AppPage;
-use pelican_ui::theme::{Theme, Icons};
+use crate::design_system::PageView;
+use crate::design_system as ui;
+use ptsd::navigation::AppPage;
+use crate::design_system::{Theme, Icons};
 
 use crate::{Bumper, Action};
 use crate::items::Item;
 use crate::closure::NavFn;
 
 #[derive(Debug, Component, Clone)]
-pub struct StackPage(Stack, PelicanPage);
+pub struct StackPage(Stack, PageView);
 
 impl AppPage for StackPage {}
 impl StackPage {
@@ -23,7 +24,9 @@ impl StackPage {
     ) -> Self {
         let items = items.into_iter().filter_map(|mut item| item.build(theme, ctx.window.is_mobile))
             .flatten().collect();
-        Self::new(ctx, theme, title, items, offset, header, bumper, next, flow_len)
+        let (header, footer) = Self::header_footer(&title, header, bumper, next, flow_len);
+        let page = theme.page(header, crate::design_system::Content::new(offset, items, crate::PageType::always_valid()), footer);
+        Self(Stack::default(), page)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -32,8 +35,15 @@ impl StackPage {
         offset: Offset, header: Option<(Icons, Action)>, bumper: Bumper,
         next: Option<NavFn>, flow_len: usize,
     ) -> Self {
+        let (header, footer) = Self::header_footer(&title, header, bumper, next, flow_len);
+        let page = theme.page(header, crate::design_system::Content::new(offset, items, crate::PageType::always_valid()), footer);
+        Self(Stack::default(), page)
+    }
+
+    fn header_footer(title: &str, header: Option<(Icons, Action)>,
+        bumper: Bumper, next: Option<NavFn>, flow_len: usize) -> (ui::Header, Option<ui::Footer>) {
         let icon = header.map(|(icon, action)| (icon, action.get()));
-        let (header, bumper) = match bumper {
+        match bumper {
             Bumper::Custom { label, action, secondary } => {
                 let on_click = match next {
                     Some(n) => {
@@ -53,46 +63,25 @@ impl StackPage {
                         Box::new(move |ctx: &mut Context, theme: &Theme| {
                             (a.clone().get())(ctx, theme);
                             (0..1).for_each(|_| {
-                                ctx.emit(pelican_ui::navigation::NavigationEvent::Pop)
+                                ctx.emit(ptsd::navigation::NavigationEvent::Pop)
                             })
                         }) as Box<dyn Callback>,
                     )
                 });
-                let bumper = PelicanBumper::stack(theme, Some(&ActionItem::format_label(&label)), on_click, secondary);
-                let header = Header::stack(theme, &title, icon);
-                (header, Some(bumper))
+                (crate::design_system::Header::stack(title, icon),
+                    Some(crate::design_system::Footer::stack(Some(&ActionItem::format_label(&label)), on_click, secondary)))
             }
             Bumper::Default => match next {
                 Some(n) => {
                     let next = n.clone();
-                    let bumper = PelicanBumper::stack(
-                        theme, None,
-                        Box::new(move |ctx: &mut Context, theme: &Theme| {
-                            (next.borrow_mut())(ctx, theme)
-                        }),
-                        None,
-                    );
-                    let header = Header::stack(theme, &title, icon);
-                    (header, Some(bumper))
-                }
-                None => (
-                    Header::stack_end(theme, &title),
-                    Some(PelicanBumper::stack_end(theme, Some(flow_len))),
-                ),
-            },
-            Bumper::Done => (
-                Header::stack_end(theme, &title),
-                Some(PelicanBumper::stack_end(theme, Some(flow_len))),
-            ), Bumper::None => (Header::stack(theme, &title, icon), None),
-        };
+                    (crate::design_system::Header::stack(title, icon), Some(crate::design_system::Footer::stack(None,
+                        Box::new(move |ctx: &mut Context, theme: &Theme| (next.borrow_mut())(ctx, theme)), None)))
 
-        let page = PelicanPage::new(
-            header,
-            Content::new(
-                offset, items,
-                Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
-            ), bumper,
-        );
-        StackPage(Stack::default(), page)
+                }
+                None => (crate::design_system::Header::stack_end(title), Some(crate::design_system::Footer::stack_end(Some(flow_len)))),
+            },
+            Bumper::Done => (crate::design_system::Header::stack_end(title), Some(crate::design_system::Footer::stack_end(Some(flow_len)))),
+            Bumper::None => (crate::design_system::Header::stack(title, icon), None),
+        }
     }
 }

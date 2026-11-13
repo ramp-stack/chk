@@ -1,9 +1,10 @@
 #![allow(clippy::type_complexity)]
-use pelican_ui::{Context, theme::{Icons}};
+use prism::Context;
+use crate::design_system::Icons;
 use crate::page::{PageType};
 use crate::Display;
 use crate::form::{FormValues, FormValidState, FormComplete};
-use pelican_ui::theme::Theme;
+use crate::design_system::Theme;
 
 use prism::air::{Contract, Instance};
 use ptsd::Validate;

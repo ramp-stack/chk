@@ -1,5 +1,5 @@
-use pelican_ui::Context;
-use pelican_ui::components::avatar::AvatarContent;
+use prism::Context;
+use crate::design_system::AvatarContent;
 
 use prism::air::{Metadata, Contract, Id, Name, Instance};
 
@@ -73,10 +73,8 @@ impl Profile {
         })
     }
 
-    pub fn to_pel(&self) -> pelican_ui::components::Profile {
-        pelican_ui::components::Profile {
-            name: self.name.unwrap(), username: self.username.clone(), pfp: self.avatar.clone(),
-        }
+    pub fn to_view(&self) -> crate::design_system::ProfileView {
+        crate::design_system::ProfileView {name: self.name.unwrap(), username: self.username.clone(), pfp: self.avatar.clone()}
     }
 
     pub fn name(&self) -> String {

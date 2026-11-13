@@ -1,15 +1,20 @@
-use crate::{ContactInvitations, Watch, Form, Flow, ListItem};
+use crate::ContentSurface;
+use crate::{ContactInvitations, Watch, Watcher, ListWatch, Form, Flow, ListItem};
 use crate::messages::{ChatRoom, RoomReadState};
 use crate::profiles::Profile;
-use prism::air::Instance;
+use prism::air::{Instance, Name};
+use prism::events::{DynEvent, OnEvent, on_event, OnChange, on_change};
+use crate::design_system::TextInputEvent;
+use ptsd::navigation::{NavigationEvent, NavigationChanged};
+use uuid::Uuid;
 type MessageLists = (Vec<Instance<ChatRoom>>, Vec<Instance<Profile>>, Vec<Instance<RoomReadState>>);
 use crate::ActionItem;
-use pelican_ui::drawable::{Component, Drawable};
-use pelican_ui::{Context};
+use prism::drawable::{Component, Drawable};
+use crate::design_system::{Context};
 use ptsd::layout::{Stack, Offset};
-use pelican_ui::interface::general::{Header, Content, Bumper as PelicanBumper, Page as PelicanPage};
-use pelican_ui::navigation::AppPage;
-use pelican_ui::theme::{Theme, Icons};
+use crate::design_system::PageView;
+use ptsd::navigation::AppPage;
+use crate::design_system::{Theme, Icons};
 
 use crate::{Page, Action, PageType};
 use crate::page::EditPage;
@@ -29,29 +34,24 @@ impl Root {
 
     pub fn contacts(invitations: &ContactInvitations) -> Root {
         let invitations = invitations.clone();
-        Root::custom(Page::watching(Watch::list::<Profile>(),
+        Root(Page::watching(Watch::list::<Profile>(),
             move |ctx: &mut Context, _theme: &Theme, profiles: Vec<Instance<Profile>>| {
-                let me = ctx.air.me();
-                let mut items = profiles.into_iter().filter_map(|mut instance| {
-                    if instance.pending().name == Some(me) {return None;}
-                    let view = Flow::new(vec![Page::profile(ctx, &mut instance)]);
-                    let profile = instance.pending();
-                    Some(ListItem::avatar(profile.avatar.clone(), &profile.username,
-                        &profile.name(), None, Some(Action::flow(view))))
-                }).collect::<Vec<_>>();
-                items.sort_by(|a, b| a.title.cmp(&b.title));
+                let items = Self::contact_entries(ctx, profiles).into_iter().map(|entry| entry.item).collect();
+                let search = Action::custom(|ctx: &mut Context, theme: &Theme| {
+                    SearchPage::open(ctx, theme, SearchSource::Contacts(Watch::list::<Profile>()));
+                });
                 let invitations = invitations.clone();
                 let new_contact = Action::deferred_flow(move |_ctx: &mut Context, theme: &Theme| {
                     Flow::from_form(Form::new_contact(&invitations, theme))
                 });
                 PageType::root("Contacts", vec![], vec![Display::list(None, items,
-                    Some("No contacts yet.\nGet started by adding a friend."))], None,
+                    Some("No contacts yet.\nGet started by adding a friend."))], Some((Icons::Search, search)),
                     Some(("New Contact".into(), new_contact)), None)
             }))
     }
 
     pub fn profile(ctx: &mut Context, invitations: &ContactInvitations) -> Root {
-        Root::custom(Page::Static(Box::new(PageType::editing_with_contact_actions(
+        Root(Page::Static(Box::new(PageType::editing_with_contact_actions(
             true, Profile::me(ctx), ctx.window.is_mobile, Some(ActionItem::contact_actions(invitations, ctx.air.me())),
         ))))
     }
@@ -59,52 +59,208 @@ impl Root {
     pub fn messages(ctx: &mut Context, invitations: &ContactInvitations) -> Root {
         ctx.air.start::<crate::air::notifications::MessageNotifications>(());
         let invitations = invitations.clone();
-        Root::custom(Page::watching((Watch::list::<ChatRoom>(), Watch::list::<Profile>(), Watch::list::<RoomReadState>()),
-            move |ctx: &mut Context, _theme: &Theme, (rooms, _, reads): MessageLists| {
-                let me = ctx.air.me();
-                let reads = reads.into_iter().filter_map(|instance| {
-                    let read = instance.pending();
-                    (read.owner == me).then(|| (read.room, read.clone()))
-                }).collect::<std::collections::HashMap<_, _>>();
-                let mut items = rooms.into_iter().filter(|room| room.pending().members.contains(&me)).map(|mut instance| {
-                    let chat = Flow::new(vec![Page::messaging(ctx, &mut instance)]);
-                    let room = instance.pending();
-                    let members = room.members.iter().copied().filter(|name| *name != me).collect::<Vec<_>>();
-                    let name = room.name(ctx);
-                    let avatar = if room.is_group() {
-                        room.group_details().photo
-                    } else {
-                        let profile = Profile::from_name(ctx, members.first().copied().unwrap_or(me));
-                        profile.pending().avatar.clone()
-                    };
-                    let (timestamp, last) = match room.messages(me).last() {
-                        Some(last) => (last.timestamp, last.preview(ctx, room.is_group())),
-                        None => (0, "No messages yet.".into()),
-                    };
-                    let unread = room.messages(me).any(|message| message.author != me
-                        && reads.get(&instance.id()).is_none_or(|read| !read.is_read(message)));
-                    (timestamp, ListItem::avatar(avatar, &name, &last, None, Some(Action::flow(chat))).with_badge(unread))
-                }).collect::<Vec<_>>();
-                items.sort_by_key(|item| std::cmp::Reverse(item.0));
-                let items = items.into_iter().map(|(_, item)| item).collect();
+        Root(Page::watching((Watch::list::<ChatRoom>(), Watch::list::<Profile>(), Watch::list::<RoomReadState>()),
+            move |ctx: &mut Context, _theme: &Theme, (rooms, profiles, reads): MessageLists| {
+                let items = Self::message_entries(ctx, rooms, profiles, reads).into_iter().map(|entry| entry.item).collect();
+                let search = Action::custom(|ctx: &mut Context, theme: &Theme| {
+                    SearchPage::open(ctx, theme, SearchSource::Messages((
+                        Watch::list::<ChatRoom>(), Watch::list::<Profile>(), Watch::list::<RoomReadState>(),
+                    )));
+                });
                 let invitations = invitations.clone();
                 let new_message = Action::deferred_flow(move |ctx: &mut Context, theme: &Theme| {
                     Flow::from_form(Form::new_message(&invitations, ctx, theme))
                 });
                 PageType::root("Messages", vec![], vec![Display::list(None, items,
-                    Some("No messages yet.\nGet started by messaging a friend."))], None,
+                    Some("No messages yet.\nGet started by messaging a friend."))], Some((Icons::Search, search)),
                     Some(("New Message".into(), new_message)), None)
             }))
+    }
+
+    fn contact_entries(ctx: &mut Context, profiles: Vec<Instance<Profile>>) -> Vec<SearchEntry> {
+        let me = ctx.air.me();
+        let mut entries = profiles.into_iter().filter_map(|mut instance| {
+            let name = instance.pending().name?;
+            if name == me {return None;}
+            let view = Flow::new(vec![Page::profile(ctx, &mut instance)]);
+            let profile = instance.pending();
+            Some((name, SearchEntry {
+                text: format!("{} {}", profile.username, name).to_lowercase(),
+                item: ListItem::avatar(profile.avatar.clone(), &profile.username,
+                    &profile.name(), None, Some(Action::flow(view))),
+            }))
+        }).collect::<Vec<_>>();
+        entries.sort_by_cached_key(|(name, entry)| (entry.item.title.to_lowercase(), *name));
+        entries.into_iter().map(|(_, entry)| entry).collect()
+    }
+
+    fn message_entries(ctx: &mut Context, rooms: Vec<Instance<ChatRoom>>,
+        profiles: Vec<Instance<Profile>>, reads: Vec<Instance<RoomReadState>>) -> Vec<SearchEntry> {
+        let me = ctx.air.me();
+        let profiles = profiles.into_iter().filter_map(|instance| {
+            let profile = instance.pending();
+            Some((profile.name?, profile.username.clone()))
+        }).collect::<std::collections::HashMap<Name, String>>();
+        let reads = reads.into_iter().filter_map(|instance| {
+            let read = instance.pending();
+            (read.owner == me).then(|| (read.room, read.clone()))
+        }).collect::<std::collections::HashMap<_, _>>();
+        let mut entries = rooms.into_iter().filter(|room| room.pending().members.contains(&me)).map(|mut instance| {
+            let id = instance.id();
+            let chat = Flow::new(vec![Page::messaging(ctx, &mut instance)]);
+            let room = instance.pending();
+            let members = room.members.iter().copied().filter(|name| *name != me).collect::<Vec<_>>();
+            let name = room.name(ctx);
+            let avatar = if room.is_group() {
+                room.group_details().photo
+            } else {
+                let profile = Profile::from_name(ctx, members.first().copied().unwrap_or(me));
+                profile.pending().avatar.clone()
+            };
+            let (timestamp, last) = match room.messages(me).last() {
+                Some(last) => (last.timestamp, last.preview(ctx, room.is_group())),
+                None => (0, "No messages yet.".into()),
+            };
+            let unread = room.messages(me).any(|message| message.author != me
+                && reads.get(&id).is_none_or(|read| !read.is_read(message)));
+            let mut text = format!("{name} {last}");
+            for member in &room.members {
+                text.push_str(&format!(" {member}"));
+                if let Some(username) = profiles.get(member) {text.push_str(&format!(" {username}"));}
+            }
+            (timestamp, id, SearchEntry {
+                text: text.to_lowercase(),
+                item: ListItem::avatar(avatar, &name, &last, None, Some(Action::flow(chat))).with_badge(unread),
+            })
+        }).collect::<Vec<_>>();
+        entries.sort_by_key(|(timestamp, id, _)| (std::cmp::Reverse(*timestamp), *id));
+        entries.into_iter().map(|(_, _, entry)| entry).collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SearchEntry {item: ListItem, text: String}
+
+#[derive(Debug, Clone)]
+enum SearchSource {
+    Contacts(ListWatch<Profile>),
+    Messages((ListWatch<ChatRoom>, ListWatch<Profile>, ListWatch<RoomReadState>)),
+}
+impl SearchSource {
+    fn label(&self) -> &'static str {
+        match self {Self::Contacts(_) => "Contacts", Self::Messages(_) => "Messages"}
+    }
+    fn entries(&mut self, ctx: &mut Context) -> Vec<SearchEntry> {
+        match self {
+            Self::Contacts(watch) => {
+                let profiles = watch.get(ctx);
+                Root::contact_entries(ctx, profiles)
+            }
+            Self::Messages(watch) => {
+                let (rooms, profiles, reads) = watch.get(ctx);
+                Root::message_entries(ctx, rooms, profiles, reads)
+            }
+        }
+    }
+    async fn next(&mut self) -> Option<()> {
+        match self {Self::Contacts(watch) => watch.next().await, Self::Messages(watch) => watch.next().await}
     }
 }
 
 #[derive(Debug, Component, Clone)]
-pub struct RootPage(Stack, PelicanPage);
+struct SearchPage {
+    layout: Stack,
+    page: PageView,
+    #[skip] source: SearchSource,
+    #[skip] entries: Vec<SearchEntry>,
+    #[skip] theme: Theme,
+    #[skip] input_id: Uuid,
+    #[skip] query: String,
+    #[skip] focus_on_open: bool,
+}
+impl AppPage for SearchPage {}
+impl SearchPage {
+    fn open(ctx: &mut Context, theme: &Theme, source: SearchSource) {
+        let page = Self::new(ctx, theme, source);
+        ctx.emit(NavigationEvent::push(crate::FlowWrapper::new(
+            ptsd::navigation::Flow::new(vec![Box::new(page)]),
+        )));
+    }
+
+    fn new(ctx: &mut Context, theme: &Theme, mut source: SearchSource) -> Self {
+        let input_id = Uuid::new_v4();
+        let label = source.label();
+        let entries = source.entries(ctx);
+        let input = theme.text_input(input_id, None, None, &format!("Search {}...", label.to_lowercase()));
+        let page = theme.page(crate::design_system::Header::stack(&format!("Search {}", label.to_lowercase()), None),
+            crate::design_system::Content::new(Offset::Start, vec![input], crate::PageType::always_valid()), None);
+        let mut result = Self {layout: Stack::default(), page, source, entries,
+            theme: theme.clone(), input_id, query: String::new(), focus_on_open: true};
+        result.filter();
+        result
+    }
+
+    fn filter(&mut self) {
+        let query = self.query.to_lowercase();
+        let terms = query.split_whitespace().collect::<Vec<_>>();
+        let items = self.entries.iter().filter(|entry| terms.iter().all(|term| entry.text.contains(term)))
+            .map(|entry| entry.item.clone()).collect();
+        let message = match &self.source {
+            SearchSource::Contacts(_) if terms.is_empty() => "No contacts yet.",
+            SearchSource::Contacts(_) => "No matching contacts.",
+            SearchSource::Messages(_) if terms.is_empty() => "No messages yet.",
+            SearchSource::Messages(_) => "No matching conversations.",
+        };
+        let mut results = Display::list(None, items, Some(message));
+        // Keep the original editor so live updates cannot reset its cursor or keyboard.
+        let children = self.page.content_mut().children_mut();
+        children.truncate(1);
+        children.extend(results.build(&self.theme).unwrap_or_default());
+    }
+
+    fn refresh(&mut self, ctx: &mut Context) {
+        self.entries = self.source.entries(ctx);
+        self.filter();
+    }
+}
+
+#[on_event]
+impl OnEvent<TextInputEvent> for SearchPage {
+    fn on(&mut self, _: &mut Context, event: TextInputEvent) -> Vec<Box<dyn DynEvent>> {
+        if let TextInputEvent::Changed {id, value} | TextInputEvent::Set {id, value} = &event
+            && *id == self.input_id && *value != self.query {
+            self.query.clone_from(value);
+            self.filter();
+            self.page.content_mut().set_scroll(0.0);
+        }
+        prism::events![event]
+    }
+}
+
+#[on_event]
+impl OnEvent<NavigationChanged> for SearchPage {
+    fn on(&mut self, ctx: &mut Context, event: NavigationChanged) -> Vec<Box<dyn DynEvent>> {
+        self.refresh(ctx);
+        if self.focus_on_open {
+            self.focus_on_open = false;
+            ctx.emit(TextInputEvent::Focus {id: self.input_id});
+        }
+        prism::events![event]
+    }
+}
+
+#[on_change(async {if self.source.next().await.is_none() {std::future::pending::<()>().await;}})]
+impl OnChange<()> for SearchPage {
+    fn on_change(&mut self, ctx: &mut Context, _: ()) {self.refresh(ctx);}
+}
+
+#[derive(Debug, Component, Clone)]
+pub struct RootPage(Stack, PageView);
 
 impl AppPage for RootPage {}
 impl PageType {
     pub fn build_root(&self, theme: &Theme, is_mobile: bool) -> Box<dyn AppPage> {
-        let (title, items, header, mut bumper_a, mut bumper_b) = match self.clone() {
+        let (title, items, header, bumper_a, bumper_b) = match self.clone() {
             Self::Root { title, input, display, header, bumper_a, bumper_b } => {
                 (title, input.into_iter().map(Item::Input).chain(display.into_iter().map(Item::Display)).collect::<Vec<_>>(), header, bumper_a, bumper_b)
             }
@@ -127,26 +283,14 @@ impl PageType {
             _ if length <= 1 => Offset::Center, _ => Offset::Start,
         };
 
-        let header_icon = header.map(|(icon, action)| (icon, action.get()));
-
-        let header = Header::home(theme, &title, header_icon);
         let content = items.into_iter().filter_map(|mut item| item.build(theme, is_mobile))
             .flatten().collect::<Vec<Box<dyn Drawable>>>();
-
-        let second = bumper_b.as_mut().map(|(label, action)| (ActionItem::format_label(label), action.get()));
-        let first = bumper_a.as_mut().map(|(label, action)| (ActionItem::format_label(label), action.get()));
-
-        let bumper = match first.is_some() || second.is_some() {
-            true => Some(PelicanBumper::home(theme, first, second)), false => None,
-        };
-
-        let page = PelicanPage::new(
-            header,
-            Content::new(
-                offset, content,
-                Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
-            ), bumper,
-        );
+        let action = header.map(|(icon, action)| (icon, action.get()));
+        let header = crate::design_system::Header::home(&title, action);
+        let action = |(label, action): (String, Action)| (ActionItem::format_label(&label), action.get());
+        let footer = (bumper_a.is_some() || bumper_b.is_some())
+            .then(|| crate::design_system::Footer::home(bumper_a.map(action), bumper_b.map(action)));
+        let page = theme.page(header, crate::design_system::Content::new(offset, content, crate::PageType::always_valid()), footer);
         Box::new(RootPage(Stack::default(), page))
     }
 }

@@ -1,13 +1,15 @@
 use super::*;
+use crate::design_system::Color;
 
 #[derive(Debug, Clone)]
 pub struct ListItem {
-    avatar: Option<AvatarContent>,
+    pub avatar: Option<AvatarContent>,
     pub title: String,
-    subtitle: String,
-    secondary: Option<String>,
-    action: Option<Action>,
-    badge: bool,
+    pub subtitle: String,
+    pub secondary: Option<String>,
+    pub action: Option<Action>,
+    pub badge: bool,
+    pub flair: Option<(Icons, Color)>,
 }
 
 impl PartialEq for ListItem {
@@ -17,6 +19,7 @@ impl PartialEq for ListItem {
             && self.subtitle == other.subtitle
             && self.secondary == other.secondary
             && self.badge == other.badge
+            && self.flair == other.flair
     }
 }
 
@@ -27,7 +30,7 @@ impl ListItem {
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             secondary: secondary.map(|s| s.to_string()),
-            action, badge: false,
+            action, badge: false, flair: None,
         }
     }
 
@@ -37,26 +40,14 @@ impl ListItem {
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             secondary: secondary.map(|s| s.to_string()),
-            action, badge: false,
+            action, badge: false, flair: None,
         }
     }
 
     pub fn with_badge(mut self, badge: bool) -> Self {self.badge = badge; self}
+    pub fn with_flair(mut self, flair: Option<(Icons, Color)>) -> Self {self.flair = flair; self}
 
-    pub fn build(&self, theme: &Theme) -> PelicanListItem {
-        let ListItem { avatar, title, subtitle, secondary, action, badge } = self.clone();
-        let has_action = action.is_some();
-        let closure = action.unwrap_or(Action::None).get();
-
-        let avatar = avatar.map(|content| {
-            Avatar::new(theme, content, None, AvatarSize::Md, None)
-        });
-        PelicanListItem::new(
-            theme, avatar, ListItemInfoLeft::new(&title, Some(&subtitle), None, None).with_badge(badge),
-            secondary.as_ref().map(|s| TitleSubtitle::new(s, Some("Details"))), None,
-            has_action.then_some(Icons::Forward), closure,
-        )
-    }
+    pub fn build(&self, theme: &Theme) -> ListItemView {theme.list_item(self)}
 
     pub fn profile_row(profile: &Profile, me: Name) -> Option<(ListItem, String)> {
         let name = profile.name?;
@@ -66,19 +57,16 @@ impl ListItem {
             profile.username.clone()
         };
         Some((
-            ListItem::avatar(
-                profile.avatar.clone(),
-                &username,
-                &profile.name(),
-                None,
-                None,
-            ),
+            ListItem {
+                avatar: Some(profile.avatar.clone()),
+                title: username,
+                subtitle: profile.name(),
+                secondary: None,
+                action: None,
+                badge: false,
+                flair: None,
+            },
             name.to_string(),
         ))
-    }
-}
-impl From<ListItem> for pelican_ui::components::SelectorItem {
-    fn from(item: ListItem) -> Self {
-        Self {title: item.title, subtitle: item.subtitle, avatar: item.avatar, secondary: item.secondary, badge: item.badge}
     }
 }
