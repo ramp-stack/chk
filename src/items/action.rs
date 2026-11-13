@@ -1,4 +1,4 @@
-use crate::messages::{MessageContent, RoomNotificationState};
+use crate::messages::{ContactNotificationState, MessageContent, RoomNotificationState};
 use super::*;
 
 /// Ready-to-render action data; CHK owns labels and callbacks.
@@ -56,7 +56,7 @@ impl Action {
     pub fn flow(flow: Flow) -> Self { Action::Flow { flow } }
 
     pub fn deferred_flow(mut build: impl FnMut(&mut Context, &Theme) -> Flow + Clone + 'static) -> Self {
-        Self::Custom {action: Box::new(move |ctx: &mut Context, theme: &Theme| {
+        Action::Custom {action: Box::new(move |ctx: &mut Context, theme: &Theme| {
             (build(ctx, theme).build(ctx, theme))(ctx, theme);
         })}
     }
@@ -98,17 +98,33 @@ impl Action {
             let target = if name == me {format!("{} (You)", profile.username)} else {profile.username.clone()};
             (if name == me {"chat"} else {"user"}, target, profile.avatar.clone())
         };
+        let room = room.clone();
+        Action::mute_target(kind, &target, avatar, muted, move |ctx: &mut Context, _: &Theme| {
+            RoomNotificationState::set_muted(ctx, &room, muted);
+        })
+    }
+
+    pub fn mute_profile(ctx: &Context, profile: &Instance<Profile>, muted: bool) -> Action {
+        let profile = profile.pending();
+        let name = profile.name.unwrap();
+        let is_me = name == ctx.air.me();
+        let target = if is_me {format!("{} (You)", profile.username)} else {profile.username.clone()};
+        Action::mute_target(if is_me {"chat"} else {"user"}, &target, profile.avatar.clone(), muted,
+            move |ctx: &mut Context, _: &Theme| {
+                ContactNotificationState::set_muted(ctx, name, muted);
+            })
+    }
+
+    fn mute_target(kind: &str, target: &str, avatar: AvatarContent, muted: bool,
+        on_confirm: impl Callback + 'static) -> Action {
         let (label, past_action, icon, style) = if muted {
             ("mute", "muted", Icons::Mute, AvatarIconStyle::Danger)
         } else {
             ("unmute", "unmuted", Icons::Unmute, AvatarIconStyle::Success)
         };
-        let room = room.clone();
         Action::Flow {flow: Flow::action_target(
-            (label, Action::Custom {action: Box::new(move |ctx: &mut Context, _: &Theme| {
-                RoomNotificationState::set_muted(ctx, &room, muted);
-            })}),
-            past_action, kind, &target, avatar, AvatarPurpose::new(icon, style)
+            (label, Action::custom(on_confirm)),
+            past_action, kind, target, avatar, AvatarPurpose::new(icon, style)
         )}
     }
 
@@ -213,8 +229,16 @@ impl ActionItem {
     }
 
     pub fn mute(ctx: &mut Context, room: Instance<ChatRoom>) -> Self {
-        let muted = RoomNotificationState::open(ctx, room.id()).pending().is_muted();
+        let muted = RoomNotificationState::is_muted_for(&ctx.air, &room);
         let action = Action::mute(ctx, &room, !muted);
+        let (label, icon) = if muted {("Unmute", Icons::Unmute)} else {("Mute", Icons::Mute)};
+        Self(action, label.into(), None, icon)
+    }
+
+    pub fn mute_profile(ctx: &Context, profile: &Instance<Profile>) -> Self {
+        let name = profile.pending().name.unwrap();
+        let muted = ContactNotificationState::is_muted_for(&ctx.air, name);
+        let action = Action::mute_profile(ctx, profile, !muted);
         let (label, icon) = if muted {("Unmute", Icons::Unmute)} else {("Mute", Icons::Mute)};
         Self(action, label.into(), None, icon)
     }
@@ -254,7 +278,7 @@ impl ActionItem {
     pub fn icon_action(&self) -> (Icons, Box<dyn Callback>) { (self.3, self.0.get()) }
 
     pub fn presentation(&self) -> ActionPresentation {
-        ActionPresentation {label: Self::format_label(&self.1), active: self.2.as_deref().map(Self::format_label),
+        ActionPresentation {label: ActionItem::format_label(&self.1), active: self.2.as_deref().map(ActionItem::format_label),
             icon: self.3, on_click: self.0.get()}
     }
 }

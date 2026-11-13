@@ -82,7 +82,7 @@ pub enum Input {
 
 impl Input {
     pub fn slider(start: f32, label: Option<&str>, description: Option<&str>) -> Self {
-        Self::Slider {start, label: label.map(str::to_owned), description: description.map(str::to_owned)}
+        Input::Slider {start, label: label.map(str::to_owned), description: description.map(str::to_owned)}
     }
 
     pub fn currency(instructions: &str) -> Self {
@@ -124,8 +124,8 @@ impl Input {
 
     pub fn build(&self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
         let mut children = match self {
-            Self::Slider {start, label, description} => vec![theme.slider_input(*start, label.as_deref(), description.as_deref())],
-            Self::Text {id, label, actions, show_label, preset} => {
+            Input::Slider {start, label, description} => vec![theme.slider_input(*start, label.as_deref(), description.as_deref())],
+            Input::Text {id, label, actions, show_label, preset} => {
                 let text = label.trim();
                 let first_word = text.split_whitespace().next().unwrap_or_default();
                 // Keep acronyms and mixed-case names such as AirName in the placeholder.
@@ -145,19 +145,19 @@ impl Input {
                 }
                 children
             }
-            Self::Enumerator {items} => vec![theme.choice_input(0, items.iter().map(|item| {
+            Input::Enumerator {items} => vec![theme.choice_input(0, items.iter().map(|item| {
                 (item.title.as_str(), item.data.as_str(),
                     Box::new(|_: &mut Context, _: &Theme| {}) as Box<dyn Callback>)
             }).collect())],
-            Self::Currency {instructions} => vec![theme.currency_input(instructions)],
-            Self::Number {instructions} => vec![theme.number_input(instructions)],
-            Self::Date {instructions} => vec![theme.date_input(instructions)],
-            Self::Time {instructions} => vec![theme.time_input(instructions)],
-            Self::Avatar {content, flair, action} => vec![Box::new(crate::Control::new(AvatarInput::new(theme, content.clone(), *flair, action.clone()))) as Box<dyn Drawable>],
-            Self::Search {id, label, items, actions} => vec![theme.search_input(*id, label, items.clone(),
+            Input::Currency {instructions} => vec![theme.currency_input(instructions)],
+            Input::Number {instructions} => vec![theme.number_input(instructions)],
+            Input::Date {instructions} => vec![theme.date_input(instructions)],
+            Input::Time {instructions} => vec![theme.time_input(instructions)],
+            Input::Avatar {content, flair, action} => vec![Box::new(crate::Control::new(AvatarInput::new(theme, content.clone(), *flair, action.clone()))) as Box<dyn Drawable>],
+            Input::Search {id, label, items, actions} => vec![theme.search_input(*id, label, items.clone(),
                 actions.as_ref().map(|actions| actions.iter().map(ActionItem::presentation).collect()).unwrap_or_default())],
-            Self::Selection(selector) => vec![theme.selection_input(selector.clone())],
-            Self::QRCodeScanner {instructions, alt, on_find} => {
+            Input::Selection(selector) => vec![theme.selection_input(selector.clone())],
+            Input::QRCodeScanner {instructions, alt, on_find} => {
                 let mut children = vec![theme.scanner_input(on_find.clone()),
                     theme.text_view(instructions, TextSize::Md, TextStyle::Secondary, Align::Center)];
                 if let Some((label, icon, action)) = alt {
@@ -168,7 +168,7 @@ impl Input {
                 children
             }
         };
-        if is_mobile && matches!(self, Self::Currency {..} | Self::Number {..} | Self::Date {..} | Self::Time {..}) {
+        if is_mobile && matches!(self, Input::Currency {..} | Input::Number {..} | Input::Date {..} | Input::Time {..}) {
             children.push(theme.keypad());
         }
         Some(children)

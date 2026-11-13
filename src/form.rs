@@ -174,22 +174,19 @@ impl Form {
             crate::messages::RoomNotificationState::apply_to(ctx, &room);
             FormComplete::Next(Page::messaging(ctx, &mut room))
         }) as Box<dyn FormSubmit>;
-        let items = ctx
-            .air
-            .instances::<Profile>()
-            .list()
-            .into_values()
-            .filter_map(|profile| {
-                let profile = profile.pending();
-                let row = ListItem::recipient(ctx, theme, &profile)?;
-                Some((row, profile.name?))
-            })
-            .map(|(item, name)| (item, name.to_string()))
-            .collect();
+
+        let items = ctx.air.instances::<Profile>().list().into_values().filter_map(|profile| {
+            let profile = profile.pending();
+            let row = ListItem::recipient(ctx, theme, &profile)?;
+            Some((row, profile.name?))
+        }).map(|(item, name)| (item, name.to_string())).collect();
+
         let selector = Selector::new("contacts", items).with_alphabetical_order();
         let input_id = Uuid::new_v4();
         let contact_inputs = vec![FormItem::contact(invitations, vec![], true, input_id)];
+
         FormItem::ids(&contact_inputs);
+
         let parse = invitations.clone();
         let row_theme = theme.clone();
         let contact_selector = selector.clone();
@@ -362,21 +359,21 @@ pub enum FormComplete {
 
 impl FormComplete {
     pub fn pending(future: impl Future<Output = FormComplete> + 'static) -> Self {
-        Self::Pending(PendingSubmit(crate::pending::Pending::new(future)))
+        FormComplete::Pending(PendingSubmit(crate::pending::Pending::new(future)))
     }
 
     pub async fn resolved(mut self) -> Self {
-        while let Self::Pending(pending) = self {self = pending.await;}
+        while let FormComplete::Pending(pending) = self {self = pending.await;}
         self
     }
 
     pub fn then(self, next: Option<crate::NavFn>) -> Self {
         match self {
-            Self::None => next.map(|next| Self::Action(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+            FormComplete::None => next.map(|next| FormComplete::Action(Action::custom(move |ctx: &mut Context, theme: &Theme| {
                 (next.borrow_mut())(ctx, theme);
-            }))).unwrap_or(Self::None),
-            Self::Pending(pending) => {
-                Self::Pending(PendingSubmit(crate::pending::Pending::new(async move {
+            }))).unwrap_or(FormComplete::None),
+            FormComplete::Pending(pending) => {
+                FormComplete::Pending(PendingSubmit(crate::pending::Pending::new(async move {
                     pending.await.resolved().await.then(next)
                 })))
             },
@@ -449,9 +446,9 @@ impl FormAction {
 
     pub fn get(&self, id: Uuid) -> ActionItem {
         match self {
-            Self::Paste => ActionItem::new_with_active(Action::Paste {id}, "Paste clipboard", "Pasted", Icons::Paste),
-            Self::ScanQRCode(instructions) => ActionItem::new(Action::scan_qr(instructions, id), "Scan QR code", Icons::QrCode),
-            Self::Custom(action) => action.clone(),
+            FormAction::Paste => ActionItem::new_with_active(Action::Paste {id}, "Paste clipboard", "Pasted", Icons::Paste),
+            FormAction::ScanQRCode(instructions) => ActionItem::new(Action::scan_qr(instructions, id), "Scan QR code", Icons::QrCode),
+            FormAction::Custom(action) => action.clone(),
         }
     }
 }
@@ -489,11 +486,11 @@ impl FormItem {
                 None => FormValidState::InvalidWithData("Enter a valid AirName or contact link.".into()),
             }
         });
-        Self::Named {
+        FormItem::Named {
             id: "airname".into(),
-            item: Box::new(Self::InputId {
+            item: Box::new(FormItem::InputId {
                 id: input_id,
-                item: Box::new(Self::Text(
+                item: Box::new(FormItem::Text(
                     "New contact".into(), "AirName".into(),
                     Some(vec![FormAction::Paste, FormAction::ScanQRCode("Scan an AirName QR code".into())]),
                     valid,
@@ -505,8 +502,8 @@ impl FormItem {
     /// Use a stable ID when the visible label may change or repeat.
     pub fn named(self, id: &str) -> Self {
         assert!(!id.trim().is_empty(), "Form field IDs must not be empty");
-        let item = match self {Self::Named {item, ..} => item, item => Box::new(item)};
-        Self::Named {id: id.into(), item}
+        let item = match self {FormItem::Named {item, ..} => item, item => Box::new(item)};
+        FormItem::Named {id: id.into(), item}
     }
 
     /// Bind a text or legacy search input to a UUID used by `Action::set_text`.
@@ -514,12 +511,12 @@ impl FormItem {
     /// and Scan actions use the same UUID. Other input kinds are not supported.
     pub fn with_input_id(self, id: Uuid) -> Self {
         match self {
-            Self::Named {id: name, item} => Self::Named {
+            FormItem::Named {id: name, item} => FormItem::Named {
                 id: name, item: Box::new(item.with_input_id(id)),
             },
-            Self::InputId {item, ..} => Self::InputId {id, item},
-            item @ (Self::Text(..) | Self::TextWithPreset(..) | Self::Search(..)) => {
-                Self::InputId {id, item: Box::new(item)}
+            FormItem::InputId {item, ..} => FormItem::InputId {id, item},
+            item @ (FormItem::Text(..) | FormItem::TextWithPreset(..) | FormItem::Search(..)) => {
+                FormItem::InputId {id, item: Box::new(item)}
             },
             _ => panic!("Only text and search fields support an input UUID"),
         }
@@ -527,8 +524,8 @@ impl FormItem {
 
     pub fn id(&self) -> String {
         match self {
-            Self::Named {id, ..} => id.clone(),
-            Self::InputId {item, ..} => item.id(),
+            FormItem::Named {id, ..} => id.clone(),
+            FormItem::InputId {item, ..} => item.id(),
             _ => self.title(),
         }
     }
@@ -585,7 +582,7 @@ impl FormItem {
 
     pub fn title(&self) -> String {
         match self {
-            Self::Named {item, ..} | Self::InputId {item, ..} => item.title(),
+            FormItem::Named {item, ..} | FormItem::InputId {item, ..} => item.title(),
             FormItem::Search(title, ..) |
             FormItem::Selection(title, ..) |
             FormItem::Text(title, ..) |
@@ -600,7 +597,7 @@ impl FormItem {
 
     pub fn validation(&self) -> Box<dyn ValidationFn> {
         match self {
-            Self::Named {item, ..} | Self::InputId {item, ..} => item.validation(),
+            FormItem::Named {item, ..} | FormItem::InputId {item, ..} => item.validation(),
             FormItem::Text(_, _, _, validation) | FormItem::TextWithPreset(_, _, _, validation) |
             FormItem::Number(_, _, validation) | FormItem::Avatar(_, _, _, validation) |
             FormItem::AvatarWithPreset(_, _, _, validation) => Box::new(InputValidation(validation.clone())),
@@ -615,12 +612,12 @@ impl FormItem {
     pub fn build(&self) -> Input {
         let mut input = self;
         let mut id = None;
-        while let Self::Named {item, ..} | Self::InputId {item, ..} = input {
-            if let Self::InputId {id: input_id, ..} = input {id = Some(*input_id);}
+        while let FormItem::Named {item, ..} | FormItem::InputId {item, ..} = input {
+            if let FormItem::InputId {id: input_id, ..} = input {id = Some(*input_id);}
             input = item;
         }
         match input {
-            Self::Named {..} | Self::InputId {..} => unreachable!(),
+            FormItem::Named {..} | FormItem::InputId {..} => unreachable!(),
             FormItem::Text(_, request, actions, _) => {
                 let id = id.unwrap_or_else(Uuid::new_v4);
                 let request = request.clone();

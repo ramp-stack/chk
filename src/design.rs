@@ -1,6 +1,3 @@
-//! Rust traits owned by CHK and implemented by the selected design system.
-//! Controllers read state through these traits; widget construction is confined
-//! to the adapter. Every control is still a Prism drawable.
 use prism::{Context, drawable::{Drawable, LayoutTree, Instruction, Rect}};
 use prism::events::{DynEvent, ListenFuture, ListenCallback};
 use uuid::Uuid;
@@ -9,12 +6,8 @@ use crate::design_system::{Theme, PlaybackBadge, AvatarContent};
 use ptsd::content::Content;
 use prism::hardware::{Image, Player};
 
-/// A slider reports its current value, independently of its appearance.
-pub trait Slider: Drawable {
-    fn value(&self) -> f32;
-}
+pub trait Slider: Drawable {fn value(&self) -> f32;}
 
-/// Common state/validation interface for editable controls.
 pub trait InputControl: Drawable {
     fn state(&self) -> State;
     fn validation_value(&self) -> Option<String> {None}
@@ -32,8 +25,6 @@ pub trait ChoiceField: InputControl {fn value(&self) -> usize;}
 pub trait SelectionField: InputControl {fn value(&self) -> Vec<String>;}
 pub trait Scanner: InputControl {fn value(&self) -> Option<String>;}
 
-/// Type-erased control that retains its CHK interface inside a drawable tree.
-/// Delegation preserves the widget's layout, events and async change callbacks.
 #[derive(Clone, Debug)]
 pub struct Control(pub Box<dyn InputControl>);
 impl Control {
@@ -41,7 +32,7 @@ impl Control {
     pub fn boxed(control: impl InputControl + 'static) -> Box<dyn Drawable> {Box::new(Self(Box::new(control)))}
     pub fn state(&self) -> State {self.0.state()}
 }
-// Keep native layout trees and rebind async callbacks to the native widget.
+
 macro_rules! delegate_drawable {
     ($($view:ident),+ $(,)?) => {$(
         impl Drawable for $view {
@@ -64,7 +55,6 @@ macro_rules! delegate_drawable {
     )+};
 }
 
-/// Content collections expose input state and scrolling, never widget layout.
 pub trait ContentSurface: Drawable + Clone {
     fn id(&self) -> Uuid;
     fn children(&self) -> &Vec<Box<dyn Drawable>>;
@@ -81,7 +71,6 @@ impl ContentSurface for Content {
     fn set_scroll(&mut self, value: f32) {self.children.set_scroll(value);}
 }
 
-/// Page operations needed by CHK's form, search and message controllers.
 pub trait PageSurface: Drawable + dyn_clone::DynClone {
     fn content(&self) -> &Content;
     fn content_mut(&mut self) -> &mut Content;

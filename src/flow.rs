@@ -61,26 +61,23 @@ impl Flow {
                 }).collect::<Vec<Page>>().into_iter().rev().for_each(|s| pages.push(s));
 
                 if let Some(review) = review {
-                    let review = Page::Static(Box::new(PageType::review(
+                    pages.push(Page::Static(Box::new(PageType::review(
                         &review.title, review.getter, on_submit.clone(),
-                    )));
-                    pages.push(review);
+                    ))));
                 }
 
                 if let Some(success) = success {
-                    let success = Page::Static(Box::new(PageType::success(
+                    pages.push(Page::Static(Box::new(PageType::success(
                         &success.title, success.getter, submit.clone(),
-                    )));
-                    pages.push(success);
+                    ))));
                 }
 
                 Flow(pages)
             },
             Form::Page {title, inputs, display, on_save} => {
-                let page = Page::Static(Box::new(PageType::edit(
+                Flow(vec![Page::Static(Box::new(PageType::edit(
                     &title, None, inputs, display, on_save,
-                )));
-                Flow(vec![page])
+                )))])
             }
         }
     }
@@ -142,9 +139,7 @@ impl FlowWrapper {
     }
 }
 
-#[on_change(async {
-    if !self.2 {std::future::pending::<()>().await;}
-})]
+#[on_change(async {if !self.2 {std::future::pending::<()>().await;}})]
 impl OnChange<()> for FlowWrapper {
     fn on_change(&mut self, ctx: &mut Context, _: ()) {
         self.2 = false;

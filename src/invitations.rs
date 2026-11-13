@@ -1,4 +1,3 @@
-//! Typed invitation setup supplied by an app and managed by CHK.
 use prism::{air::Name, drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
     events::{DynEvent, ListenCallback, ListenFuture}};
 use std::{any::Any, cell::RefCell, collections::{HashSet, VecDeque}, rc::{Rc, Weak},
@@ -8,9 +7,6 @@ use crate::{Action, Context, Theme};
 type InvitationParser<T> = Rc<dyn Fn(&str) -> Option<T>>;
 type InvitationAction<T> = Rc<dyn Fn(&mut Context, T) -> Action>;
 
-/// URL formatting, validation, and the action to run for an accepted payload.
-/// `T` is app-defined: a contact name, document ID, password invitation token, etc.
-/// Clones share the same inbox. No action runs inside the native URL callback.
 #[derive(Clone)]
 pub struct Invitations<T> {
     url: Rc<dyn Fn(T) -> String>,
@@ -59,8 +55,6 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
         true
     }
 
-    /// CHK owns registration. An unavailable platform still supports manual links
-    /// and sharing, but cannot deliver native incoming URLs yet.
     pub fn attach(&self, ctx: &Context) -> bool {
         let invitations = self.clone();
         ctx.hardware.listen_app_links(move |url| invitations.receive(url))
@@ -68,7 +62,6 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
 
 }
 
-/// Root drawable that delivers accepted invitations to the application handler.
 #[derive(Clone)]
 pub struct InvitationLinks<T> {
     inner: Box<dyn Drawable>,
@@ -108,8 +101,6 @@ impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
             poll_fn(|cx| {
                 let mut inbox = self.inbox.borrow_mut();
                 if let Some((url, payload)) = inbox.queue.pop_front() {
-                    // Deliver distinct invitations in order. Only duplicate deliveries
-                    // still waiting in the queue are coalesced; later taps work again.
                     inbox.pending.remove(&url);
                     return Poll::Ready(Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
                         let target = target.downcast_mut::<Self>().unwrap();
@@ -148,18 +139,12 @@ impl ContactInvitations {
     }
 
     pub fn selected_recipients(keys: &[String]) -> Result<Vec<Name>, &'static str> {
-        if keys.is_empty() {
-            return Err("Choose at least one contact.");
-        }
+        if keys.is_empty() { return Err("Choose at least one contact."); }
         let mut recipients = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for key in keys {
-            let name = key
-                .parse::<Name>()
-                .map_err(|_| "One of the selected contacts is invalid. Choose your contacts again.")?;
-            if seen.insert(name) {
-                recipients.push(name);
-            }
+            let name = key.parse::<Name>().map_err(|_| "One of the selected contacts is invalid. Choose your contacts again.")?;
+            if seen.insert(name) { recipients.push(name); }
         }
         Ok(recipients)
     }

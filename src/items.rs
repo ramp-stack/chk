@@ -50,8 +50,8 @@ pub enum Item {
 impl Item {
     pub fn build(&mut self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
         match self {
-            Self::Input(input) => input.build(theme, is_mobile),
-            Self::Display(display) => display.build(theme),
+            Item::Input(input) => input.build(theme, is_mobile),
+            Item::Display(display) => display.build(theme),
         }
     }
 }

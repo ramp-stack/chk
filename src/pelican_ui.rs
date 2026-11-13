@@ -1,9 +1,3 @@
-//! Maps CHK descriptions and control traits to Pelican's native widgets.
-//! Other design systems can use this file as an adapter template: implement
-//! `DesignSystem`, translate callbacks, and implement CHK's surface/control traits
-//! for their widgets. CHK's pages and application setup stay design-independent.
-//! External adapters use `chk::` for CHK types and wrap foreign widgets in owned
-//! newtypes when needed to implement those traits under Rust's orphan rules.
 use prism::drawable::{Drawable, text::Align};
 use ptsd::layout::Offset;
 use ptsd::utils::TitleSubtitle;
@@ -265,23 +259,23 @@ impl crate::AvatarSurface for Avatar {
     fn set_content(&mut self, content: AvatarContent) {Avatar::set_content(self,content);}
 }
 impl crate::CameraSurface for native::CameraView {
-    fn reset(&mut self, theme: &Theme) {Self::reset(self,theme.native_pelican());}
-    fn error(&mut self, theme: &Theme, message: &str, disabled: bool) {Self::error(self,theme.native_pelican(),message,disabled);}
-    fn disable(&mut self, disabled: bool) {Self::disable(self,disabled);}
-    fn preview(&mut self, image: prism::hardware::Image) {Self::preview(self,image);}
+    fn reset(&mut self, theme: &Theme) {native::CameraView::reset(self,theme.native_pelican());}
+    fn error(&mut self, theme: &Theme, message: &str, disabled: bool) {native::CameraView::error(self,theme.native_pelican(),message,disabled);}
+    fn disable(&mut self, disabled: bool) {native::CameraView::disable(self,disabled);}
+    fn preview(&mut self, image: prism::hardware::Image) {native::CameraView::preview(self,image);}
 }
 impl crate::PlaybackSurface for native::PlaybackView {
-    fn set_player(&mut self, player:prism::hardware::Player,size:(u32,u32)) {Self::set_player(self,player,size);}
-    fn progress(&mut self, value:f32) {Self::progress(self,value);}
+    fn set_player(&mut self, player:prism::hardware::Player,size:(u32,u32)) {native::PlaybackView::set_player(self,player,size);}
+    fn progress(&mut self, value:f32) {native::PlaybackView::progress(self,value);}
     fn badge(&mut self, theme:&Theme,badge:PlaybackBadge) {
-        Self::badge(self,theme.native_pelican(),match badge {
+        native::PlaybackView::badge(self,theme.native_pelican(),match badge {
             PlaybackBadge::Loading=>native::PlaybackBadge::Loading, PlaybackBadge::Unplayable=>native::PlaybackBadge::Unplayable,
             PlaybackBadge::Play=>native::PlaybackBadge::Play, PlaybackBadge::None=>native::PlaybackBadge::None,
         });
     }
-    fn playing(&mut self,theme:&Theme,playing:bool) {Self::playing(self,theme.native_pelican(),playing);}
-    fn position(&mut self,theme:&Theme,seconds:u64) {Self::position(self,theme.native_pelican(),seconds);}
-    fn duration(&mut self,theme:&Theme,seconds:u64) {Self::duration(self,theme.native_pelican(),seconds);}
+    fn playing(&mut self,theme:&Theme,playing:bool) {native::PlaybackView::playing(self,theme.native_pelican(),playing);}
+    fn position(&mut self,theme:&Theme,seconds:u64) {native::PlaybackView::position(self,theme.native_pelican(),seconds);}
+    fn duration(&mut self,theme:&Theme,seconds:u64) {native::PlaybackView::duration(self,theme.native_pelican(),seconds);}
 }
 impl crate::Slider for native::Slider {fn value(&self)->f32 {self.current_value()}}
 impl crate::InputControl for native::Slider {fn state(&self)->State {State::Slider(crate::Slider::value(self))}}

@@ -112,18 +112,18 @@ pub enum Header {
 
 impl Header {
     pub fn stack(title: &str, action: Option<(Icons, Box<dyn Callback>)>) -> Self {
-        Self::Stack {title: title.into(), action}
+        Header::Stack {title: title.into(), action}
     }
-    pub fn stack_end(title: &str) -> Self {Self::End {title: title.into()}}
+    pub fn stack_end(title: &str) -> Self {Header::End {title: title.into()}}
     pub fn home(title: &str, action: Option<(Icons, Box<dyn Callback>)>) -> Self {
-        Self::Home {title: title.into(), action}
+        Header::Home {title: title.into(), action}
     }
     pub fn home_leading(title: &str, action: Option<(Icons, Box<dyn Callback>)>) -> Self {
-        Self::Leading {title: title.into(), action}
+        Header::Leading {title: title.into(), action}
     }
     pub fn messaging(title: String, profiles: Vec<ProfileView>, avatar: Option<AvatarContent>,
         steps: usize, info: Option<Box<dyn Callback>>) -> Self {
-        Self::Messaging {title, profiles, avatar, steps, info}
+        Header::Messaging {title, profiles, avatar, steps, info}
     }
 }
 
@@ -142,19 +142,18 @@ pub enum Footer {
 impl Footer {
     pub fn stack(label: Option<&str>, action: Box<dyn Callback>,
         secondary: Option<(String, Box<dyn Callback>)>) -> Self {
-        Self::Stack {label: label.map(str::to_owned), action, secondary}
+        Footer::Stack {label: label.map(str::to_owned), action, secondary}
     }
-    pub fn stack_end(steps: Option<usize>) -> Self {Self::End {steps}}
+    pub fn stack_end(steps: Option<usize>) -> Self {Footer::End {steps}}
     pub fn home(first: Option<(String, Box<dyn Callback>)>, second: Option<(String, Box<dyn Callback>)>) -> Self {
-        Self::Home {first, second}
+        Footer::Home {first, second}
     }
-    pub fn alert(notice: &str) -> Self {Self::Alert {notice: notice.into()}}
+    pub fn alert(notice: &str) -> Self {Footer::Alert {notice: notice.into()}}
     pub fn input(placeholder: &str, on_send: impl SendFn, valid: impl ValidFn) -> Self {
-        Self::Input {placeholder: placeholder.into(), on_send: Box::new(on_send), valid: Box::new(valid)}
+        Footer::Input {placeholder: placeholder.into(), on_send: Box::new(on_send), valid: Box::new(valid)}
     }
 }
 
-/// The chosen design system travels with each page and callback, without globals.
 #[derive(Debug, Clone)]
 pub struct Theme(Rc<dyn DesignSystem>);
 
@@ -175,8 +174,6 @@ impl Theme {
 
 macro_rules! constructors {
     ($(fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $result:ty;)+) => {
-        /// Maps CHK presentation requests to native widgets. CHK owns page logic,
-        /// validation, subscriptions, navigation, and media lifecycles.
         pub trait DesignSystem: Debug + Any {
             fn new(config: crate::ChkTheme, assets: Assets) -> Self where Self: Sized;
             fn colors(&self) -> &ptsd::ColorResources;

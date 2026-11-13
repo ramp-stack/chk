@@ -70,7 +70,7 @@ impl PageType {
             false => "Received message",
         };
 
-        Self::Content {
+        PageType::Content {
             title: title.into(),
             items: vec![
                 Display::messages(ctx, theme, vec![bubble]),
@@ -649,7 +649,7 @@ impl PageBuilder for MessageSave {
                 let Some(state) = state.upgrade() else {return;};
                 if state.borrow().busy {return;}
                 let request: SaveRequest = match &content {
-                    MessageContent::Photo(photo) => Box::pin(Self::export(Arc::from(photo.jpeg()), "jpg")),
+                    MessageContent::Photo(photo) => Box::pin(MessageSave::export(Arc::from(photo.jpeg()), "jpg")),
                     MessageContent::Sticker(sticker) => {
                         let image = sticker.image();
                         Box::pin(async move {Ok(Data::Image(image))})
@@ -658,17 +658,17 @@ impl PageBuilder for MessageSave {
                         let bytes = crate::messages::VideoClip::find(ctx, video.clip);
                         Box::pin(async move {
                             let bytes = bytes.ok_or("This video is still downloading. Try again when it finishes.")?;
-                            Self::export(bytes, "mp4").await
+                            MessageSave::export(bytes, "mp4").await
                         })
                     }
                     MessageContent::Gif(gif) => {
                         let bytes = theme.gif_bytes(gif);
                         Box::pin(async move {
                             let bytes = bytes.await?;
-                            let extension = Self::image_extension(&bytes)
+                            let extension = MessageSave::image_extension(&bytes)
                                 .or_else(|| (bytes.get(4..8) == Some(b"ftyp")).then_some("mp4"))
                                 .ok_or("This GIF's format cannot be saved to Photos.")?;
-                            Self::export(bytes, extension).await
+                            MessageSave::export(bytes, extension).await
                         })
                     }
                     _ => return,

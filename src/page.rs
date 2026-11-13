@@ -16,7 +16,7 @@ use crate::closure::{
 use crate::design_system::{Content, Icons, QrCodeFound, Theme};
 use crate::form::FormItem;
 use crate::items::{Action, Display, Input, Item};
-use crate::messages::{ChatRoom, ChatRoomAction, Photo, RoomNotificationState, Video};
+use crate::messages::{ChatRoom, ChatRoomAction, ContactNotificationState, Photo, RoomNotificationState, Video};
 use crate::profiles::{Profile, ProfileAction};
 use crate::{
     ActionItem, AvatarIconStyle, AvatarPurpose, ContactInvitations, Flow, FormComplete, FormValidState,
@@ -76,7 +76,8 @@ impl Page {
             ))),
             false => Page::Refreshing(Box::new(Watching::new(
                 (ContractWatch::new(profile.clone()), ListWatch::<Block>::default(),
-                 ListWatch::<ChatRoom>::default(), ListWatch::<RoomNotificationState>::default()),
+                 ListWatch::<ChatRoom>::default(),
+                 (ListWatch::<RoomNotificationState>::default(), ListWatch::<ContactNotificationState>::default())),
                 |ctx: &mut Context, _: &Theme, (profile, _, _, _): (Instance<Profile>, _, _, _)| {
                     PageType::profile_view(ctx, profile)
                 },
@@ -138,7 +139,8 @@ impl Page {
     pub fn chat_info(room: Instance<ChatRoom>) -> Page {
         Page::Refreshing(Box::new(Watching::new(
             (ContractWatch::new(room), ListWatch::<Profile>::default(),
-             ListWatch::<Block>::default(), ListWatch::<RoomNotificationState>::default()),
+             ListWatch::<Block>::default(),
+             (ListWatch::<RoomNotificationState>::default(), ListWatch::<ContactNotificationState>::default())),
             |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, _, _, _)| {
                 PageType::chat_info(ctx, room)
             },
@@ -216,7 +218,7 @@ impl PageType {
         title: &str, inputs: Vec<Input>, display: Vec<Display>,
         header: Option<(Icons, Action)>, bumper: Bumper,
     ) -> Self {
-        Self::Content {
+        PageType::Content {
             title: title.into(),
             items: inputs.into_iter().map(Item::Input)
                 .chain(display.into_iter().map(Item::Display)).collect(),
@@ -225,11 +227,11 @@ impl PageType {
     }
 
     pub fn content(title: &str, items: Vec<Item>, header: Option<(Icons, Action)>, bumper: Bumper, offset: Offset) -> Self {
-        Self::Content {title: title.into(), items, header, bumper, offset, flow_len: 1, next: None}
+        PageType::Content {title: title.into(), items, header, bumper, offset, flow_len: 1, next: None}
     }
 
     pub fn display(title: &str, items: Vec<Display>, header: Option<(Icons, Action)>, bumper: Bumper, offset: Offset) -> Self {
-        Self::Content {
+        PageType::Content {
             title: title.into(), items: items.into_iter().map(Item::Display).collect(),
             header, bumper, offset, flow_len: 1, next: None,
         }
@@ -237,7 +239,7 @@ impl PageType {
 
     pub fn input(title: &str, item: Input, header: Option<(Icons, Action)>, bumper: Bumper) -> Self {
         let offset = item.offset();
-        Self::Content {title: title.into(), items: vec![Item::Input(item)], header, bumper, offset, flow_len: 1, next: None}
+        PageType::Content {title: title.into(), items: vec![Item::Input(item)], header, bumper, offset, flow_len: 1, next: None}
     }
 
     pub fn form(id: &str, title: &str, item: Input, validate: Box<dyn ValidationFn>, on_submit: Option<Box<dyn FormSubmit>>) -> Self {
@@ -273,7 +275,7 @@ impl PageType {
     pub fn messaging(room: Instance<ChatRoom>) -> Self { PageType::Messaging { room, flow_len: 1 } }
 
     pub fn camera(on_capture: impl PhotoCaptured + 'static) -> Self {
-        Self::Camera {on_capture: Box::new(on_capture)}
+        PageType::Camera {on_capture: Box::new(on_capture)}
     }
 
     pub fn photo(photo: Photo, header: Option<(Icons, Action)>) -> Self {
@@ -286,20 +288,20 @@ impl PageType {
 
     /// Reuse CHK's video page with an application-prepared playback timeline.
     pub fn playback(title: &str, player: prism::hardware::Player, size: (u32, u32)) -> Self {
-        Self::Playback { title: title.into(), player, size }
+        PageType::Playback { title: title.into(), player, size }
     }
 
     pub fn scan_qr(instructions: &str, alt: Option<(String, Icons, Action)>, on_find: Box<dyn QrCodeFound>) -> Self {
         let item = Input::qr_code_scanner(instructions, alt, on_find);
         let offset = item.offset();
-        Self::Content {
+        PageType::Content {
             title: "Scan QR code".into(), items: vec![Item::Input(item)], header: None,
             bumper: Bumper::None, offset, flow_len: 1, next: None,
         }
     }
 
     pub fn display_qr_code(title: &str, data: &str, instructions: &str, share: bool) -> Self {
-        Self::Content {
+        PageType::Content {
             title: title.into(), items: vec![Item::Display(Display::qr_code(data, instructions))], header: None,
             bumper: Bumper::custom(
                 if share { "Share" } else { "Copy" },
@@ -309,7 +311,7 @@ impl PageType {
     }
 
     pub fn qr_page(invitations: &ContactInvitations, name: Name) -> PageType {
-        Self::Content {
+        PageType::Content {
             title: "Share AirName".into(),
             items: vec![Item::Display(Display::qr_code(&name.to_string(), "Scan to share this AirName."))],
             header: None, bumper: Bumper::custom("Share", Action::share_contact(invitations, name)),
@@ -323,10 +325,10 @@ impl PageType {
             let items = Display::group_info(ctx, room.clone()).into_iter().map(Item::Display).collect();
             let header = active.then(|| (Icons::Edit, Action::deferred_flow(
                 move |_: &mut Context, _: &Theme| {
-                    Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
+                    Flow::new(vec![Page::Static(Box::new(PageType::edit_group(room.clone())))])
                 },
             )));
-            return Self::Content {
+            return PageType::Content {
                 title: "Group info".into(), items, header,
                 bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
             };
@@ -336,7 +338,7 @@ impl PageType {
         let profile = Profile::from_name(ctx, name);
         if name == me {
             let profile = profile.pending();
-            return Self::Content {
+            return PageType::Content {
                 title: "Chat info".into(),
                 items: vec![
                     Item::Display(Display::avatar(profile.avatar.clone(), AvatarPurpose::None)),
@@ -347,14 +349,14 @@ impl PageType {
             };
         }
         let title = profile.pending().username.clone();
-        let items = Display::profile(ctx, profile.clone(), Some(room))
+        let items = Display::profile(ctx, profile.clone())
             .into_iter().map(Item::Display).collect();
         let header = Some((Icons::Edit, Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
-            Flow::new(vec![Page::Static(Box::new(Self::editing(
+            Flow::new(vec![Page::Static(Box::new(PageType::editing(
                 false, profile.clone(), ctx.window.is_mobile, None,
             )))])
         })));
-        Self::Content {
+        PageType::Content {
             title, items, header, bumper: Bumper::None,
             offset: Offset::Start, flow_len: 1, next: None,
         }
@@ -368,10 +370,10 @@ impl PageType {
         let items = Display::group_info(ctx, room.clone()).into_iter().map(Item::Display).collect();
         let header = active.then(|| (Icons::Edit, Action::deferred_flow(
             move |_: &mut Context, _: &Theme| {
-                Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
+                Flow::new(vec![Page::Static(Box::new(PageType::edit_group(room.clone())))])
             },
         )));
-        Self::Content {
+        PageType::Content {
             title: "Group info".into(), items, header,
             bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
         }
@@ -393,7 +395,7 @@ impl PageType {
             }
             FormComplete::Action(Action::custom(|ctx: &mut Context, _: &Theme| ctx.emit(NavigationEvent::Pop)))
         }) as Box<dyn FormSubmit>;
-        Self::Edit {
+        PageType::Edit {
             title: "Edit group".into(), header: None,
             items: vec![
                 FormItem::avatar_with_preset("Group photo", photo, Action::PickPhoto,
@@ -412,7 +414,7 @@ impl PageType {
 
     pub fn leave(mut room: Instance<ChatRoom>) -> PageType {
         let details = room.pending().group_details();
-        Self::Content {
+        PageType::Content {
             title: "Leave group".into(),
             items: vec![
                 Item::Display(Display::avatar(details.photo, AvatarPurpose::Custom {
@@ -434,15 +436,14 @@ impl PageType {
         let name = profile.pending().name.unwrap();
         let title = profile.pending().username.clone();
         let is_me = name == ctx.air.me();
-        let room = ChatRoom::find_direct(ctx, name);
-        let items = Display::profile(ctx, profile.clone(), room)
+        let items = Display::profile(ctx, profile.clone())
             .into_iter().map(Item::Display).collect();
         let header = Some((Icons::Edit, Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
-            Flow::new(vec![Page::Static(Box::new(Self::editing(
+            Flow::new(vec![Page::Static(Box::new(PageType::editing(
                 is_me, profile.clone(), ctx.window.is_mobile, None,
             )))])
         })));
-        Self::Content {
+        PageType::Content {
             title, items, header, bumper: Bumper::None,
             offset: Offset::Start, flow_len: 1, next: None,
         }
@@ -487,7 +488,7 @@ impl PageType {
             vec![]
         };
 
-        Self::Edit {
+        PageType::Edit {
             title: if is_me {"My profile"} else {"Edit profile"}.into(),
             header: None,
             items: vec![

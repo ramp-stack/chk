@@ -92,19 +92,19 @@ impl AppPage for RootPage {}
 impl PageType {
     pub fn build_root(&self, theme: &Theme, is_mobile: bool) -> Box<dyn AppPage> {
         let (title, items, header, bumper_a, bumper_b) = match self.clone() {
-            Self::Root { title, input, display, header, bumper_a, bumper_b } => {
+            PageType::Root { title, input, display, header, bumper_a, bumper_b } => {
                 (title, input.into_iter().map(Item::Input).chain(display.into_iter().map(Item::Display)).collect::<Vec<_>>(), header, bumper_a, bumper_b)
             }
-            Self::Content { title, items, header, .. } => {
+            PageType::Content { title, items, header, .. } => {
                 (title, items, header, None, None)
             }
-            Self::Edit { title, header, items, display, on_save, .. } => {
+            PageType::Edit { title, header, items, display, on_save, .. } => {
                 return Box::new(EditPage::root(
                     theme, is_mobile, title, header, items, display, on_save,
                 ));
             }
-            Self::Form { .. } | Self::Review { .. } | Self::Success { .. }
-            | Self::Messaging { .. } | Self::Camera { .. } | Self::Photo { .. } | Self::Video { .. } | Self::Playback { .. } => {
+            PageType::Form { .. } | PageType::Review { .. } | PageType::Success { .. }
+            | PageType::Messaging { .. } | PageType::Camera { .. } | PageType::Photo { .. } | PageType::Video { .. } | PageType::Playback { .. } => {
                 panic!("Not an accepted root type");
             }
         };
@@ -200,22 +200,22 @@ enum SearchSource {
 }
 impl SearchSource {
     pub fn label(&self) -> &'static str {
-        match self {Self::Contacts(_) => "Contacts", Self::Messages(_) => "Messages"}
+        match self {SearchSource::Contacts(_) => "Contacts", SearchSource::Messages(_) => "Messages"}
     }
     pub fn entries(&mut self, ctx: &mut Context) -> Vec<SearchEntry> {
         match self {
-            Self::Contacts(watch) => {
+            SearchSource::Contacts(watch) => {
                 let profiles = watch.get(ctx);
                 SearchEntry::contacts(ctx, profiles)
             }
-            Self::Messages(watch) => {
+            SearchSource::Messages(watch) => {
                 let (rooms, profiles, reads) = watch.get(ctx);
                 SearchEntry::messages(ctx, rooms, profiles, reads)
             }
         }
     }
     pub async fn next(&mut self) -> Option<()> {
-        match self {Self::Contacts(watch) => watch.next().await, Self::Messages(watch) => watch.next().await}
+        match self {SearchSource::Contacts(watch) => watch.next().await, SearchSource::Messages(watch) => watch.next().await}
     }
 }
 
@@ -233,7 +233,7 @@ struct SearchPage {
 impl AppPage for SearchPage {}
 impl SearchPage {
     pub fn open(ctx: &mut Context, theme: &Theme, source: SearchSource) {
-        let page = Self::new(ctx, theme, source);
+        let page = SearchPage::new(ctx, theme, source);
         ctx.emit(NavigationEvent::push(crate::FlowWrapper::new(
             ptsd::navigation::Flow::new(vec![Box::new(page)]),
         )));
