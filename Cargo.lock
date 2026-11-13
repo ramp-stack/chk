@@ -1133,16 +1133,13 @@ name = "pelican_ui"
 version = "3.0.0"
 dependencies = [
  "bardecoder",
- "base64",
  "futures",
- "hex",
  "image",
  "include_dir",
  "media2",
  "prism2",
  "ptsd2",
  "qrcode",
- "serde",
  "serde_json",
  "unicode-segmentation",
  "ureq",

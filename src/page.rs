@@ -1,4 +1,4 @@
-use prism::air::{Contract, Instance, Name};
+use prism::air::{Contract, Id, Instance, Name};
 use prism::Context;
 use ptsd::layout::Offset;
 use ptsd::navigation::{AppPage, NavigationEvent};
@@ -197,7 +197,7 @@ pub enum PageType {
         flow_len: usize,
         on_submit: Option<Box<dyn FormSubmit>>,
     },
-    Messaging { room: Instance<ChatRoom>, flow_len: usize },
+    Messaging { room: Instance<ChatRoom>, flow_len: usize, target: Option<Id> },
     Camera { on_capture: Box<dyn PhotoCaptured> },
     Photo { photo: Photo, header: Option<(Icons, Action)> },
     Video { video: Video, header: Option<(Icons, Action)> },
@@ -272,7 +272,7 @@ impl PageType {
         PageType::Success { title: title.to_string(), getter, flow_len: 1, on_submit }
     }
 
-    pub fn messaging(room: Instance<ChatRoom>) -> Self { PageType::Messaging { room, flow_len: 1 } }
+    pub fn messaging(room: Instance<ChatRoom>) -> Self { PageType::Messaging { room, flow_len: 1, target: None } }
 
     pub fn camera(on_capture: impl PhotoCaptured + 'static) -> Self {
         PageType::Camera {on_capture: Box::new(on_capture)}
@@ -593,8 +593,11 @@ impl PageType {
             PageType::Success { title, getter, flow_len, on_submit } => Box::new(SuccessPage::new(
                 theme, title.to_string(), getter.clone(), *flow_len, on_submit.clone(),
             )),
-            PageType::Messaging { room, flow_len } => {
-                Box::new(MessagesPage::new(ctx, theme, room.clone(), *flow_len))
+            PageType::Messaging { room, flow_len, target } => {
+                Box::new(match target {
+                    Some(id) => MessagesPage::at_message(ctx, theme, room.clone(), *flow_len, *id),
+                    None => MessagesPage::new(ctx, theme, room.clone(), *flow_len),
+                })
             }
             PageType::Camera { on_capture } => Box::new(CameraPage::new(theme, on_capture.clone())),
             PageType::Photo { photo, header } => {

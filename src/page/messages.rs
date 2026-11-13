@@ -6,7 +6,7 @@ use ptsd::display::Bin;
 use ptsd::navigation::AppPage;
 use ptsd::navigation::{NavigationEvent, NavigationChanged};
 use prism::hardware::Data;
-use prism::air::Instance;
+use prism::air::{Id, Instance};
 
 use std::{cell::{Cell, RefCell}, rc::{Rc, Weak}, sync::Arc, collections::HashMap,
     future::{Future, poll_fn}, pin::Pin, task::{Poll, Waker}};
@@ -29,6 +29,16 @@ type SaveRequest = Pin<Box<dyn Future<Output = Result<Data, String>>>>;
 type SaveOperation = crate::pending::Pending<Result<Data, String>>;
 
 impl Page {
+    pub fn messaging_at(_ctx: &mut Context, room: &mut Instance<ChatRoom>, message: Id) -> Self {
+        Self::watching(
+            (crate::ContractWatch::new(room.clone()), crate::ListWatch::<Block>::default(),
+             crate::ListWatch::<Profile>::default()),
+            move |_: &mut Context, _: &Theme, (room, _, _): (Instance<ChatRoom>, _, _)| {
+                PageType::Messaging {room, flow_len: 1, target: Some(message)}
+            },
+        )
+    }
+
     pub fn message_details(room: Instance<ChatRoom>, message: Message, pops: usize) -> Self {
         Page::Refreshing(Box::new(MessageSave {
             room, message, pops,
@@ -97,6 +107,13 @@ impl MessagesPage {
         Self {inner: MessagesPageInner::new(ctx, theme, room, flow_len)}
     }
 
+    pub fn at_message(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>, flow_len: usize, message: Id) -> Self {
+        let mut page = Self::new(ctx, theme, room, flow_len);
+        page.inner.target = Some(message);
+        page.inner.reveal_target = true;
+        page
+    }
+
     pub fn take_input_from(&mut self, old: &mut Self) {self.inner.take_input_from(&mut old.inner);}
 }
 
@@ -117,10 +134,17 @@ impl Drawable for MessagesPage {
         layout
     }
     fn draw(&self, layout: &LayoutTree, offset: (f32, f32), bound: Rect) -> Vec<Instruction> {
-        if let Some(history) = self.inner.history() {history.near_top.set(false);}
+        if let Some(history) = self.inner.history() {
+            history.near_top.set(false);
+            history.near_bottom.set(false);
+        }
         let instructions = self.inner.draw(layout, offset, bound);
         if bound.2 > 0.0 && bound.3 > 0.0 && (self.inner.loading.refresh
-            || (self.inner.loading.more && self.inner.history().is_some_and(|h| h.near_top.get()))) {
+            || self.inner.history().is_some_and(|h| {
+                (self.inner.reveal_target && h.target_delta.get().is_some())
+                    || (!self.inner.reveal_target && ((self.inner.loading.more && h.near_top.get())
+                        || (self.inner.loading.start > 0 && h.near_bottom.get())))
+            })) {
             self.inner.loading.drawn();
         }
         instructions
@@ -143,13 +167,14 @@ struct MessageLoading {
     drawn: Cell<bool>,
     waker: RefCell<Option<Waker>>,
     limit: usize,
+    start: usize,
     more: bool,
     refresh: bool,
 }
 
 impl MessageLoading {
     pub fn new() -> Self {
-        Self {drawn: Cell::new(false), waker: RefCell::new(None), limit: 0, more: true, refresh: true}
+        Self {drawn: Cell::new(false), waker: RefCell::new(None), limit: 0, start: 0, more: true, refresh: true}
     }
 
     pub fn drawn(&self) {
@@ -173,7 +198,7 @@ impl Clone for MessageLoading {
     fn clone(&self) -> Self {
         // Hidden/cloned pages must wait for their own draw, not another page's.
         Self {drawn: Cell::new(false), waker: RefCell::new(None),
-            limit: self.limit, more: self.more, refresh: true}
+            limit: self.limit, start: self.start, more: self.more, refresh: true}
     }
 }
 
@@ -191,6 +216,8 @@ struct MessagesPageInner {
     #[skip] theme: Theme,
     #[skip] loading: MessageLoading,
     #[skip] scroll_anchor: Option<(f32, f32)>,
+    #[skip] target: Option<Id>,
+    #[skip] reveal_target: bool,
 }
 
 #[on_change(self.loading.next())]
@@ -308,39 +335,88 @@ impl MessagesPageInner {
     }
 
     pub fn load_messages(&mut self, ctx: &mut Context) {
-        if !self.loading.refresh && (!self.loading.more || !self.history().is_some_and(|h| h.near_top.get())) {return;}
+        if self.reveal_target && !self.loading.refresh {
+            if let Some(delta) = self.history().and_then(|h| h.target_delta.get()) {
+                // Apply the measured distance through the existing scroll
+                // layout; it clamps naturally without adding any whitespace.
+                self.page.content_mut().children.adjust_scroll(delta);
+                self.reveal_target = false;
+                if let Some(history) = self.page.content_mut().children_mut().first_mut()
+                    .and_then(|child| child.downcast_mut::<MessageHistory>()) {
+                    history.reveal_target = false;
+                }
+            }
+            return;
+        }
+        let older = self.loading.more && self.history().is_some_and(|h| h.near_top.get());
+        let newer = self.loading.start > 0 && self.history().is_some_and(|h| h.near_bottom.get());
+        if !self.loading.refresh && !older && !newer {return;}
         // Show the latest message first; then fill the viewport and fetch older
         // history in small batches only as the reader approaches its top.
         let mut limit = if self.loading.limit == 0 {1}
-            else if self.loading.refresh {self.loading.limit}
-            else {self.loading.limit.saturating_add(16)};
+            else {self.loading.limit};
+        let mut start = self.loading.start;
         let me = ctx.air.me();
         let room = self.room.pending();
         let is_group = room.is_group();
-        if self.loading.refresh
-            && let Some(oldest) = self.history().and_then(|h| h.inner.1.first())
-                .and_then(|g| g.messages.first()).map(|m| m.id)
-            && let Some(index) = room.messages(me).rev().position(|m| m.id == oldest) {
-            limit = limit.max(index.saturating_add(1));
+        let previous = self.history().map(|history| history.inner.1.iter()
+            .flat_map(|g| g.messages.iter()).map(|m| m.id).collect::<Vec<_>>()).unwrap_or_default();
+        if self.loading.limit == 0 && let Some(target) = self.target {
+            if let Some(index) = room.messages(me).rev().position(|m| m.id == target) {
+                // Open an old result with a small amount of surrounding
+                // context, rather than rendering every message newer than it.
+                start = index.saturating_sub(16);
+                limit = index.saturating_sub(start).saturating_add(17);
+            } else {
+                self.target = None;
+                self.reveal_target = false;
+            }
+        } else {
+            // Resolve the loaded range by identity so new or deleted messages
+            // do not shift an old search window to a different conversation point.
+            if start > 0 {
+                start = previous.iter().rev().find_map(|id| room.messages(me).rev()
+                    .position(|m| m.id == *id)).unwrap_or(0);
+            }
+            if let Some(index) = previous.iter().find_map(|id| room.messages(me).rev()
+                .position(|m| m.id == *id)) {
+                limit = limit.max(index.saturating_sub(start).saturating_add(1));
+            }
+            if !self.loading.refresh {
+                if newer {
+                    let added = start.min(16);
+                    start -= added;
+                    limit = limit.saturating_add(added);
+                } else if older {
+                    limit = limit.saturating_add(16);
+                }
+            }
         }
-        let mut messages = room.messages(me).rev().take(limit.saturating_add(1)).cloned().collect::<Vec<_>>();
+        let mut messages = room.messages(me).rev().skip(start).take(limit.saturating_add(1)).cloned().collect::<Vec<_>>();
         self.loading.more = messages.len() > limit;
         messages.truncate(limit);
         messages.reverse();
         drop(room);
+        if self.reveal_target && !messages.iter().any(|m| Some(m.id) == self.target) {
+            self.reveal_target = false;
+            self.target = None;
+        }
         let scroll = self.page.content().scroll();
-        if self.loading.refresh && scroll > 0.0 && let Some(history) = self.history() {
-            let previous = history.inner.1.iter().flat_map(|g| g.messages.iter()).map(|m| m.id).collect::<Vec<_>>();
-            if !previous.is_empty() && messages.len() > previous.len()
-                && messages.iter().take(previous.len()).map(|m| m.id).eq(previous) {
-                self.scroll_anchor = Some((scroll, history.height.get()));
-            }
+        if !self.reveal_target && (scroll > 0.0 || (!self.loading.refresh && newer))
+            && let Some(history) = self.history()
+            && !previous.is_empty() && messages.len() > previous.len()
+            && messages.iter().take(previous.len()).map(|m| m.id).eq(previous.iter().copied()) {
+            self.scroll_anchor = Some((scroll, history.height.get()));
         }
         self.displayed = messages.iter().filter(|m| m.author != me).map(|m| m.id).collect();
         let history = self.page.content_mut().children_mut().first_mut()
             .and_then(|child| child.downcast_mut::<MessageHistory>()).unwrap();
+        history.target = self.target;
+        history.reveal_target = self.reveal_target;
+        history.target_delta.set(None);
         history.replace(ctx, &self.theme, &self.room, messages, is_group);
         self.loading.limit = limit;
+        self.loading.start = start;
         self.loading.refresh = false;
         self.acknowledge = self.focused;
     }
@@ -407,7 +483,7 @@ impl MessagesPageInner {
             layout: Stack::default(), page, room, is_blocked, reads, displayed: Vec::new(),
             acknowledge: true, focused: true, typing: TypingPublisher::default(), theme: theme.clone(),
             loading: MessageLoading::new(),
-            scroll_anchor: None,
+            scroll_anchor: None, target: None, reveal_target: false,
         }
     }
 
@@ -424,7 +500,11 @@ impl MessagesPageInner {
         std::mem::swap(&mut self.page.content_mut().children_mut()[0], &mut old.page.content_mut().children_mut()[0]);
         self.page.content_mut().set_scroll(scroll);
         self.loading.limit = old.loading.limit;
+        self.loading.start = old.loading.start;
         self.loading.more = old.loading.more;
+        self.target = old.target;
+        self.reveal_target = old.reveal_target;
+        self.scroll_anchor = old.scroll_anchor.take();
         self.displayed = std::mem::take(&mut old.displayed);
     }
 }
@@ -433,12 +513,18 @@ impl MessagesPageInner {
 struct MessageHistory {
     inner: Bin<Column, Vec<MessageGroupView>>,
     near_top: Cell<bool>,
+    near_bottom: Cell<bool>,
     height: Cell<f32>,
+    target: Option<Id>,
+    reveal_target: bool,
+    target_delta: Cell<Option<f32>>,
 }
 
 impl MessageHistory {
     pub fn new() -> Self {
-        Self {inner: Bin(Column::center(24.0), Vec::new()), near_top: Cell::new(false), height: Cell::new(0.0)}
+        Self {inner: Bin(Column::center(24.0), Vec::new()), near_top: Cell::new(false),
+            near_bottom: Cell::new(false), height: Cell::new(0.0), target: None,
+            reveal_target: false, target_delta: Cell::new(None)}
     }
 
     pub fn replace(&mut self, ctx: &mut Context, theme: &Theme, room: &Instance<ChatRoom>, messages: Vec<Message>, is_group: bool) {
@@ -447,7 +533,12 @@ impl MessageHistory {
             .collect::<HashMap<_, _>>();
         let mut groups: Vec<Vec<Message>> = Vec::new();
         for message in messages {
-            if groups.last().and_then(|g| g.last()).is_some_and(|last| MessageGroupView::adjacent(last, &message)) {
+            // A searched message gets its own normal group so its exact bounds
+            // can be measured independently of a design system's bubble internals.
+            if groups.last().and_then(|g| g.last()).is_some_and(|last| {
+                Some(last.id) != self.target && Some(message.id) != self.target
+                    && MessageGroupView::adjacent(last, &message)
+            }) {
                 groups.last_mut().unwrap().push(message);
             } else {groups.push(vec![message]);}
         }
@@ -474,6 +565,22 @@ impl Drawable for MessageHistory {
     }
     fn draw(&self, layout: &LayoutTree, offset: (f32, f32), bound: Rect) -> Vec<Instruction> {
         self.near_top.set(bound.1 - offset.1 < 256.0);
+        self.near_bottom.set(offset.1 + layout.0.1 - bound.1 - bound.3 < 256.0);
+        if self.reveal_target {
+            let target = self.inner.1.iter().zip(&layout.1).find_map(|(group, (position, branch))| {
+                group.messages.iter().any(|m| Some(m.id) == self.target)
+                    .then_some((position.1, branch.0.1))
+            });
+            if let Some((y, height)) = target {
+                // Center small messages, and reveal the beginning of a message
+                // taller than the viewport. The real scroll limits still apply.
+                let delta = offset.1 + y - bound.1 - ((bound.3 - height) / 2.0).max(0.0);
+                if delta.is_finite() {self.target_delta.set(Some(delta));}
+            }
+            // The first frame still measures the room, but does not flash the
+            // wrong part of its history before the requested scroll is applied.
+            return Vec::new();
+        }
         self.inner.draw(layout, offset, bound)
     }
     fn event(&mut self, ctx: &mut Context, layout: &LayoutTree, event: Box<dyn DynEvent>) {

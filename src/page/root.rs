@@ -1,4 +1,5 @@
-use prism::air::{Instance, Name};
+use prism::air::{Id, Instance, Name};
+use std::rc::Rc;
 use prism::events::{DynEvent, OnEvent, on_event, OnChange, on_change};
 use ptsd::navigation::{NavigationEvent, NavigationChanged};
 use uuid::Uuid;
@@ -14,7 +15,7 @@ use crate::design_system::TextInputEvent;
 use crate::ActionItem;
 use crate::design_system::{Context};
 use crate::design_system::PageView;
-use crate::design_system::{Theme, Icons};
+use crate::design_system::{AvatarContent, Theme, Icons};
 use crate::{Page, Action, PageType};
 use crate::page::EditPage;
 use crate::items::{Display, Item};
@@ -194,6 +195,90 @@ impl SearchEntry {
 }
 
 #[derive(Debug, Clone)]
+struct SearchMessage {
+    room: Rc<Instance<ChatRoom>>,
+    id: Id,
+    timestamp: u64,
+    avatar: AvatarContent,
+    title: String,
+    preview: String,
+    text: String,
+}
+
+impl SearchMessage {
+    fn history(ctx: &mut Context, rooms: &[Instance<ChatRoom>], profiles: &[Instance<Profile>]) -> Vec<Self> {
+        let me = ctx.air.me();
+        let profiles = profiles.iter().filter_map(|instance| {
+            let profile = instance.pending();
+            Some((profile.name?, profile.username.clone()))
+        }).collect::<std::collections::HashMap<_, _>>();
+        let mut entries = Vec::new();
+        for instance in rooms {
+            let room = instance.pending();
+            if !room.members.contains(&me) {continue;}
+            let title = room.name(ctx);
+            let avatar = if room.is_group() {room.group_details().photo} else {
+                let name = room.direct_contact(me).unwrap_or(me);
+                Profile::from_name(ctx, name).pending().avatar.clone()
+            };
+            let instance = Rc::new(instance.clone());
+            for message in room.messages(me) {
+                let preview = message.preview_with(me, room.is_group(), |name| {
+                    profiles.get(&name).cloned().unwrap_or_else(|| name.to_string())
+                });
+                entries.push(Self {
+                    room: instance.clone(), id: message.id, timestamp: message.timestamp,
+                    avatar: avatar.clone(), title: title.clone(), text: preview.to_lowercase(), preview,
+                });
+            }
+        }
+        entries.sort_by_cached_key(|entry| (std::cmp::Reverse(entry.timestamp), entry.room.id(), entry.id));
+        entries
+    }
+
+    fn excerpt(&self, terms: &[&str]) -> String {
+        let text = self.preview.split_whitespace().collect::<Vec<_>>().join(" ");
+        let lowercase = text.to_lowercase();
+        let matched = terms.iter().filter_map(|term| lowercase.find(term)).min().unwrap_or(0);
+        // Lowercasing can expand a Unicode character, so translate the match
+        // back to a character offset before cutting the original text.
+        let mut bytes = 0;
+        let index = text.chars().take_while(|character| {
+            bytes += character.to_lowercase().map(char::len_utf8).sum::<usize>();
+            bytes <= matched
+        }).count();
+        let characters = text.chars().collect::<Vec<_>>();
+        let start = index.saturating_sub(16);
+        let end = (start + 100).min(characters.len());
+        format!("{}{}{}", if start > 0 {"…"} else {""},
+            characters[start..end].iter().collect::<String>(),
+            if end < characters.len() {"…"} else {""})
+    }
+
+    fn item(&self, terms: &[&str]) -> ListItem {
+        let timestamp = ptsd::utils::Timestamp::from_u64(self.timestamp);
+        let subtitle = format!("{} · {}\n{}", timestamp.date(), timestamp.time(), self.excerpt(terms));
+        let room = self.room.clone();
+        let id = self.id;
+        let action = Action::custom(move |ctx: &mut Context, theme: &Theme| {
+            // A result can become stale between its last refresh and the tap.
+            let visible = {
+                let data = room.pending();
+                let me = ctx.air.me();
+                if !data.members.contains(&me) {return;}
+                data.messages(me).any(|message| message.id == id)
+            };
+            if visible {
+                let page = Page::messaging_at(ctx, &mut room.as_ref().clone(), id);
+                let mut flow = Flow::new(vec![page]);
+                (flow.build(ctx, theme))(ctx, theme);
+            }
+        });
+        ListItem::avatar(self.avatar.clone(), &self.title, &subtitle, None, Some(action))
+    }
+}
+
+#[derive(Debug, Clone)]
 enum SearchSource {
     Contacts(ListWatch<Profile>),
     Messages((ListWatch<ChatRoom>, ListWatch<Profile>, ListWatch<RoomReadState>)),
@@ -202,15 +287,16 @@ impl SearchSource {
     pub fn label(&self) -> &'static str {
         match self {SearchSource::Contacts(_) => "Contacts", SearchSource::Messages(_) => "Messages"}
     }
-    pub fn entries(&mut self, ctx: &mut Context) -> Vec<SearchEntry> {
+    pub fn entries(&mut self, ctx: &mut Context) -> (Vec<SearchEntry>, Vec<SearchMessage>) {
         match self {
             SearchSource::Contacts(watch) => {
                 let profiles = watch.get(ctx);
-                SearchEntry::contacts(ctx, profiles)
+                (SearchEntry::contacts(ctx, profiles), vec![])
             }
             SearchSource::Messages(watch) => {
                 let (rooms, profiles, reads) = watch.get(ctx);
-                SearchEntry::messages(ctx, rooms, profiles, reads)
+                let history = SearchMessage::history(ctx, &rooms, &profiles);
+                (SearchEntry::messages(ctx, rooms, profiles, reads), history)
             }
         }
     }
@@ -225,6 +311,8 @@ struct SearchPage {
     page: PageView,
     #[skip] source: SearchSource,
     #[skip] entries: Vec<SearchEntry>,
+    #[skip] messages: Vec<SearchMessage>,
+    #[skip] message_limit: usize,
     #[skip] theme: Theme,
     #[skip] input_id: Uuid,
     #[skip] query: String,
@@ -242,11 +330,11 @@ impl SearchPage {
     pub fn new(ctx: &mut Context, theme: &Theme, mut source: SearchSource) -> Self {
         let input_id = Uuid::new_v4();
         let label = source.label();
-        let entries = source.entries(ctx);
+        let (entries, messages) = source.entries(ctx);
         let input = theme.text_input(input_id, None, None, &format!("Search {}...", label.to_lowercase()));
         let page = theme.page(Header::stack(&format!("Search {}", label.to_lowercase()), None),
             Content::new(Offset::Start, vec![input], Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true)), None);
-        let mut result = Self {layout: Stack::default(), page, source, entries,
+        let mut result = Self {layout: Stack::default(), page, source, entries, messages, message_limit: 50,
             theme: theme.clone(), input_id, query: String::new(), focus_on_open: true};
         result.filter();
         result
@@ -255,23 +343,44 @@ impl SearchPage {
     pub fn filter(&mut self) {
         let query = self.query.to_lowercase();
         let terms = query.split_whitespace().collect::<Vec<_>>();
-        let items = self.entries.iter().filter(|entry| terms.iter().all(|term| entry.text.contains(term)))
+        let items: Vec<_> = self.entries.iter().filter(|entry| terms.iter().all(|term| entry.text.contains(term)))
             .map(|entry| entry.item.clone()).collect();
         let message = match &self.source {
             SearchSource::Contacts(_) if terms.is_empty() => "No contacts yet.",
             SearchSource::Contacts(_) => "No matching contacts.",
             SearchSource::Messages(_) if terms.is_empty() => "No messages yet.",
-            SearchSource::Messages(_) => "No matching conversations.",
+            SearchSource::Messages(_) => "No matching conversations or messages.",
         };
-        let mut results = Display::list(None, items, Some(message));
+        let mut results = if matches!(&self.source, SearchSource::Messages(_)) && !terms.is_empty() {
+            let mut matches: Vec<_> = self.messages.iter()
+                .filter(|entry| terms.iter().all(|term| entry.text.contains(term)))
+                .take(self.message_limit.saturating_add(1)).collect();
+            let more = matches.len() > self.message_limit;
+            matches.truncate(self.message_limit);
+            let messages: Vec<_> = matches.into_iter().map(|entry| entry.item(&terms)).collect();
+            if items.is_empty() && messages.is_empty() {vec![Display::list(None, vec![], Some(message))]}
+            else {
+                let mut sections = Vec::new();
+                if !items.is_empty() {sections.push(Display::list(Some("Conversations"), items, None));}
+                if !messages.is_empty() {sections.push(Display::list(Some("Messages"), messages, None));}
+                if more {
+                    let id = self.input_id;
+                    sections.push(Display::actions(vec![ActionItem::new(
+                        Action::custom(move |ctx: &mut Context, _: &Theme| ctx.emit(MoreSearchMessages(id))),
+                        "Show more messages", Icons::DownArrow,
+                    )], false));
+                }
+                sections
+            }
+        } else {vec![Display::list(None, items, Some(message))]};
         // Keep the original editor so live updates cannot reset its cursor or keyboard.
         let children = self.page.content_mut().children_mut();
         children.truncate(1);
-        children.extend(results.build(&self.theme).unwrap_or_default());
+        children.extend(results.iter_mut().flat_map(|results| results.build(&self.theme).unwrap_or_default()));
     }
 
     pub fn refresh(&mut self, ctx: &mut Context) {
-        self.entries = self.source.entries(ctx);
+        (self.entries, self.messages) = self.source.entries(ctx);
         self.filter();
     }
 }
@@ -282,8 +391,30 @@ impl OnEvent<TextInputEvent> for SearchPage {
         if let TextInputEvent::Changed {id, value} | TextInputEvent::Set {id, value} = &event
             && *id == self.input_id && *value != self.query {
             self.query.clone_from(value);
+            self.message_limit = 50;
             self.filter();
             self.page.content_mut().set_scroll(0.0);
+        }
+        prism::events![event]
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MoreSearchMessages(Uuid);
+
+impl prism::events::Event for MoreSearchMessages {
+    fn pass(&self, _: &mut Context, children: &mut [prism::events::ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(*self);}
+    }
+}
+
+#[on_event]
+impl OnEvent<MoreSearchMessages> for SearchPage {
+    fn on(&mut self, _: &mut Context, event: MoreSearchMessages) -> Vec<Box<dyn DynEvent>> {
+        if event.0 == self.input_id {
+            self.message_limit = self.message_limit.saturating_add(50);
+            self.filter();
+            return vec![];
         }
         prism::events![event]
     }

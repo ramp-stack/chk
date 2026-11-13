@@ -37,10 +37,15 @@ impl Message {
     }
 
     pub fn preview(&self, ctx: &mut Context, group: bool) -> String {
+        self.preview_with(ctx.air.me(), group, |name| {
+            Profile::from_name(ctx, name).pending().username.clone()
+        })
+    }
+
+    pub(crate) fn preview_with(&self, me: Name, group: bool, mut username: impl FnMut(Name) -> String) -> String {
         let text = match &self.body {
             MessageContent::System(notice) => {
-                let me = ctx.air.me();
-                return notice.text_for(me, &Profile::from_name(ctx, notice.member()).pending().username);
+                return notice.text_for(me, &username(notice.member()));
             }
             MessageContent::Text(text) => text.as_str(),
             MessageContent::Sticker(_) => "Sticker",
@@ -48,8 +53,8 @@ impl Message {
             MessageContent::Photo(_) => "Photo",
             MessageContent::Video(_) => "Video",
         };
-        if self.author == ctx.air.me() {format!("You: {text}")}
-        else if group {format!("{}: {text}", Profile::from_name(ctx, self.author).pending().username)}
+        if self.author == me {format!("You: {text}")}
+        else if group {format!("{}: {text}", username(self.author))}
         else {text.to_string()}
     }
 }
