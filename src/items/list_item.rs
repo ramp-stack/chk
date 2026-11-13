@@ -49,6 +49,19 @@ impl ListItem {
 
     pub fn build(&self, theme: &Theme) -> ListItemView {theme.list_item(self)}
 
+    pub fn recipient(ctx: &mut Context, theme: &Theme, profile: &Profile) -> Option<Self> {
+        let name = profile.name?;
+        if Block::am_i_blocked(ctx, name) {return None;}
+        let blocked = Block::did_i_block(ctx, name);
+        let subtitle = if blocked {"You blocked this user".to_string()} else {profile.name()};
+        let title = if name == ctx.air.me() {format!("{} (You)", profile.username)}
+            else {profile.username.clone()};
+        Some(Self {
+            avatar: Some(profile.avatar.clone()), title, subtitle, secondary: None, action: None,
+            badge: false, flair: blocked.then(|| (Icons::Block, theme.colors().get(ptsd::Status::Danger))),
+        })
+    }
+
     pub fn profile_row(profile: &Profile, me: Name) -> Option<(ListItem, String)> {
         let name = profile.name?;
         let username = if name == me {

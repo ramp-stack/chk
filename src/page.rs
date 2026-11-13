@@ -1,9 +1,7 @@
-use prism::air::{Instance, Contract};
+use prism::air::{Contract, Instance, Name};
 use prism::Context;
-use crate::design_system::QrCodeFound;
 use ptsd::layout::Offset;
-use ptsd::navigation::AppPage;
-use crate::design_system::{Theme, Icons};
+use ptsd::navigation::{AppPage, NavigationEvent};
 use ptsd::utils::ValidationFn;
 
 use std::fmt::Debug;
@@ -11,19 +9,19 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::blocking::Block;
-use crate::Listener;
-use crate::form::FormItem;
-use crate::items::{Action, Input, Display, Item};
 use crate::closure::{
-    PageBuilderContractFn, PageBuilderContractMultiplesFn, FormSubmit, NavFn, ReviewItemGetter,
+    FormSubmit, NavFn, PageBuilderContractFn, PageBuilderContractMultiplesFn, ReviewItemGetter,
     SuccessGetter,
 };
-use crate::messages::{ChatRoom, RoomNotificationState, Photo, Video};
+use crate::design_system::{Content, Icons, QrCodeFound, Theme};
+use crate::form::FormItem;
+use crate::items::{Action, Display, Input, Item};
+use crate::messages::{ChatRoom, ChatRoomAction, Photo, RoomNotificationState, Video};
 use crate::profiles::{Profile, ProfileAction};
-use crate::{ContactInvitations, Flow, ListItem, ActionItem, AvatarPurpose, AvatarIconStyle, Form, FormValues, FormComplete, FormValidState};
-use prism::air::Name;
-use crate::messages::ChatRoomAction;
-use ptsd::navigation::NavigationEvent;
+use crate::{
+    ActionItem, AvatarIconStyle, AvatarPurpose, ContactInvitations, Flow, FormComplete, FormValidState,
+    FormValues, Listener,
+};
 
 mod edit;
 pub use edit::*;
@@ -39,10 +37,17 @@ mod stack;
 pub use stack::*;
 mod watch;
 pub use watch::*;
-pub(crate) mod media;
+mod media;
 pub use media::*;
-pub(crate) mod video;
+mod video;
 pub use video::*;
+
+pub trait PageBuilder: Debug + dyn_clone::DynClone {
+    fn next(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>>;
+    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType;
+}
+
+dyn_clone::clone_trait_object!(PageBuilder);
 
 #[derive(Debug, Clone)]
 pub enum Page { Static(Box<PageType>), Refreshing(Box<dyn PageBuilder>) }
@@ -54,12 +59,12 @@ impl Page {
 
     pub fn contract_updates<C: Contract>(contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
         let builder: Box<dyn PageBuilderContractFn<C>> = Box::new(builder);
-        Page::Refreshing(Box::new(Watching::new(Watch::contract(contract), builder)))
+        Page::Refreshing(Box::new(Watching::new(ContractWatch::new(contract), builder)))
     }
 
     pub fn updates_list_changes<C: Contract>(_ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
         let builder: Box<dyn PageBuilderContractMultiplesFn<C>> = Box::new(builder);
-        Page::Refreshing(Box::new(Watching::new(Watch::list::<C>(), builder)))
+        Page::Refreshing(Box::new(Watching::new(ListWatch::<C>::default(), builder)))
     }
 
     pub fn profile(ctx: &mut Context, profile: &mut Instance<Profile>) -> Self {
@@ -67,14 +72,12 @@ impl Page {
         let is_me = my_name == ctx.air.me();
         match is_me {
             true => Page::Static(Box::new(PageType::editing(
-                is_me, profile.clone(), ctx.window.is_mobile,
+                is_me, profile.clone(), ctx.window.is_mobile, None,
             ))),
             false => Page::Refreshing(Box::new(Watching::new(
-                (Watch::contract(profile.clone()), Watch::list::<Block>(),
-                 Watch::list::<ChatRoom>(), Watch::list::<RoomNotificationState>()),
-                |ctx: &mut Context,
-                 _: &Theme,
-                 (profile, _, _, _): (Instance<Profile>, Vec<Instance<Block>>, Vec<Instance<ChatRoom>>, Vec<Instance<RoomNotificationState>>)| {
+                (ContractWatch::new(profile.clone()), ListWatch::<Block>::default(),
+                 ListWatch::<ChatRoom>::default(), ListWatch::<RoomNotificationState>::default()),
+                |ctx: &mut Context, _: &Theme, (profile, _, _, _): (Instance<Profile>, _, _, _)| {
                     PageType::profile_view(ctx, profile)
                 },
             ))),
@@ -83,7 +86,7 @@ impl Page {
 
     pub fn messaging(_ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
         Page::Refreshing(Box::new(Watching::new(
-            (Watch::contract(room.clone()), Watch::list::<Block>(), Watch::list::<Profile>()),
+            (ContractWatch::new(room.clone()), ListWatch::<Block>::default(), ListWatch::<Profile>::default()),
             |_ctx: &mut Context,
              _theme: &Theme,
              (room, _blocks, _profiles): (Instance<ChatRoom>, Vec<Instance<Block>>, Vec<Instance<Profile>>)| {
@@ -124,27 +127,24 @@ impl Page {
 
     pub fn group_info(room: Instance<ChatRoom>) -> Page {
         Page::Refreshing(Box::new(Watching::new(
-            (Watch::contract(room), Watch::list::<Profile>(), Watch::list::<Block>(), Watch::list::<RoomNotificationState>()),
-            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, Vec<Instance<Profile>>, Vec<Instance<Block>>, Vec<Instance<RoomNotificationState>>)| {
+            (ContractWatch::new(room), ListWatch::<Profile>::default(),
+             ListWatch::<Block>::default(), ListWatch::<RoomNotificationState>::default()),
+            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, _, _, _)| {
                 PageType::chat_info(ctx, room)
             },
         )))
     }
 
     pub fn chat_info(room: Instance<ChatRoom>) -> Page {
-        Page::Refreshing(Box::new(Watching::new((Watch::contract(room), Watch::list::<Profile>(), Watch::list::<Block>(), Watch::list::<RoomNotificationState>()),
-            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, Vec<Instance<Profile>>, Vec<Instance<Block>>, Vec<Instance<RoomNotificationState>>)| {
+        Page::Refreshing(Box::new(Watching::new(
+            (ContractWatch::new(room), ListWatch::<Profile>::default(),
+             ListWatch::<Block>::default(), ListWatch::<RoomNotificationState>::default()),
+            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, _, _, _)| {
                 PageType::chat_info(ctx, room)
-            })))
+            },
+        )))
     }
 }
-
-pub trait PageBuilder: Debug + dyn_clone::DynClone {
-    fn next(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>>;
-    fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType;
-}
-
-dyn_clone::clone_trait_object!(PageBuilder);
 
 #[derive(Clone, Debug)]
 pub enum PageType {
@@ -319,7 +319,13 @@ impl PageType {
 
     pub fn chat_info(ctx: &mut Context, room: Instance<ChatRoom>) -> PageType {
         if room.pending().is_group() {
-            let (items, header) = Self::group_info_fields(ctx, room);
+            let active = room.pending().members.contains(&ctx.air.me());
+            let items = Display::group_info(ctx, room.clone()).into_iter().map(Item::Display).collect();
+            let header = active.then(|| (Icons::Edit, Action::deferred_flow(
+                move |_: &mut Context, _: &Theme| {
+                    Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
+                },
+            )));
             return Self::Content {
                 title: "Group info".into(), items, header,
                 bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
@@ -335,12 +341,19 @@ impl PageType {
                 items: vec![
                     Item::Display(Display::avatar(profile.avatar.clone(), AvatarPurpose::None)),
                     Item::Display(Display::label(&format!("{} (You)", profile.username))),
-                    Item::Display(Display::actions(vec![Self::mute_action(ctx, room)], true)),
+                    Item::Display(Display::actions(vec![ActionItem::mute(ctx, room)], true)),
                 ],
                 header: None, bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
             };
         }
-        let (title, items, header) = Self::profile_view_fields(ctx, profile, Some(room));
+        let title = profile.pending().username.clone();
+        let items = Display::profile(ctx, profile.clone(), Some(room))
+            .into_iter().map(Item::Display).collect();
+        let header = Some((Icons::Edit, Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
+            Flow::new(vec![Page::Static(Box::new(Self::editing(
+                false, profile.clone(), ctx.window.is_mobile, None,
+            )))])
+        })));
         Self::Content {
             title, items, header, bumper: Bumper::None,
             offset: Offset::Start, flow_len: 1, next: None,
@@ -348,59 +361,20 @@ impl PageType {
     }
 
     pub fn group_info(ctx: &mut Context, room: Instance<ChatRoom>) -> PageType {
-        let (items, header) = Self::group_info_fields(ctx, room);
+        let active = {
+            let data = room.pending();
+            data.is_group() && data.members.contains(&ctx.air.me())
+        };
+        let items = Display::group_info(ctx, room.clone()).into_iter().map(Item::Display).collect();
+        let header = active.then(|| (Icons::Edit, Action::deferred_flow(
+            move |_: &mut Context, _: &Theme| {
+                Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
+            },
+        )));
         Self::Content {
             title: "Group info".into(), items, header,
             bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
         }
-    }
-
-    fn mute_action(ctx: &mut Context, room: Instance<ChatRoom>) -> ActionItem {
-        let muted = RoomNotificationState::open(ctx, room.id()).pending().is_muted();
-        let action = Action::mute(ctx, &room, !muted);
-        if muted {ActionItem::new(action, "Unmute", Icons::Unmute)}
-        else {ActionItem::new(action, "Mute", Icons::Mute)}
-    }
-
-    fn group_info_fields(ctx: &mut Context, room: Instance<ChatRoom>) -> (Vec<Item>, Option<(Icons, Action)>) {
-        let data = room.pending().clone();
-        let details = data.group_details();
-        let me = ctx.air.me();
-        let active = data.is_group() && data.members.contains(&me);
-        let items = data.members.iter().map(|name| {
-            let mut profile = Profile::from_name(ctx, *name);
-            let data = profile.pending().clone();
-            let title = if *name == me {format!("{} (You)", data.username)} else {data.username.clone()};
-            let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
-            ListItem::avatar(data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)))
-        }).collect();
-        let mut display = vec![
-            Display::avatar(details.photo.clone(), AvatarPurpose::None),
-        ];
-        if active {
-            display.push(Display::actions(vec![Self::mute_action(ctx, room.clone())], true));
-            let add_room = room.clone();
-            let leave_room = room.clone();
-            display.push(Display::data_list("Group members", Some(&format!("This group has {} members.", data.members.len())), items, Some(vec![
-                ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                    let form = Form::add_members(ctx, theme, add_room.clone());
-                    (Flow::from_form(form).build(ctx, theme))(ctx, theme);
-                }), "Add Members", Icons::Add),
-            ])));
-            display.push(Display::cta("Leave group", None, "Remove yourself from this group.", vec![
-                ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                    (Flow::new(vec![Page::Static(Box::new(Self::leave(leave_room.clone())))])
-                        .build(ctx, theme))(ctx, theme);
-                }), "Leave Group", Icons::Block),
-            ]));
-        } else {
-            display.push(Display::instructions("You are no longer a member of this group."));
-            display.push(Display::data_list("Members", None, items, None));
-        }
-        let edit = active.then(|| (Icons::Edit, Action::deferred_flow(move |_: &mut Context, _: &Theme| {
-            Flow::new(vec![Page::Static(Box::new(Self::edit_group(room.clone())))])
-        })));
-        (display.into_iter().map(Item::Display).collect(), edit)
     }
 
     pub fn edit_group(mut room: Instance<ChatRoom>) -> PageType {
@@ -408,7 +382,9 @@ impl PageType {
         let photo = original.photo.clone();
         let name = original.name.clone();
         let save = Box::new(move |ctx: &mut Context, values: &FormValues| {
-            if !room.pending().members.contains(&ctx.air.me()) {return FormComplete::Error("You are no longer a member of this group.".into());}
+            if !room.pending().members.contains(&ctx.air.me()) {
+                return FormComplete::Error("You are no longer a member of this group.".into());
+            }
             if let Some(photo) = values.avatar("photo") && *photo != original.photo {
                 room.send(ChatRoomAction::SetGroupPhoto(photo.clone()));
             }
@@ -417,121 +393,65 @@ impl PageType {
             }
             FormComplete::Action(Action::custom(|ctx: &mut Context, _: &Theme| ctx.emit(NavigationEvent::Pop)))
         }) as Box<dyn FormSubmit>;
-        Self::Edit { title: "Edit group".into(), header: None, items: vec![
-            FormItem::avatar_with_preset("Group photo", photo, Action::PickPhoto,
-                |_: &mut Context, _: String| FormValidState::Valid).named("photo"),
-            FormItem::text_with_preset("Group name", &name, None, |_: &mut Context, name: String| {
-                if name.trim().is_empty() {FormValidState::InvalidWithData("Enter a group name.".into())}
-                else if name.trim().chars().count() > 80 {FormValidState::InvalidWithData("Use 80 characters or fewer.".into())}
-                else {FormValidState::Valid}
-            }).named("name"),
-        ], display: vec![], on_save: save, flow_len: 1 }
+        Self::Edit {
+            title: "Edit group".into(), header: None,
+            items: vec![
+                FormItem::avatar_with_preset("Group photo", photo, Action::PickPhoto,
+                    |_: &mut Context, _: String| FormValidState::Valid).named("photo"),
+                FormItem::text_with_preset("Group name", &name, None, |_: &mut Context, name: String| {
+                    if name.trim().is_empty() {
+                        FormValidState::InvalidWithData("Enter a group name.".into())
+                    } else if name.trim().chars().count() > 80 {
+                        FormValidState::InvalidWithData("Use 80 characters or fewer.".into())
+                    } else {FormValidState::Valid}
+                }).named("name"),
+            ],
+            display: vec![], on_save: save, flow_len: 1,
+        }
     }
 
     pub fn leave(mut room: Instance<ChatRoom>) -> PageType {
         let details = room.pending().group_details();
-        Self::Content { title: "Leave group".into(), items: vec![
-            Item::Display(Display::avatar(details.photo, AvatarPurpose::Custom { icon: Icons::Leave, style: AvatarIconStyle::Danger })),
-            Item::Display(Display::confirmation_message(&format!("Leave {}?", details.name))),
-        ], header: None, bumper: Bumper::double("Leave", Action::custom(move |ctx: &mut Context, _: &Theme| {
-            room.send(ChatRoomAction::LeaveGroup);
-            room.notify(false);
-            ctx.emit(NavigationEvent::Root(None));
-        }), "Cancel", Action::None), offset: Offset::Center, flow_len: 1, next: None }
-    }
-
-    pub fn editing(is_me: bool, profile: Instance<Profile>, is_mobile: bool) -> PageType {
-        let (items, display, on_save) = Self::editing_fields(is_me, profile, is_mobile, None);
-        Self::Edit {
-            title: if is_me { "My profile" } else { "Edit profile" }.into(),
-            header: None, items, display, on_save, flow_len: 1,
+        Self::Content {
+            title: "Leave group".into(),
+            items: vec![
+                Item::Display(Display::avatar(details.photo, AvatarPurpose::Custom {
+                    icon: Icons::Leave, style: AvatarIconStyle::Danger,
+                })),
+                Item::Display(Display::confirmation_message(&format!("Leave {}?", details.name))),
+            ],
+            header: None,
+            bumper: Bumper::double("Leave", Action::custom(move |ctx: &mut Context, _: &Theme| {
+                room.send(ChatRoomAction::LeaveGroup);
+                room.notify(false);
+                ctx.emit(NavigationEvent::Root(None));
+            }), "Cancel", Action::None),
+            offset: Offset::Center, flow_len: 1, next: None,
         }
     }
 
     pub fn profile_view(ctx: &mut Context, profile: Instance<Profile>) -> PageType {
-        let room = profile.pending().name.and_then(|name| ChatRoom::find_direct(ctx, name));
-        let (title, items, header) = Self::profile_view_fields(ctx, profile, room);
+        let name = profile.pending().name.unwrap();
+        let title = profile.pending().username.clone();
+        let is_me = name == ctx.air.me();
+        let room = ChatRoom::find_direct(ctx, name);
+        let items = Display::profile(ctx, profile.clone(), room)
+            .into_iter().map(Item::Display).collect();
+        let header = Some((Icons::Edit, Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
+            Flow::new(vec![Page::Static(Box::new(Self::editing(
+                is_me, profile.clone(), ctx.window.is_mobile, None,
+            )))])
+        })));
         Self::Content {
             title, items, header, bumper: Bumper::None,
             offset: Offset::Start, flow_len: 1, next: None,
         }
     }
 
-    fn profile_view_fields(ctx: &mut Context, profile: Instance<Profile>, room: Option<Instance<ChatRoom>>) -> (String, Vec<Item>, Option<(Icons, Action)>) {
-        let p = profile.clone();
-        let profile = profile.pending().clone();
-        let profile_name = profile.name.unwrap();
-        let my_name = ctx.air.me();
-        let is_me = profile_name == my_name;
-        let about_me = if profile.notes.is_empty() { "No bio yet." } else { &profile.notes };
-
-        let is_blocked = !is_me && Block::did_i_block(ctx, profile.name.unwrap());
-        let blocked_by_them = !is_me && Block::am_i_blocked(ctx, profile_name);
-
-        let block_action = match is_blocked {
-            true => ActionItem::new(crate::Action::unblock(p.clone()), "Unblock", Icons::Unblock),
-            false => ActionItem::new(crate::Action::block(p.clone()), "Block", Icons::Block),
-        };
-
-        let mut display = Vec::new();
-        let blocked_message = match (is_blocked, blocked_by_them) {
-            (true, true) => Some("This user blocked you."),
-            (true, false) => Some("You blocked this user."),
-            (false, true) => Some("This user blocked you."),
-            (false, false) => None,
-        };
-
-        let mut actions = vec![
-            ActionItem::new(Action::message(profile_name), "Message", Icons::Messages),
-            block_action,
-        ];
-
-        if let Some(room) = room {actions.push(Self::mute_action(ctx, room));}
-
-        if let Some(message) = blocked_message {display.push(Display::alert(message));}
-        display.extend([
-            Display::avatar(profile.avatar.clone(), AvatarPurpose::None),
-            Display::actions(actions, true),
-            Display::cta("About me", None, about_me, vec![]),
-            Display::cta(
-                "AirName", None, &profile_name.to_string(),
-                vec![
-                    ActionItem::new_with_active(
-                        Action::copy(&profile_name.to_string()), "Copy", "Copied", Icons::Copy,
-                    ),
-                    ActionItem::new(
-                        Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
-                            "Share AirName", &profile_name.to_string(),
-                            "Scan to share AirName.", ctx.window.is_mobile,
-                        )))])), "Display QR Code", Icons::QrCode,
-                    ),
-                ],
-            ),
-        ]);
-        (
-            profile.username, display.into_iter().map(Item::Display).collect(),
-            Some((
-                Icons::Edit,
-                Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
-                    Flow::new(vec![Page::Static(Box::new(PageType::editing(
-                        is_me, p.clone(), ctx.window.is_mobile,
-                    )))])
-                }),
-            )),
-        )
-    }
-
-    pub(crate) fn editing_with_contact_actions(is_me: bool, profile: Instance<Profile>,
-        is_mobile: bool, contact_actions: Option<Vec<ActionItem>>) -> PageType {
-        let (items, display, on_save) = Self::editing_fields(is_me, profile, is_mobile, contact_actions);
-        Self::Edit {
-            title: if is_me { "My profile" } else { "Edit profile" }.into(),
-            header: None, items, display, on_save, flow_len: 1,
-        }
-    }
-
-    fn editing_fields(is_me: bool, profile: Instance<Profile>, is_mobile: bool,
-        contact_actions: Option<Vec<ActionItem>>) -> (Vec<FormItem>, Vec<Display>, Box<dyn FormSubmit>) {
+    pub fn editing(
+        is_me: bool, profile: Instance<Profile>, is_mobile: bool,
+        contact_actions: Option<Vec<ActionItem>>,
+    ) -> PageType {
         let mut p = profile.clone();
         let closure = Box::new(move |_ctx: &mut Context, objects: &FormValues| {
             if let Some(result) = objects.text("username") {
@@ -567,8 +487,10 @@ impl PageType {
             vec![]
         };
 
-        (
-            vec![
+        Self::Edit {
+            title: if is_me {"My profile"} else {"Edit profile"}.into(),
+            header: None,
+            items: vec![
                 FormItem::avatar_with_preset(
                     "Avatar", p.avatar.clone(), Action::PickPhoto,
                     |_ctx: &mut Context, _: String| FormValidState::Valid,
@@ -587,12 +509,9 @@ impl PageType {
                     "About me", &p.notes, None,
                     |_ctx: &mut Context, _: String| FormValidState::Valid,
                 ).named("about"),
-            ], display, closure,
-        )
-    }
-
-    pub(crate) fn always_valid() -> Box<dyn ValidationFn> {
-        Box::new(|_: &mut Context, _: Vec<&mut Box<dyn prism::drawable::Drawable>>| true)
+            ],
+            display, on_save: closure, flow_len: 1,
+        }
     }
 
     pub fn nav_fn(&mut self) -> Option<&mut Option<NavFn>> {
@@ -652,9 +571,10 @@ impl PageType {
                 ))
             }
             PageType::Form { id, title, item, next, flow_len: _, validate, on_submit } => {
+                let content = Content::new(Offset::Start,
+                    item.build(theme, ctx.window.is_mobile).unwrap_or_default(), validate.clone());
                 Box::new(FormPage::new(
-                    theme, ctx.window.is_mobile, id.clone(), title.to_string(), item.clone(),
-                    next.clone(), validate.clone(), on_submit.clone(),
+                    theme, id.clone(), title.to_string(), content, next.clone(), on_submit.clone(),
                 ))
             }
             PageType::Edit { title, header, items, display, on_save, flow_len: _ } => {

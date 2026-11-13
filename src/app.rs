@@ -1,6 +1,6 @@
-use crate::*;
-use crate::design_system::AvatarValue;
 use ptsd::navigation::AppPage;
+use crate::design_system::AvatarValue;
+use crate::*;
 
 pub enum RootIcon {Icon(Icons), Avatar(AvatarValue)}
 
@@ -59,8 +59,7 @@ pub trait App: Sized + 'static {
 
     fn name() -> String;
     fn new(ctx: &mut Context) -> Self;
-    fn roots(&self, ctx: &mut Context, theme: &Theme,
-        invitations: Option<&Invitations<Self::Invitation>>) -> Vec<RootInfo>;
+    fn roots(&self, ctx: &mut Context, theme: &Theme, invitations: Option<&Invitations<Self::Invitation>>) -> Vec<RootInfo>;
     fn theme(&self) -> ChkTheme {ChkTheme::default()}
     fn assets(&self) -> Assets {Assets::new(Vec::new())}
     fn keyboard(&self, _ctx: &Context, _theme: &Theme) -> Option<Box<dyn prism::drawable::Drawable>> {None}
@@ -81,7 +80,7 @@ pub trait App: Sized + 'static {
         let interface = theme.interface(ctx, roots, keyboard);
         let interface = FormHost::new(interface, theme.clone());
         match invitations {
-            Some(invitations) => Box::new(invitations.wrap(interface, theme)),
+            Some(invitations) => Box::new(InvitationLinks::new(interface, theme, invitations)),
             None => Box::new(interface),
         }
     }

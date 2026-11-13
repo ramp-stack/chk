@@ -1,4 +1,5 @@
 use super::*;
+use crate::{Form, PageType};
 
 #[derive(Debug, Clone)]
 pub enum Display {
@@ -115,6 +116,94 @@ impl Display {
         Display::Messages { messages: theme.message_group(ctx, messages, false) }
     }
 
+    pub fn group_info(ctx: &mut Context, room: Instance<ChatRoom>) -> Vec<Self> {
+        let data = room.pending().clone();
+        let details = data.group_details();
+        let me = ctx.air.me();
+        let active = data.is_group() && data.members.contains(&me);
+        let items = data.members.iter().map(|name| {
+            let mut profile = Profile::from_name(ctx, *name);
+            let data = profile.pending().clone();
+            let title = if *name == me {format!("{} (You)", data.username)}
+                else {data.username.clone()};
+            let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
+            ListItem::avatar(data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)))
+        }).collect();
+        let mut display = vec![Self::Avatar {
+            content: details.photo.clone(), purpose: AvatarPurpose::None,
+        }];
+        if active {
+            display.push(Self::Actions {actions: vec![ActionItem::mute(ctx, room.clone())], as_icons: true});
+            let add_room = room.clone();
+            let leave_room = room;
+            display.push(Self::DataList {
+                label: "Group members".into(),
+                instructions: Some(format!("This group has {} members.", data.members.len())),
+                items,
+                actions: Some(vec![ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                    let form = Form::add_members(ctx, theme, add_room.clone());
+                    (Flow::from_form(form).build(ctx, theme))(ctx, theme);
+                }), "Add Members", Icons::Add)]),
+            });
+            display.push(Self::Cta {
+                label: "Leave group".into(), data: None,
+                instructions: "Remove yourself from this group.".into(),
+                actions: vec![ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                    (Flow::new(vec![Page::Static(Box::new(PageType::leave(leave_room.clone())))])
+                        .build(ctx, theme))(ctx, theme);
+                }), "Leave Group", Icons::Block)],
+            });
+        } else {
+            display.push(Self::Text {
+                text: "You are no longer a member of this group.".into(),
+                size: TextSize::Md, style: TextStyle::Secondary, align: Align::Center,
+            });
+            display.push(Self::DataList {label: "Members".into(), instructions: None, items, actions: None});
+        }
+        display
+    }
+
+    pub fn profile(ctx: &mut Context, profile: Instance<Profile>, room: Option<Instance<ChatRoom>>) -> Vec<Self> {
+        let instance = profile.clone();
+        let profile = profile.pending().clone();
+        let name = profile.name.unwrap();
+        let is_me = name == ctx.air.me();
+        let about = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
+        let blocked = !is_me && Block::did_i_block(ctx, name);
+        let blocked_by_them = !is_me && Block::am_i_blocked(ctx, name);
+        let block = if blocked {
+            ActionItem::new(Action::unblock(instance), "Unblock", Icons::Unblock)
+        } else {
+            ActionItem::new(Action::block(instance), "Block", Icons::Block)
+        };
+        let mut actions = vec![ActionItem::new(Action::message(name), "Message", Icons::Messages), block];
+        if let Some(room) = room {actions.push(ActionItem::mute(ctx, room));}
+        let mut display = Vec::new();
+        let notice = match (blocked, blocked_by_them) {
+            (_, true) => Some("This user blocked you."),
+            (true, false) => Some("You blocked this user."),
+            (false, false) => None,
+        };
+        if let Some(text) = notice {display.push(Self::Alert {text: text.into()});}
+        display.extend([
+            Self::Avatar {content: profile.avatar.clone(), purpose: AvatarPurpose::None},
+            Self::Actions {actions, as_icons: true},
+            Self::Cta {label: "About me".into(), data: None, instructions: about.into(), actions: vec![]},
+            Self::Cta {
+                label: "AirName".into(), data: None, instructions: name.to_string(),
+                actions: vec![
+                    ActionItem::new_with_active(Action::copy(&name.to_string()), "Copy", "Copied", Icons::Copy),
+                    ActionItem::new(Action::flow(Flow::new(vec![Page::Static(Box::new(
+                        PageType::display_qr_code(
+                            "Share AirName", &name.to_string(), "Scan to share AirName.", ctx.window.is_mobile,
+                        ),
+                    ))])), "Display QR Code", Icons::QrCode),
+                ],
+            },
+        ]);
+        display
+    }
+
     pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
             Self::Alert {text} => vec![theme.alert_view(text)],
@@ -139,7 +228,9 @@ impl Display {
                 let flair = match purpose {AvatarPurpose::None => None, AvatarPurpose::Custom {icon, style} => Some((*icon, *style))};
                 vec![theme.avatar_display(content.clone(), flair)]
             }
-            Self::Actions {actions, as_icons} if *as_icons => vec![theme.icon_actions(actions.iter().map(|ActionItem(action, _, _, icon)| (*icon, action.get())).collect())],
+            Self::Actions {actions, as_icons} if *as_icons => {
+                vec![theme.icon_actions(actions.iter().map(ActionItem::icon_action).collect())]
+            }
             Self::Actions {actions, ..} => vec![theme.quick_actions(Offset::Start,
                 actions.iter().map(|action| {let mut item = action.presentation(); item.active = None; item}).collect())],
             Self::Messages {messages} => vec![messages.clone()],

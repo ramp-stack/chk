@@ -1,28 +1,89 @@
-use crate::ContentSurface;
 use prism::events::{DynEvent, OnEvent, on_event, OnChange, on_change, WindowEvent, ListenFuture, ListenCallback};
 use prism::drawable::{Component, Drawable};
 use prism::drawable::{LayoutTree, Instruction, Rect};
-use crate::design_system::{Context, Callback};
 use ptsd::layout::{Stack, Offset, Column};
 use ptsd::display::Bin;
-use crate::design_system::PageView;
 use ptsd::navigation::AppPage;
+use ptsd::navigation::{NavigationEvent, NavigationChanged};
+use prism::hardware::Data;
+use prism::air::Instance;
+
+use std::{cell::{Cell, RefCell}, rc::{Rc, Weak}, sync::Arc, collections::HashMap,
+    future::{Future, poll_fn}, pin::Pin, task::{Poll, Waker}};
+
+use crate::ContentSurface;
+use crate::design_system::{Context, Callback};
+use crate::design_system::PageView;
 use crate::design_system::{Theme, Icons};
 use crate::design_system::{MessageGroups, SendEvent, TextInputEvent};
-use ptsd::navigation::{NavigationEvent, NavigationChanged};
 use crate::messages::{ChatRoom, Message, ChatRoomAction, MessageContent, RoomReadState};
 use crate::profiles::Profile;
 use crate::blocking::Block;
 use crate::{Page, PageType, Bumper, ActionItem, ValueItem, PageBuilder};
-use prism::hardware::Data;
-use std::{cell::{Cell, RefCell}, rc::{Rc, Weak}, sync::Arc, collections::HashMap,
-    future::{Future, poll_fn}, pin::Pin, task::{Poll, Waker}};
 use crate::flow::Flow;
 use crate::items::{Action, Display};
-
-
-use prism::air::Instance;
 use crate::typing_ui::{TypingPanel, TypingPublisher};
+use crate::design_system::{Header, Footer, Content};
+
+type SaveRequest = Pin<Box<dyn Future<Output = Result<Data, String>>>>;
+type SaveOperation = crate::pending::Pending<Result<Data, String>>;
+
+impl Page {
+    pub fn message_details(room: Instance<ChatRoom>, message: Message, pops: usize) -> Self {
+        Page::Refreshing(Box::new(MessageSave {
+            room, message, pops,
+            state: Rc::new(RefCell::new(MessageSaveState {
+                request: None, result: None, busy: false, wakers: Vec::new(),
+            })),
+            profile: None,
+        }))
+    }
+}
+
+impl PageType {
+    pub fn message_details(
+        ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, message: Message,
+        pops: usize, save: Option<ActionItem>,
+    ) -> Self {
+        let is_mine = message.author == ctx.air.me();
+        let author = message.author;
+        let sender_name = if is_mine {"You".to_string()}
+            else {Profile::from_name(ctx, author).pending().username.clone()};
+        let bubble = message.to_view(ctx, |_: &mut Context, _: &Theme| {});
+
+        let m = message.clone();
+        let delete = ActionItem::new(Action::custom(move |ctx: &mut Context, _: &Theme| {
+            room.send(ChatRoomAction::DeleteMessage(m.clone()));
+            (0..pops).for_each(|_| ctx.emit(NavigationEvent::Pop));
+        }), "Delete", Icons::Delete);
+        let timestamp = ptsd::utils::Timestamp::from_u64(message.timestamp);
+        let mut actions = vec![delete];
+        if let Some(copy) = ActionItem::copy_message(ctx, &message.body) {actions.push(copy);}
+        if let Some(save) = save {actions.push(save);}
+        actions.push(ActionItem::new(Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
+            let mut profile = Profile::from_name(ctx, author);
+            Flow::new(vec![Page::profile(ctx, &mut profile)])
+        }), "View profile", Icons::Profile));
+
+        let title = match is_mine {
+            true => "Sent message",
+            false => "Received message",
+        };
+
+        Self::Content {
+            title: title.into(),
+            items: vec![
+                Display::messages(ctx, theme, vec![bubble]),
+                Display::table("Info", vec![
+                    ValueItem::new("Sender", &sender_name),
+                    ValueItem::new("Time sent", &timestamp.time()),
+                    ValueItem::new("Date sent", &timestamp.date()),
+                ], Some(actions)),
+            ].into_iter().map(crate::Item::Display).collect(),
+            header: None, bumper: Bumper::None, offset: Offset::Start, flow_len: 1, next: None,
+        }
+    }
+}
 
 /// Drawing the whole page gates history work; content layout can draw children
 /// while looking for focused inputs, before a real page frame has been built.
@@ -87,17 +148,17 @@ struct MessageLoading {
 }
 
 impl MessageLoading {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {drawn: Cell::new(false), waker: RefCell::new(None), limit: 0, more: true, refresh: true}
     }
 
-    fn drawn(&self) {
+    pub fn drawn(&self) {
         self.drawn.set(true);
         let waker = self.waker.borrow_mut().take();
         if let Some(waker) = waker {waker.wake();}
     }
 
-    async fn next(&mut self) {
+    pub async fn next(&mut self) {
         poll_fn(|cx| {
             if self.drawn.replace(false) {Poll::Ready(())}
             else {
@@ -241,13 +302,12 @@ impl OnEvent<SendEvent> for MessagesPageInner {
     }
 }
 
-
 impl MessagesPageInner {
-    fn history(&self) -> Option<&MessageHistory> {
+    pub fn history(&self) -> Option<&MessageHistory> {
         self.page.content().children().first()?.downcast_ref::<MessageHistory>()
     }
 
-    fn load_messages(&mut self, ctx: &mut Context) {
+    pub fn load_messages(&mut self, ctx: &mut Context) {
         if !self.loading.refresh && (!self.loading.more || !self.history().is_some_and(|h| h.near_top.get())) {return;}
         // Show the latest message first; then fill the viewport and fetch older
         // history in small batches only as the reader approaches its top.
@@ -335,12 +395,12 @@ impl MessagesPageInner {
 
         let mut children: Vec<Box<dyn Drawable>> = vec![Box::new(MessageHistory::new())];
         if !is_blocked {children.push(Box::new(TypingPanel::new(ctx, theme, room.clone())));}
-        let header = crate::design_system::Header::messaging(title, display_profiles, avatar, flow_len, info);
+        let header = Header::messaging(title, display_profiles, avatar, flow_len, info);
         let footer = match notice {
-            Some(notice) => crate::design_system::Footer::alert(&notice),
-            None => crate::design_system::Footer::input("Message...", on_send, |_: &mut Context, value: &mut String| value.is_empty()),
+            Some(notice) => Footer::alert(&notice),
+            None => Footer::input("Message...", on_send, |_: &mut Context, value: &mut String| value.is_empty()),
         };
-        let page = theme.page(header, crate::design_system::Content::new(Offset::End, children, crate::PageType::always_valid()), Some(footer));
+        let page = theme.page(header, Content::new(Offset::End, children, Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true)), Some(footer));
 
         drop(room_data);
         Self {
@@ -377,11 +437,11 @@ struct MessageHistory {
 }
 
 impl MessageHistory {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {inner: Bin(Column::center(24.0), Vec::new()), near_top: Cell::new(false), height: Cell::new(0.0)}
     }
 
-    fn replace(&mut self, ctx: &mut Context, theme: &Theme, room: &Instance<ChatRoom>, messages: Vec<Message>, is_group: bool) {
+    pub fn replace(&mut self, ctx: &mut Context, theme: &Theme, room: &Instance<ChatRoom>, messages: Vec<Message>, is_group: bool) {
         let mut previous = std::mem::take(&mut self.inner.1).into_iter()
             .map(|group| (group.messages.iter().map(|m| m.id).collect::<Vec<_>>(), group))
             .collect::<HashMap<_, _>>();
@@ -439,21 +499,26 @@ struct MessageGroupView {
 }
 
 impl MessageGroupView {
-    fn adjacent(first: &Message, next: &Message) -> bool {
+    pub fn adjacent(first: &Message, next: &Message) -> bool {
         !matches!(first.body, MessageContent::System(_)) && !matches!(next.body, MessageContent::System(_))
             && first.author == next.author && first.timestamp.abs_diff(next.timestamp) / 1_000_000_000 <= 60
     }
 
-    fn new(ctx: &mut Context, theme: &Theme, room: &Instance<ChatRoom>, messages: Vec<Message>,
+    pub fn new(ctx: &mut Context, theme: &Theme, room: &Instance<ChatRoom>, messages: Vec<Message>,
         profile: crate::design_system::ProfileView, is_group: bool) -> Self {
         let rendered = messages.iter().map(|message| {
             let room = room.clone();
             let tapped = message.clone();
             message.to_view(ctx, move |ctx: &mut Context, theme: &Theme| {
+                let info_room = room.clone();
+                let info_message = tapped.clone();
+                let header = Some((Icons::Info, Action::deferred_flow(move |_: &mut Context, _: &Theme| {
+                    Flow::new(vec![Page::message_details(info_room.clone(), info_message.clone(), 2)])
+                })));
                 let page = match &tapped.body {
-                    MessageContent::Photo(photo) => Page::Static(Box::new(PageType::photo(photo.clone(), Some(MessageDetails::icon(room.clone(), tapped.clone()))))),
-                    MessageContent::Video(video) => Page::Static(Box::new(PageType::video(video.clone(), Some(MessageDetails::icon(room.clone(), tapped.clone()))))),
-                    _ => MessageDetails::new(room.clone(), tapped.clone()),
+                    MessageContent::Photo(photo) => Page::Static(Box::new(PageType::photo(photo.clone(), header))),
+                    MessageContent::Video(video) => Page::Static(Box::new(PageType::video(video.clone(), header))),
+                    _ => Page::message_details(room.clone(), tapped.clone(), 1),
                 };
                 (Flow::new(vec![page]).build(ctx, theme))(ctx, theme);
             })
@@ -463,161 +528,6 @@ impl MessageGroupView {
     }
 }
 
-pub struct MessageDetails;
-impl MessageDetails {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(room: Instance<ChatRoom>, message: Message) -> Page {
-        Page::Refreshing(Box::new(MessageSave {
-            room, message, pops: 1,
-            state: Rc::new(RefCell::new(MessageSaveState {request: None, result: None, busy: false, wakers: Vec::new()})),
-            profile: None,
-        }))
-    }
-
-    pub fn icon(room: Instance<ChatRoom>, message: Message) -> (Icons, Action) {
-        (Icons::Info, Action::deferred_flow(move |_: &mut Context, _: &Theme| {
-            Flow::new(vec![Self::view(room.clone(), message.clone(), 2)])
-        }))
-    }
-
-    pub fn view(room: Instance<ChatRoom>, message: Message, pops: usize) -> Page {
-        Page::Refreshing(Box::new(MessageSave {
-            room, message, pops,
-            state: Rc::new(RefCell::new(MessageSaveState {request: None, result: None, busy: false, wakers: Vec::new()})),
-            profile: None,
-        }))
-    }
-
-    pub fn page(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>, message: Message,
-        pops: usize, save: Option<ActionItem>) -> PageType {
-        let is_mine = message.author == ctx.air.me();
-        let author = message.author;
-        let sender_name = if is_mine {"You".to_string()}
-            else {Profile::from_name(ctx, author).pending().username.clone()};
-        let bubble = message.to_view(ctx, |_: &mut Context, _: &Theme| {});
-
-        let m = message.clone();
-        let delete = ActionItem::new(Action::custom(move |ctx: &mut Context, _: &Theme| {
-            room.send(ChatRoomAction::DeleteMessage(m.clone()));
-            (0..pops).for_each(|_| ctx.emit(NavigationEvent::Pop));
-        }), "Delete", Icons::Delete);
-        let timestamp = ptsd::utils::Timestamp::from_u64(message.timestamp);
-        let mut actions = vec![delete];
-        if let Some(copy) = Self::copy_action(ctx, &message.body) {actions.push(copy);}
-        if let Some(save) = save {actions.push(save);}
-        actions.push(ActionItem::new(Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
-            let mut profile = Profile::from_name(ctx, author);
-            Flow::new(vec![Page::profile(ctx, &mut profile)])
-        }), "View profile", Icons::Profile));
-
-        let title = match is_mine {
-            true => "Sent message",
-            false => "Received message",
-        };
-
-        PageType::display(title, vec![
-            Display::messages(ctx, theme, vec![bubble]),
-            Display::table("Info", vec![
-                ValueItem::new("Sender", &sender_name),
-                ValueItem::new("Time sent", &timestamp.time()),
-                ValueItem::new("Date sent", &timestamp.date()),
-            ], Some(actions)),
-        ], None, Bumper::None, Offset::Start)
-    }
-
-    fn save_action(content: &MessageContent, state: Rc<RefCell<MessageSaveState>>) -> Option<ActionItem> {
-        if matches!(content, MessageContent::Text(_) | MessageContent::System(_)) {return None;}
-        let content = content.clone();
-        let state = Rc::downgrade(&state);
-        Some(ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-            let Some(state) = state.upgrade() else {return;};
-            if state.borrow().busy {return;}
-            let request: SaveRequest = match &content {
-                MessageContent::Photo(photo) => Box::pin(Self::export(Arc::from(photo.jpeg()), "jpg")),
-                MessageContent::Sticker(sticker) => {
-                    let image = sticker.image();
-                    Box::pin(async move {Ok(Data::Image(image))})
-                }
-                MessageContent::Video(video) => {
-                    let bytes = crate::messages::VideoClip::find(ctx, video.clip);
-                    Box::pin(async move {
-                        let bytes = bytes.ok_or("This video is still downloading. Try again when it finishes.")?;
-                        Self::export(bytes, "mp4").await
-                    })
-                }
-                MessageContent::Gif(gif) => {
-                    let bytes = theme.gif_bytes(gif);
-                    Box::pin(async move {
-                        let bytes = bytes.await?;
-                        let extension = Self::image_extension(&bytes)
-                            .or_else(|| (bytes.get(4..8) == Some(b"ftyp")).then_some("mp4"))
-                            .ok_or("This GIF's format cannot be saved to Photos.")?;
-                        Self::export(bytes, extension).await
-                    })
-                }
-                _ => return,
-            };
-            let wakers = {
-                let mut state = state.borrow_mut();
-                state.busy = true;
-                state.request = Some((uuid::Uuid::new_v4(), crate::pending::Pending::new(request)));
-                state.take_wakers()
-            };
-            for waker in wakers {waker.wake();}
-        }), "Share", Icons::Send))
-    }
-
-    pub fn image_extension(bytes: &[u8]) -> Option<&'static str> {
-        if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {Some("gif")}
-        else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {Some("png")}
-        else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {Some("jpg")}
-        else {None}
-    }
-
-    async fn export(bytes: Arc<[u8]>, extension: &'static str) -> Result<Data, String> {
-        crate::design_system::Task::spawn(move || {
-            use std::io::Write;
-            // Keep the original encoding, including GIF animation and video audio.
-            // The system owns temporary-directory cleanup; the share sheet may
-            // still be reading the file after the detail page has been closed.
-            let path = std::env::temp_dir().join(format!("message-{}.{}", uuid::Uuid::new_v4(), extension));
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)
-                .map_err(|_| "Could not prepare this media for saving.".to_string())?;
-            file.write_all(&bytes).map_err(|_| "Could not prepare this media for saving.".to_string())?;
-            Ok(Data::File(path))
-        }).next().await.ok_or_else(|| "Could not prepare this media for saving.".to_string())?
-    }
-
-    pub fn copy_action(ctx: &mut Context, content: &MessageContent) -> Option<ActionItem> {
-        let action = match content {
-            MessageContent::Text(text) => Action::copy(text),
-            MessageContent::Gif(gif) => Action::copy(&gif.url),
-            MessageContent::Video(_) => return None,
-            MessageContent::Photo(photo) => {
-                let photo = photo.clone();
-                Action::custom(move |ctx: &mut Context, _: &Theme| {
-                    ctx.hardware.set_clipboard(&prism::hardware::Data::Image(photo.image()));
-                })
-            }
-            MessageContent::Sticker(sticker) => {
-                let sticker = sticker.clone();
-                Action::custom(move |ctx: &mut Context, _: &Theme| {
-                    sticker.copy(ctx);
-                })
-            }
-            MessageContent::System(notice) => {
-                let profile = Profile::from_name(ctx, notice.member());
-                let text = notice.text_for(ctx.air.me(), &profile.pending().username);
-                Action::copy(&text)
-            }
-        };
-        Some(ActionItem::new_with_active(action, "Copy", "copied", Icons::Copy))
-    }
-}
-
-type SaveRequest = Pin<Box<dyn Future<Output = Result<Data, String>>>>;
-type SaveOperation = crate::pending::Pending<Result<Data, String>>;
-
 struct MessageSaveState {
     request: Option<(uuid::Uuid, SaveOperation)>,
     result: Option<Result<Data, String>>,
@@ -626,7 +536,7 @@ struct MessageSaveState {
 }
 
 impl MessageSaveState {
-    fn take_wakers(&mut self) -> Vec<Waker> {
+    pub fn take_wakers(&mut self) -> Vec<Waker> {
         let mut wakers = Vec::new();
         self.wakers.retain(|slot| {
             let Some(slot) = slot.upgrade() else {return false;};
@@ -644,6 +554,29 @@ struct MessageSave {
     pops: usize,
     state: Rc<RefCell<MessageSaveState>>,
     profile: Option<Instance<Profile>>,
+}
+
+impl MessageSave {
+    pub fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+        if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {Some("gif")}
+        else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {Some("png")}
+        else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {Some("jpg")}
+        else {None}
+    }
+
+    pub async fn export(bytes: Arc<[u8]>, extension: &'static str) -> Result<Data, String> {
+        crate::design_system::Task::spawn(move || {
+            use std::io::Write;
+            // Keep the original encoding, including GIF animation and video audio.
+            // The system owns temporary-directory cleanup; the share sheet may
+            // still be reading the file after the detail page has been closed.
+            let path = std::env::temp_dir().join(format!("message-{}.{}", uuid::Uuid::new_v4(), extension));
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)
+                .map_err(|_| "Could not prepare this media for saving.".to_string())?;
+            file.write_all(&bytes).map_err(|_| "Could not prepare this media for saving.".to_string())?;
+            Ok(Data::File(path))
+        }).next().await.ok_or_else(|| "Could not prepare this media for saving.".to_string())?
+    }
 }
 
 impl std::fmt::Debug for MessageSave {
@@ -707,8 +640,49 @@ impl PageBuilder for MessageSave {
             Some(Err(error)) => Some(error),
             None => None,
         };
-        let save = MessageDetails::save_action(&self.message.body, self.state.clone());
-        let mut page = MessageDetails::page(ctx, theme, self.room.clone(), self.message.clone(), self.pops, save);
+        let save = if matches!(self.message.body, MessageContent::Text(_) | MessageContent::System(_)) {
+            None
+        } else {
+            let content = self.message.body.clone();
+            let state = Rc::downgrade(&self.state);
+            Some(ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                let Some(state) = state.upgrade() else {return;};
+                if state.borrow().busy {return;}
+                let request: SaveRequest = match &content {
+                    MessageContent::Photo(photo) => Box::pin(Self::export(Arc::from(photo.jpeg()), "jpg")),
+                    MessageContent::Sticker(sticker) => {
+                        let image = sticker.image();
+                        Box::pin(async move {Ok(Data::Image(image))})
+                    }
+                    MessageContent::Video(video) => {
+                        let bytes = crate::messages::VideoClip::find(ctx, video.clip);
+                        Box::pin(async move {
+                            let bytes = bytes.ok_or("This video is still downloading. Try again when it finishes.")?;
+                            Self::export(bytes, "mp4").await
+                        })
+                    }
+                    MessageContent::Gif(gif) => {
+                        let bytes = theme.gif_bytes(gif);
+                        Box::pin(async move {
+                            let bytes = bytes.await?;
+                            let extension = Self::image_extension(&bytes)
+                                .or_else(|| (bytes.get(4..8) == Some(b"ftyp")).then_some("mp4"))
+                                .ok_or("This GIF's format cannot be saved to Photos.")?;
+                            Self::export(bytes, extension).await
+                        })
+                    }
+                    _ => return,
+                };
+                let wakers = {
+                    let mut state = state.borrow_mut();
+                    state.busy = true;
+                    state.request = Some((uuid::Uuid::new_v4(), crate::pending::Pending::new(request)));
+                    state.take_wakers()
+                };
+                for waker in wakers {waker.wake();}
+            }), "Share", Icons::Send))
+        };
+        let mut page = PageType::message_details(ctx, theme, self.room.clone(), self.message.clone(), self.pops, save);
         if let (Some(error), PageType::Content {items, ..}) = (error, &mut page) {
             items.push(crate::Item::Display(Display::instructions(&error)));
         }

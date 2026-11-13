@@ -1,16 +1,10 @@
-use crate::ContentSurface;
-use crate::design_system::{Callback, Context};
-use ptsd::navigation::{NavigationEvent, NavigationChanged, Flow as NavigationFlow, FlowContainer, AppPage};
-use crate::design_system::{Content, FormEvent};
-use crate::design_system::Theme;
 use prism::drawable::Component;
-use ptsd::layout::Stack;
 use prism::events::{on_event, OnEvent, DynEvent, on_change, OnChange};
-
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::fmt::Debug;
-
+use ptsd::layout::Stack;
+use ptsd::navigation::{NavigationEvent, NavigationChanged, Flow as NavigationFlow, FlowContainer, AppPage};
+use std::{rc::Rc, cell::RefCell, fmt::Debug};
+use crate::ContentSurface;
+use crate::design_system::{Callback, Context, FormEvent, Theme};
 use crate::form::{Form, FormValues};
 use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
 use crate::closure::{NavFn};
@@ -18,10 +12,13 @@ use crate::{Listener, PageChanged, Action, Bumper, Offset, Display, AvatarConten
 
 #[derive(Debug, Clone, Default)]
 pub struct Flow(pub Vec<Page>);
-impl Flow{
+impl Flow {
     pub fn new(builders: Vec<Page>) -> Self {Flow(builders)}
 
-    pub fn action_target(action: (&str, Action), past_action: &str, target_kind: &str, target: &str, avatar: AvatarContent, purpose: AvatarPurpose) -> Self {
+    pub fn action_target(
+        action: (&str, Action), past_action: &str, target_kind: &str,
+        target: &str, avatar: AvatarContent, purpose: AvatarPurpose,
+    ) -> Self {
         let (action_str, action) = action;
         let action_caps = action_str.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]).unwrap_or_default();
         let target_caps = target_kind.chars().next().map(|c| c.to_uppercase().collect::<String>() + &target_kind[c.len_utf8()..]).unwrap_or_default();
@@ -124,46 +121,23 @@ pub struct FlowWrapper(Stack, NavigationFlow, #[skip] bool);
 impl FlowWrapper {
     pub fn new(flow: NavigationFlow) -> Self {Self(Stack::default(), flow, true)}
 
-    fn content(page: &dyn AppPage) -> Option<&Content> {
-        if let Some(listener) = page.downcast_ref::<Listener>() {
-            Self::content(listener.page.as_ref())
-        } else if let Some(page) = page.downcast_ref::<FormPage>() {Some(page.1.content())}
-        else if let Some(page) = page.downcast_ref::<EditPage>() {Some(page.1.content())}
-        else if let Some(page) = page.downcast_ref::<ReviewPage>() {Some(page.1.content())}
-        else {page.downcast_ref::<SuccessPage>().map(|page| page.1.content())}
-    }
-
-    fn refresh(&mut self, ctx: &mut Context) {
+    pub fn refresh(&mut self, ctx: &mut Context) {
         let mut inputs = FormValues::default();
-        for page in self.1.stored.iter().take(self.1.index) {
-            inputs.extend(Self::inputs(page.as_ref()));
+        for page in self.1.stored.iter().take(self.1.index).chain(self.1.current.iter()) {
+            let mut page = page.as_ref();
+            while let Some(listener) = page.downcast_ref::<Listener>() {page = listener.page.as_ref();}
+            if let Some(page) = page.downcast_ref::<FormPage>() {inputs.extend(page.values());}
+            else if let Some(page) = page.downcast_ref::<EditPage>() {inputs.extend(page.values());}
         }
         if let Some(current) = &mut self.1.current {
-            inputs.extend(Self::inputs(current.as_ref()));
-            Self::apply_inputs(current.as_mut(), ctx, inputs);
-        }
-    }
-
-    fn inputs(page: &dyn AppPage) -> FormValues {
-        if let Some(listener) = page.downcast_ref::<Listener>() {
-            return Self::inputs(listener.page.as_ref());
-        }
-        if let Some(page) = page.downcast_ref::<FormPage>() {page.values()}
-        else if let Some(page) = page.downcast_ref::<EditPage>() {page.values()}
-        else {FormValues::default()}
-    }
-
-    fn apply_inputs(page: &mut dyn AppPage, ctx: &mut Context, inputs: FormValues) {
-        if let Some(listener) = page.downcast_mut::<Listener>() {
-            Self::apply_inputs(listener.page.as_mut(), ctx, inputs);
-        } else if let Some(page) = page.downcast_mut::<ReviewPage>() {
-            page.on_change(inputs);
-        } else if let Some(page) = page.downcast_mut::<SuccessPage>() {
-            page.on_change(ctx, inputs);
-        } else if let Some(page) = page.downcast_mut::<FormPage>() {
-            page.on_change(inputs);
-        } else if let Some(page) = page.downcast_mut::<EditPage>() {
-            page.on_change(inputs);
+            let mut page = current.as_mut();
+            while page.downcast_ref::<Listener>().is_some() {
+                page = page.downcast_mut::<Listener>().unwrap().page.as_mut();
+            }
+            if let Some(page) = page.downcast_mut::<ReviewPage>() {page.on_change(inputs);}
+            else if let Some(page) = page.downcast_mut::<SuccessPage>() {page.on_change(ctx, inputs);}
+            else if let Some(page) = page.downcast_mut::<FormPage>() {page.on_change(inputs);}
+            else if let Some(page) = page.downcast_mut::<EditPage>() {page.on_change(inputs);}
         }
     }
 }
@@ -181,10 +155,14 @@ impl OnChange<()> for FlowWrapper {
 #[on_event]
 impl OnEvent<FormEvent> for FlowWrapper {
     fn on(&mut self, ctx: &mut Context, event: FormEvent) -> Vec<Box<dyn DynEvent>> {
-        if let FormEvent::Changed(id) = event
-            && let Some(page) = &self.1.current
-            && Self::content(page.as_ref()).is_some_and(|content| content.id() == id) {
-            self.refresh(ctx);
+        if let FormEvent::Changed(id) = event && let Some(page) = &self.1.current {
+            let mut page = page.as_ref();
+            while let Some(listener) = page.downcast_ref::<Listener>() {page = listener.page.as_ref();}
+            let content = if let Some(page) = page.downcast_ref::<FormPage>() {Some(page.1.content())}
+                else if let Some(page) = page.downcast_ref::<EditPage>() {Some(page.1.content())}
+                else if let Some(page) = page.downcast_ref::<ReviewPage>() {Some(page.1.content())}
+                else {page.downcast_ref::<SuccessPage>().map(|page| page.1.content())};
+            if content.is_some_and(|content| content.id() == id) {self.refresh(ctx);}
         }
         prism::events![event]
     }

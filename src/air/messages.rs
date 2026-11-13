@@ -1,16 +1,10 @@
-use prism::Context;
-use crate::design_system::Theme;
-pub use crate::design_system::{MessageContent, SystemMessage, Sticker, StickerPack, Gif};
-pub use crate::design_system::{Photo, Video, VideoClip};
-
-use prism::air::{Id, Name, Metadata, Contract, Instance};
-
+use prism::{Context, air::{Id, Name, Metadata, Contract, Instance}};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
+use crate::design_system::{Theme, AvatarContent, AvatarIconStyle, Icons};
 use crate::profiles::Profile;
-use crate::design_system::{AvatarContent, AvatarIconStyle};
-use crate::design_system::Icons;
+pub use crate::design_system::{MessageContent, SystemMessage, Sticker, StickerPack, Gif};
+pub use crate::design_system::{Photo, Video, VideoClip};
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ChatRoomAction {
@@ -151,14 +145,6 @@ impl RoomNotificationState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ChatRoom {
-    pub members: Vec<Name>,
-    messages: Vec<Message>,
-    pub id: Id,
-    group: Option<GroupDetails>,
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroupDetails {
     pub name: String,
@@ -170,14 +156,14 @@ impl Default for GroupDetails {
     }
 }
 
-// Old rooms are (members, messages, id), nested inside AIR's cached instances.
-// An empty first vector was impossible in the old schema (the creator never
-// left). Reserve it as a version marker, without reading past an old room into
-// the surrounding cache. Ordinary DMs retain their exact existing encoding.
-#[derive(Serialize, Deserialize)]
-enum GroupStorage<M, T, D> {
-    V1 {members: M, messages: T, details: D},
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ChatRoom {
+    pub members: Vec<Name>,
+    messages: Vec<Message>,
+    pub id: Id,
+    group: Option<GroupDetails>,
 }
+
 impl Serialize for ChatRoom {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match &self.group {
@@ -294,6 +280,10 @@ impl Contract for ChatRoom {
 }
 
 impl ChatRoom {
+    pub fn start_notifications(ctx: &Context) {
+        ctx.air.start::<super::notifications::MessageNotifications>(());
+    }
+
     pub fn find_direct(ctx: &Context, recipient: Name) -> Option<Instance<Self>> {
         let me = ctx.air.me();
         // Received and older DMs may have a different creator or init ID.
@@ -381,7 +371,7 @@ impl ChatRoom {
         }
     }
 
-    fn append(&mut self, body: MessageContent, metadata: Metadata) {
+    pub fn append(&mut self, body: MessageContent, metadata: Metadata) {
         let id = Id::hash(&(metadata.signer, metadata.timestamp));
         self.messages.push(Message {
             author: metadata.signer, timestamp: metadata.timestamp, body, id,
@@ -389,11 +379,20 @@ impl ChatRoom {
         });
     }
 
-    fn append_system(&mut self, notice: SystemMessage, metadata: Metadata) {
+    pub fn append_system(&mut self, notice: SystemMessage, metadata: Metadata) {
         let id = Id::hash(&("GroupNotice.v1", self.id, metadata.signer, metadata.timestamp, &notice, self.messages.len()));
         self.messages.push(Message {
             author: metadata.signer, timestamp: metadata.timestamp,
             body: MessageContent::System(notice), id, hidden_from: Vec::new(),
         });
     }
+}
+
+// Old rooms are (members, messages, id), nested inside AIR's cached instances.
+// An empty first vector was impossible in the old schema (the creator never
+// left). Reserve it as a version marker, without reading past an old room into
+// the surrounding cache. Ordinary DMs retain their exact existing encoding.
+#[derive(Serialize, Deserialize)]
+enum GroupStorage<M, T, D> {
+    V1 {members: M, messages: T, details: D},
 }

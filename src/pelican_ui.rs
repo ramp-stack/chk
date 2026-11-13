@@ -4,13 +4,10 @@
 //! for their widgets. CHK's pages and application setup stay design-independent.
 //! External adapters use `chk::` for CHK types and wrap foreign widgets in owned
 //! newtypes when needed to implement those traits under Rust's orphan rules.
-use crate::design_system::{self as ui, *};
-use crate::{DesignSystem, Control, State};
 use prism::drawable::{Drawable, text::Align};
 use ptsd::layout::Offset;
 use ptsd::utils::TitleSubtitle;
 use uuid::Uuid;
-use std::{future::Future, pin::Pin, sync::Arc};
 use ::pelican_ui::{Callback as NativeCallback, theme::Theme as NativeTheme};
 use ::pelican_ui::components::{self as native, TextInput, RadioSelector, NumericalInput, SelectionInput,
     QRCodeScanner, Keypad, Icon, Alert, AspectRatioImage, DataItem, QRCode};
@@ -23,64 +20,90 @@ use ::pelican_ui::interface::navigation::RootInfo as NativeRoot;
 
 pub use native::{FittedPhoto, AspectFit as Fit, MediaBadge as Badge};
 
-#[derive(Debug, Clone)]
-pub struct PelicanUi {theme: NativeTheme}
+use std::{future::Future, pin::Pin};
+use crate::design_system::*;
+use crate::{DesignSystem, Control, State};
 
 impl crate::ChkTheme {
     /// Compatibility for existing apps; new apps should use `build`.
     pub fn to_pelican(self, assets: Assets) -> Theme {self.build::<PelicanUi>(assets)}
 }
 
-impl PelicanUi {
-    pub fn native_theme(&self) -> &NativeTheme {&self.theme}
+impl Theme {
+    pub fn native_pelican(&self) -> &NativeTheme {
+        self.downcast_ref::<PelicanUi>().unwrap().native_theme()
+    }
+}
 
-    fn native(theme: &Theme) -> &NativeTheme {
-        &theme.downcast_ref::<Self>().expect("Pelican widget requires its PelicanUi theme").theme
-    }
-    fn callback(theme: &Theme, mut action: Box<dyn Callback>) -> Box<dyn NativeCallback> {
+impl dyn Callback {
+    pub fn into_pelican(mut self: Box<Self>, theme: &Theme) -> Box<dyn NativeCallback> {
         let theme = theme.clone();
-        Box::new(move |ctx: &mut Context, _: &NativeTheme| action(ctx, &theme))
+        Box::new(move |ctx: &mut Context, _: &NativeTheme| self(ctx, &theme))
     }
-    fn action(theme: &Theme, item: crate::ActionPresentation) -> ActionData {
-        ActionData {label: item.label, active: item.active, icon: item.icon, on_click: Self::callback(theme, item.on_click)}
-    }
-    fn profile(profile: ProfileView) -> native::Profile {
-        native::Profile {name: profile.name, username: profile.username, pfp: profile.pfp}
-    }
-    fn header(&self, theme: &Theme, header: Header) -> NativeHeader {
-        let action = |(icon, action)| (icon, Self::callback(theme, action));
-        match header {
-            Header::Stack {title, action: callback} => NativeHeader::stack(&self.theme, &title, callback.map(action)),
-            Header::End {title} => NativeHeader::stack_end(&self.theme, &title),
-            Header::Home {title, action: callback} => NativeHeader::home(&self.theme, &title, callback.map(action)),
-            Header::Leading {title, action: callback} => NativeHeader::home_leading(&self.theme, &title, callback.map(action)),
-            Header::Messaging {title, profiles, avatar, steps, info} => NativeHeader::messaging_with_avatar(
-                &self.theme, title, profiles.into_iter().map(Self::profile).collect(), avatar, steps,
-                info.map(|action| Self::callback(theme, action))),
+}
+
+impl crate::ActionPresentation {
+    pub fn into_pelican(self, theme: &Theme) -> ActionData {
+        ActionData {
+            label: self.label, active: self.active, icon: self.icon,
+            on_click: self.on_click.into_pelican(theme),
         }
     }
-    fn footer(&self, theme: &Theme, footer: Footer) -> NativeFooter {
-        let action = |(label, action)| (label, Self::callback(theme, action));
-        match footer {
+}
+
+impl ProfileView {
+    pub fn into_pelican(self) -> native::Profile {
+        native::Profile {name: self.name, username: self.username, pfp: self.pfp}
+    }
+}
+
+impl Header {
+    pub fn into_pelican(self, theme: &Theme) -> NativeHeader {
+        let native = theme.native_pelican();
+        let action = |(icon, action): (_, Box<dyn Callback>)| (icon, action.into_pelican(theme));
+        match self {
+            Header::Stack {title, action: callback} => NativeHeader::stack(native, &title, callback.map(action)),
+            Header::End {title} => NativeHeader::stack_end(native, &title),
+            Header::Home {title, action: callback} => NativeHeader::home(native, &title, callback.map(action)),
+            Header::Leading {title, action: callback} => NativeHeader::home_leading(native, &title, callback.map(action)),
+            Header::Messaging {title, profiles, avatar, steps, info} => NativeHeader::messaging_with_avatar(
+                native, title, profiles.into_iter().map(ProfileView::into_pelican).collect(), avatar, steps,
+                info.map(|action| action.into_pelican(theme))),
+        }
+    }
+}
+
+impl Footer {
+    pub fn into_pelican(self, theme: &Theme) -> NativeFooter {
+        let native = theme.native_pelican();
+        let action = |(label, action): (_, Box<dyn Callback>)| (label, action.into_pelican(theme));
+        match self {
             Footer::Stack {label, action: callback, secondary} => NativeFooter::stack(
-                &self.theme, label.as_deref(), Self::callback(theme, callback), secondary.map(action)),
-            Footer::End {steps} => NativeFooter::stack_end(&self.theme, steps),
-            Footer::Home {first, second} => NativeFooter::home(&self.theme, first.map(action), second.map(action)),
-            Footer::Alert {notice} => NativeFooter::alert(&self.theme, &notice),
-            Footer::Input {placeholder, mut on_send, valid} => NativeFooter::input(&self.theme, &placeholder,
+                native, label.as_deref(), callback.into_pelican(theme), secondary.map(action)),
+            Footer::End {steps} => NativeFooter::stack_end(native, steps),
+            Footer::Home {first, second} => NativeFooter::home(native, first.map(action), second.map(action)),
+            Footer::Alert {notice} => NativeFooter::alert(native, &notice),
+            Footer::Input {placeholder, mut on_send, valid} => NativeFooter::input(native, &placeholder,
                 move |ctx: &mut Context, value: &mut String| on_send(ctx, value), NativeValidity(valid)),
         }
     }
-    fn row(&self, theme: &Theme, item: &crate::ListItem) -> NativeListItem {
-        NativeListItem::new(&self.theme,
-            item.avatar.clone().map(|content| Avatar::new(&self.theme, content, None, AvatarSize::Md, None)),
-            ListItemInfoLeft::new(&item.title, Some(&item.subtitle), None, item.flair).with_badge(item.badge),
-            item.secondary.as_ref().map(|value| TitleSubtitle::new(value, Some("Details"))),
-            None, item.action.is_some().then_some(Icons::Forward),
-            Self::callback(theme, item.action.as_ref().unwrap_or(&crate::Action::None).get()))
+}
+
+impl crate::ListItem {
+    pub fn to_pelican(&self, theme: &Theme) -> NativeListItem {
+        let native = theme.native_pelican();
+        NativeListItem::new(native,
+            self.avatar.clone().map(|content| Avatar::new(native, content, None, AvatarSize::Md, None)),
+            ListItemInfoLeft::new(&self.title, Some(&self.subtitle), None, self.flair).with_badge(self.badge),
+            self.secondary.as_ref().map(|value| TitleSubtitle::new(value, Some("Details"))),
+            None, self.action.is_some().then_some(Icons::Forward),
+            self.action.as_ref().unwrap_or(&crate::Action::None).get().into_pelican(theme))
     }
-    fn playback(mut callback: Box<dyn PlaybackCallback>) -> Box<dyn native::PlaybackCallback> {
-        Box::new(move |ctx: &mut Context, action: native::PlaybackAction| callback(ctx, match action {
+}
+
+impl dyn PlaybackCallback {
+    pub fn into_pelican(mut self: Box<Self>) -> Box<dyn native::PlaybackCallback> {
+        Box::new(move |ctx: &mut Context, action: native::PlaybackAction| self(ctx, match action {
             native::PlaybackAction::Toggle => PlaybackAction::Toggle,
             native::PlaybackAction::Scrub(value, phase) => PlaybackAction::Scrub(value, match phase {
                 native::ScrubPhase::Start => ScrubPhase::Start, native::ScrubPhase::Move => ScrubPhase::Move,
@@ -88,6 +111,15 @@ impl PelicanUi {
             }),
         }))
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct PelicanUi {
+    theme: NativeTheme,
+}
+
+impl PelicanUi {
+    pub fn native_theme(&self) -> &NativeTheme {&self.theme}
 }
 
 impl DesignSystem for PelicanUi {
@@ -107,7 +139,7 @@ impl DesignSystem for PelicanUi {
     }
     fn fonts(&self) -> &ptsd::FontResources {self.theme.fonts()}
     fn configure_gifs(&self, key: &str) {self.theme.gifs().set_api_key(key);}
-    fn gif_bytes(&self, gif: &Gif) -> Pin<Box<dyn Future<Output = Result<Arc<[u8]>, String>>>> {
+    fn gif_bytes(&self, gif: &Gif) -> GifBytes {
         let (gifs, gif) = (self.theme.gifs().clone(), gif.clone());
         Box::pin(async move {gifs.bytes(&gif).await})
     }
@@ -119,7 +151,7 @@ impl DesignSystem for PelicanUi {
         Box::new(Interface::new(ctx, &self.theme, roots, keyboard))
     }
     fn page(&self, theme: &Theme, header: Header, content: Content, footer: Option<Footer>) -> PageView {
-        PageView::new(NativePage::new(self.header(theme, header), content, footer.map(|footer| self.footer(theme, footer))))
+        PageView::new(NativePage::new(header.into_pelican(theme), content, footer.map(|footer| footer.into_pelican(theme))))
     }
     fn slider_input(&self, _: &Theme, start: f32, label: Option<&str>, description: Option<&str>) -> Box<dyn Drawable> {
         Control::boxed(native::Slider::new(&self.theme, start, label, description, |_: &mut Context, _: &NativeTheme, _: f32| {}))
@@ -128,7 +160,7 @@ impl DesignSystem for PelicanUi {
         Control::boxed(TextInput::new(&self.theme, id, preset, label, Some(placeholder), None, None))
     }
     fn choice_input(&self, theme: &Theme, index: usize, items: Vec<(&str, &str, Box<dyn Callback>)>) -> Box<dyn Drawable> {
-        Control::boxed(RadioSelector::new(&self.theme, index, items.into_iter().map(|(a,b,action)| (a,b,Self::callback(theme,action))).collect()))
+        Control::boxed(RadioSelector::new(&self.theme, index, items.into_iter().map(|(a,b,action)| (a,b,action.into_pelican(theme))).collect()))
     }
     fn currency_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {Control::boxed(NumericalInput::numerical(&self.theme, instructions))}
     fn number_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {Control::boxed(NumericalInput::number(&self.theme, instructions))}
@@ -136,13 +168,13 @@ impl DesignSystem for PelicanUi {
     fn time_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {Control::boxed(NumericalInput::time(&self.theme, instructions))}
     fn keypad(&self, _: &Theme) -> Box<dyn Drawable> {Box::new(Keypad::new(&self.theme))}
     fn selection_input(&self, theme: &Theme, selector: Selector) -> Box<dyn Drawable> {
-        let actions = selector.actions.iter().map(|action| Self::action(theme, action.get(selector.id).presentation())).collect();
+        let actions = selector.actions.iter().map(|action| action.get(selector.id).presentation().into_pelican(theme)).collect();
         let selector = native::Selector::from_parts(selector.id, selector.label, selector.items, selector.limit,
             selector.chip_subtitles, selector.sort_by_title);
         Control::boxed(SelectionInput::with_actions(&self.theme, selector, actions, false))
     }
     fn search_input(&self, theme: &Theme, id: Uuid, label: &str, items: Vec<(crate::ListItem, prism::air::Name)>, actions: Vec<crate::ActionPresentation>) -> Box<dyn Drawable> {
-        Control::boxed(SelectionInput::legacy(&self.theme, id, label, items, actions.into_iter().map(|action| Self::action(theme, action)).collect()))
+        Control::boxed(SelectionInput::legacy(&self.theme, id, label, items, actions.into_iter().map(|action| action.into_pelican(theme)).collect()))
     }
     fn scanner_input(&self, _: &Theme, mut on_find: Box<dyn QrCodeFound>) -> Box<dyn Drawable> {
         Control::boxed(QRCodeScanner::new(&self.theme, Box::new(move |ctx: &mut Context, value: String| on_find(ctx, value))))
@@ -166,60 +198,53 @@ impl DesignSystem for PelicanUi {
         }
     }
     fn data_text(&self, theme: &Theme, label: &str, data: Option<&str>, instructions: &str, actions: Option<Vec<crate::ActionPresentation>>) -> Box<dyn Drawable> {
-        Box::new(DataItem::text(&self.theme, label, data, instructions, actions.map(|items| items.into_iter().map(|action| Self::action(theme,action)).collect())))
+        Box::new(DataItem::text(&self.theme, label, data, instructions, actions.map(|items| items.into_iter().map(|action| action.into_pelican(theme)).collect())))
     }
     fn data_table(&self, theme: &Theme, label: &str, items: Vec<(String, String)>, actions: Option<Vec<crate::ActionPresentation>>) -> Box<dyn Drawable> {
-        Box::new(DataItem::table(&self.theme, label, items, actions.map(|items| items.into_iter().map(|action| Self::action(theme,action)).collect())))
+        Box::new(DataItem::table(&self.theme, label, items, actions.map(|items| items.into_iter().map(|action| action.into_pelican(theme)).collect())))
     }
     fn data_list(&self, theme: &Theme, label: &str, instructions: Option<&str>, items: Vec<crate::ListItem>, actions: Option<Vec<crate::ActionPresentation>>) -> Box<dyn Drawable> {
-        Box::new(DataItem::list(&self.theme, label, instructions, items.iter().map(|item| self.row(theme,item)).collect(),
-            actions.map(|items| items.into_iter().map(|action| Self::action(theme,action)).collect())))
+        Box::new(DataItem::list(&self.theme, label, instructions, items.iter().map(|item| item.to_pelican(theme)).collect(),
+            actions.map(|items| items.into_iter().map(|action| action.into_pelican(theme)).collect())))
     }
     fn currency_view(&self, _: &Theme, amount: Number, instructions: &str) -> Box<dyn Drawable> {Box::new(NumericalInput::display_currency(&self.theme, amount, instructions))}
     fn number_view(&self, _: &Theme, number: Number, instructions: &str) -> Box<dyn Drawable> {Box::new(NumericalInput::display_number(&self.theme, number, instructions))}
     fn list_section(&self, theme: &Theme, label: Option<String>, instructions: Option<String>, items: Vec<crate::ListItem>) -> Box<dyn Drawable> {
-        Box::new(ListItemSection::new(&self.theme, label, instructions, items.iter().map(|item| self.row(theme,item)).collect()))
+        Box::new(ListItemSection::new(&self.theme, label, instructions, items.iter().map(|item| item.to_pelican(theme)).collect()))
     }
     fn qr_code(&self, _: &Theme, data: &str) -> Box<dyn Drawable> {Box::new(QRCode::new(&self.theme, data))}
     fn avatar_display(&self, _: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>) -> Box<dyn Drawable> {
         Box::new(Avatar::new(&self.theme, content, flair, AvatarSize::Xxl, None))
     }
     fn quick_actions(&self, theme: &Theme, offset: Offset, actions: Vec<crate::ActionPresentation>) -> Box<dyn Drawable> {
-        Box::new(QuickActions::new(&self.theme, offset, actions.into_iter().map(|action| Self::action(theme,action)).collect()))
+        Box::new(QuickActions::new(&self.theme, offset, actions.into_iter().map(|action| action.into_pelican(theme)).collect()))
     }
     fn icon_actions(&self, theme: &Theme, actions: Vec<(Icons, Box<dyn Callback>)>) -> Box<dyn Drawable> {
-        Box::new(IconButtonGroup::new(&self.theme, actions.into_iter().map(|(icon,action)| (icon,Self::callback(theme,action))).collect()))
+        Box::new(IconButtonGroup::new(&self.theme, actions.into_iter().map(|(icon,action)| (icon,action.into_pelican(theme))).collect()))
     }
-    fn list_item(&self, theme: &Theme, item: &crate::ListItem) -> ListItemView {Box::new(self.row(theme,item))}
+    fn list_item(&self, theme: &Theme, item: &crate::ListItem) -> ListItemView {Box::new(item.to_pelican(theme))}
     fn avatar_input(&self, theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Box<dyn Callback>>) -> AvatarView {
-        AvatarView::new(Avatar::new(&self.theme, content, flair, AvatarSize::Xxl, action.map(|action| Self::callback(theme,action))))
+        AvatarView::new(Avatar::new(&self.theme, content, flair, AvatarSize::Xxl, action.map(|action| action.into_pelican(theme))))
     }
     fn photo_page(&self, theme: &Theme, photo: Photo, header: Option<(Icons, Box<dyn Callback>)>) -> PhotoPageView {
-        Box::new(native::PhotoPageView::new(&self.theme, photo, header.map(|(icon,action)| (icon,Self::callback(theme,action)))))
+        Box::new(native::PhotoPageView::new(&self.theme, photo, header.map(|(icon,action)| (icon,action.into_pelican(theme)))))
     }
     fn video_poster(&self, theme: &Theme, photo: &Photo, header: Option<(Icons, Box<dyn Callback>)>, action: Box<dyn PlaybackCallback>) -> VideoView {
         VideoView::new(native::PlaybackView::poster(&self.theme, photo,
-            header.map(|(icon,action)| (icon,Self::callback(theme,action))), Self::playback(action)))
+            header.map(|(icon,action)| (icon,action.into_pelican(theme))), action.into_pelican()))
     }
     fn video_player(&self, _: &Theme, title: &str, player: prism::hardware::Player, size: (u32,u32), action: Box<dyn PlaybackCallback>) -> VideoView {
-        VideoView::new(native::PlaybackView::player(&self.theme, title, player, size, Self::playback(action)))
+        VideoView::new(native::PlaybackView::player(&self.theme, title, player, size, action.into_pelican()))
     }
     fn camera_view(&self, theme: &Theme, capture: Box<dyn Callback>) -> CameraView {
-        CameraView::new(native::CameraView::new(&self.theme,Self::callback(theme,capture)))
+        CameraView::new(native::CameraView::new(&self.theme,capture.into_pelican(theme)))
     }
     fn message_group(&self, theme: &Theme, ctx: &mut Context, messages: Vec<MessageView>, group: bool) -> MessageGroups {
         let messages = messages.into_iter().map(|message| native::Message {body:message.body,timestamp:message.timestamp,
-            author:Self::profile(message.author),on_click:Self::callback(theme,message.on_click)}).collect();
+            author:message.author.into_pelican(),on_click:message.on_click.into_pelican(theme)}).collect();
         Box::new(native::MessageGroups::new(ctx,&self.theme,messages,group,false))
     }
     fn typing_indicator(&self, _: &Theme, name: Option<&str>) -> TypingIndicator {Box::new(native::TypingIndicator::new(&self.theme,name))}
-}
-
-#[derive(Clone)]
-struct NativeValidity(Box<dyn ui::ValidFn>);
-impl ptsd::Validate<&mut String, bool> for NativeValidity {
-    fn validate(&mut self, ctx: &mut Context, value: &mut String) -> bool {self.0.validate(ctx,value)}
-    fn change(&mut self) -> Pin<Box<dyn Future<Output=Option<()>>+'_>> {self.0.change()}
 }
 
 impl crate::PageSurface for NativePage {
@@ -240,8 +265,8 @@ impl crate::AvatarSurface for Avatar {
     fn set_content(&mut self, content: AvatarContent) {Avatar::set_content(self,content);}
 }
 impl crate::CameraSurface for native::CameraView {
-    fn reset(&mut self, theme: &Theme) {Self::reset(self,PelicanUi::native(theme));}
-    fn error(&mut self, theme: &Theme, message: &str, disabled: bool) {Self::error(self,PelicanUi::native(theme),message,disabled);}
+    fn reset(&mut self, theme: &Theme) {Self::reset(self,theme.native_pelican());}
+    fn error(&mut self, theme: &Theme, message: &str, disabled: bool) {Self::error(self,theme.native_pelican(),message,disabled);}
     fn disable(&mut self, disabled: bool) {Self::disable(self,disabled);}
     fn preview(&mut self, image: prism::hardware::Image) {Self::preview(self,image);}
 }
@@ -249,14 +274,14 @@ impl crate::PlaybackSurface for native::PlaybackView {
     fn set_player(&mut self, player:prism::hardware::Player,size:(u32,u32)) {Self::set_player(self,player,size);}
     fn progress(&mut self, value:f32) {Self::progress(self,value);}
     fn badge(&mut self, theme:&Theme,badge:PlaybackBadge) {
-        Self::badge(self,PelicanUi::native(theme),match badge {
+        Self::badge(self,theme.native_pelican(),match badge {
             PlaybackBadge::Loading=>native::PlaybackBadge::Loading, PlaybackBadge::Unplayable=>native::PlaybackBadge::Unplayable,
             PlaybackBadge::Play=>native::PlaybackBadge::Play, PlaybackBadge::None=>native::PlaybackBadge::None,
         });
     }
-    fn playing(&mut self,theme:&Theme,playing:bool) {Self::playing(self,PelicanUi::native(theme),playing);}
-    fn position(&mut self,theme:&Theme,seconds:u64) {Self::position(self,PelicanUi::native(theme),seconds);}
-    fn duration(&mut self,theme:&Theme,seconds:u64) {Self::duration(self,PelicanUi::native(theme),seconds);}
+    fn playing(&mut self,theme:&Theme,playing:bool) {Self::playing(self,theme.native_pelican(),playing);}
+    fn position(&mut self,theme:&Theme,seconds:u64) {Self::position(self,theme.native_pelican(),seconds);}
+    fn duration(&mut self,theme:&Theme,seconds:u64) {Self::duration(self,theme.native_pelican(),seconds);}
 }
 impl crate::Slider for native::Slider {fn value(&self)->f32 {self.current_value()}}
 impl crate::InputControl for native::Slider {fn state(&self)->State {State::Slider(crate::Slider::value(self))}}
@@ -287,3 +312,10 @@ impl crate::InputControl for SelectionInput {
 }
 impl crate::Scanner for QRCodeScanner {fn value(&self)->Option<String> {self.found()}}
 impl crate::InputControl for QRCodeScanner {fn state(&self)->State {State::ScanCode(crate::Scanner::value(self))}}
+
+#[derive(Clone)]
+struct NativeValidity(Box<dyn ValidFn>);
+impl ptsd::Validate<&mut String, bool> for NativeValidity {
+    fn validate(&mut self, ctx: &mut Context, value: &mut String) -> bool {self.0.validate(ctx,value)}
+    fn change(&mut self) -> Pin<Box<dyn Future<Output=Option<()>>+'_>> {self.0.change()}
+}

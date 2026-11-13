@@ -1,10 +1,12 @@
 //! Typed invitation setup supplied by an app and managed by CHK.
+use prism::{air::Name, drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
+    events::{DynEvent, ListenCallback, ListenFuture}};
 use std::{any::Any, cell::RefCell, collections::{HashSet, VecDeque}, rc::{Rc, Weak},
     future::poll_fn, task::{Poll, Waker}};
-use prism::{drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
-    events::{DynEvent, ListenCallback, ListenFuture}};
 use crate::{Action, Context, Theme};
-use prism::air::Name;
+
+type InvitationParser<T> = Rc<dyn Fn(&str) -> Option<T>>;
+type InvitationAction<T> = Rc<dyn Fn(&mut Context, T) -> Action>;
 
 /// URL formatting, validation, and the action to run for an accepted payload.
 /// `T` is app-defined: a contact name, document ID, password invitation token, etc.
@@ -12,15 +14,9 @@ use prism::air::Name;
 #[derive(Clone)]
 pub struct Invitations<T> {
     url: Rc<dyn Fn(T) -> String>,
-    parse: Rc<dyn Fn(&str) -> Option<T>>,
-    on_open: Rc<dyn Fn(&mut Context, T) -> Action>,
+    parse: InvitationParser<T>,
+    on_open: InvitationAction<T>,
     inbox: Rc<RefCell<InvitationInbox<T>>>,
-}
-
-struct InvitationInbox<T> {
-    queue: VecDeque<(String, T)>,
-    pending: HashSet<String>,
-    waiters: Vec<Weak<RefCell<Option<Waker>>>>,
 }
 
 impl<T> std::fmt::Debug for Invitations<T> {
@@ -30,13 +26,16 @@ impl<T> std::fmt::Debug for Invitations<T> {
 }
 
 impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
-    pub fn new(url: impl Fn(T) -> String + 'static,
-        parse: impl Fn(&str) -> Option<T> + 'static,
-        on_open: impl Fn(&mut Context, T) -> Action + 'static) -> Self {
-        Self {url: Rc::new(url), parse: Rc::new(parse), on_open: Rc::new(on_open),
+    pub fn new(
+        url: impl Fn(T) -> String + 'static, parse: impl Fn(&str) -> Option<T> + 'static,
+        on_open: impl Fn(&mut Context, T) -> Action + 'static,
+    ) -> Self {
+        Self {
+            url: Rc::new(url), parse: Rc::new(parse), on_open: Rc::new(on_open),
             inbox: Rc::new(RefCell::new(InvitationInbox {
                 queue: VecDeque::new(), pending: HashSet::new(), waiters: Vec::new(),
-            }))}
+            })),
+        }
     }
 
     pub fn url(&self, payload: T) -> String {(self.url)(payload)}
@@ -62,15 +61,11 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
 
     /// CHK owns registration. An unavailable platform still supports manual links
     /// and sharing, but cannot deliver native incoming URLs yet.
-    pub(crate) fn attach(&self, ctx: &Context) -> bool {
+    pub fn attach(&self, ctx: &Context) -> bool {
         let invitations = self.clone();
         ctx.hardware.listen_app_links(move |url| invitations.receive(url))
     }
 
-    pub(crate) fn wrap(&self, inner: impl Drawable, theme: Theme) -> InvitationLinks<T> {
-        InvitationLinks {inner: Box::new(inner), theme, on_open: self.on_open.clone(),
-            inbox: self.inbox.clone()}
-    }
 }
 
 /// Root drawable that delivers accepted invitations to the application handler.
@@ -78,8 +73,16 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
 pub struct InvitationLinks<T> {
     inner: Box<dyn Drawable>,
     theme: Theme,
-    on_open: Rc<dyn Fn(&mut Context, T) -> Action>,
+    on_open: InvitationAction<T>,
     inbox: Rc<RefCell<InvitationInbox<T>>>,
+}
+
+impl<T> InvitationLinks<T> {
+    pub fn new(inner: impl Drawable, theme: Theme, invitations: Invitations<T>) -> Self {
+        Self {
+            inner: Box::new(inner), theme, on_open: invitations.on_open, inbox: invitations.inbox,
+        }
+    }
 }
 
 impl<T> std::fmt::Debug for InvitationLinks<T> {
@@ -132,14 +135,17 @@ impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
 }
 
 
-
 #[derive(Clone, Debug, Default)]
 pub struct ContactInvitations {
-    pub(crate) invitations: Option<Invitations<Name>>,
+    invitations: Option<Invitations<Name>>,
 }
 
 impl ContactInvitations {
     pub fn new(invitations: Invitations<Name>) -> Self {Self {invitations: Some(invitations)}}
+
+    pub fn contact_url(&self, name: Name) -> String {
+        self.invitations.as_ref().map_or_else(|| name.to_string(), |invitations| invitations.url(name))
+    }
 
     pub fn selected_recipients(keys: &[String]) -> Result<Vec<Name>, &'static str> {
         if keys.is_empty() {
@@ -158,10 +164,16 @@ impl ContactInvitations {
         Ok(recipients)
     }
 
-    pub(crate) fn parse_contact(&self, value: &str) -> Option<Name> {
+    pub fn parse_contact(&self, value: &str) -> Option<Name> {
         match &self.invitations {
             Some(invitations) => invitations.parse_invite(value).or_else(|| value.trim().parse().ok()),
             None => value.trim().parse().ok(),
         }
     }
+}
+
+struct InvitationInbox<T> {
+    queue: VecDeque<(String, T)>,
+    pending: HashSet<String>,
+    waiters: Vec<Weak<RefCell<Option<Waker>>>>,
 }

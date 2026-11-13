@@ -1,11 +1,8 @@
 use prism::events::{ChildEvent, DynEvent, Event, OnEvent, on_event};
 use prism::drawable::{Component, Drawable};
-use crate::design_system::{Context};
 use ptsd::layout::{Stack, Offset};
 use ptsd::Validate;
-use crate::design_system::{Callback, Content, FormEvent, PageView};
 use ptsd::navigation::AppPage;
-use crate::design_system::Theme;
 use ptsd::utils::ValidationFn;
 
 use std::ops::Range;
@@ -13,9 +10,13 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::task::Poll;
 
+use crate::design_system::{Context};
+use crate::design_system::{Content, FormEvent, PageView};
+use crate::design_system::Theme;
 use crate::{FormItem, FormValues, FormComplete, Action, Icons};
 use crate::items::{Input, Display};
 use crate::closure::FormSubmit;
+use crate::design_system::{Header, Footer};
 
 #[derive(Debug, Component, Clone)]
 pub struct EditPage(
@@ -95,7 +96,7 @@ impl OnEvent<EditRequest> for EditPage {
         if let FormComplete::Pending(pending) = result {
             let id = self.1.content().id();
             FormComplete::pending(async move {
-                let result = pending.0.await.resolved().await;
+                let result = pending.await.resolved().await;
                 FormComplete::Action(Action::custom(move |ctx: &mut Context, _: &Theme| {
                     ctx.emit(EditFinished(id, saved.clone(), snapshot.clone(), result.clone()));
                 }))
@@ -125,35 +126,6 @@ impl OnEvent<EditDiscard> for EditPage {
 }
 impl AppPage for EditPage {}
 impl EditPage {
-    fn view(theme: &Theme, title: &str, action: Option<(Icons, Box<dyn Callback>)>,
-        content: Content, root: bool) -> PageView {
-        let (header, footer) = if root {
-            (crate::design_system::Header::home(title, action),
-                crate::design_system::Footer::home(Some(("Save".into(), Box::new(|_: &mut Context, _: &Theme| {}))), None))
-        } else {
-            (crate::design_system::Header::stack(title, action),
-                crate::design_system::Footer::stack(Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None))
-        };
-        theme.page(header, content, Some(footer))
-    }
-
-    pub fn new(
-        theme: &Theme, is_mobile: bool, title: String, input: Vec<Input>, display: Vec<Display>,
-        validations: Vec<Box<dyn ValidationFn>>, ids: Vec<String>, on_save: Box<dyn FormSubmit>,
-    ) -> Self {
-        assert_eq!(ids.len(), input.len(), "Each form input needs one field ID");
-        let header = None;
-        let (content, ranges) = Self::content(theme, is_mobile, input, display, validations);
-        let ids = ids.into_iter().zip(ranges).collect::<Vec<_>>();
-
-        let mut page = Self::view(theme, &title, header, content, false);
-        let snapshot = page.content().clone();
-        let initial = Self::read_values(page.content(), &ids);
-        page.disable_actions(true);
-        Self(Stack::default(), page, on_save, None, false, initial, false, ids, snapshot,
-            theme.clone(), false, None)
-    }
-
     pub fn edit_and_display(
         theme: &Theme, is_mobile: bool, title: String,
         mut header: Option<(Icons, Action)>, items: Vec<FormItem>,
@@ -164,12 +136,28 @@ impl EditPage {
         let ids = FormItem::ids(&items);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let (content, ranges) = Self::content(theme, is_mobile, inputs, display, validations);
+        let (content, ranges) = {
+            let mut children = Vec::new();
+            let mut validators = Vec::new();
+            let mut ranges = Vec::new();
+            let mut validations = validations.into_iter();
+            for input in inputs {
+                let start = children.len();
+                children.extend(input.build(theme, is_mobile).unwrap_or_default());
+                ranges.push(start..children.len());
+                if let Some(validation) = validations.next() {
+                    validators.push((start..children.len(), validation));
+                }
+            }
+            for mut item in display { children.extend(item.build(theme).unwrap_or_default()); }
+            (Content::new(Offset::Start, children, Box::new(FormValidation(validators))), ranges)
+        };
         let ids = ids.into_iter().zip(ranges).collect::<Vec<_>>();
 
-        let mut page = Self::view(theme, &title, header, content, false);
+        let mut page = theme.page(Header::stack(&title, header), content,
+            Some(Footer::stack(Some("Save"), Box::new(|_: &mut Context, _: &Theme| {}), None)));
         let snapshot = page.content().clone();
-        let initial = Self::read_values(page.content(), &ids);
+        let initial = FormValues::from_content(page.content(), &ids);
         page.disable_actions(true);
         Self(Stack::default(), page, on_save, None, false, initial, false, ids, snapshot,
             theme.clone(), false, None)
@@ -185,30 +173,36 @@ impl EditPage {
         let ids = FormItem::ids(&items);
         let validations = items.iter().map(|i| i.validation()).collect::<Vec<_>>();
         let inputs = items.into_iter().map(|i| i.build()).collect::<Vec<Input>>();
-        let (content, ranges) = Self::content(theme, is_mobile, inputs, display, validations);
+        let (content, ranges) = {
+            let mut children = Vec::new();
+            let mut validators = Vec::new();
+            let mut ranges = Vec::new();
+            let mut validations = validations.into_iter();
+            for input in inputs {
+                let start = children.len();
+                children.extend(input.build(theme, is_mobile).unwrap_or_default());
+                ranges.push(start..children.len());
+                if let Some(validation) = validations.next() {
+                    validators.push((start..children.len(), validation));
+                }
+            }
+            for mut item in display { children.extend(item.build(theme).unwrap_or_default()); }
+            (Content::new(Offset::Start, children, Box::new(FormValidation(validators))), ranges)
+        };
         let ids = ids.into_iter().zip(ranges).collect::<Vec<_>>();
 
-        let mut page = Self::view(theme, &title, header, content, true);
+        let mut page = theme.page(Header::home(&title, header), content,
+            Some(Footer::home(Some(("Save".into(), Box::new(|_: &mut Context, _: &Theme| {}))), None)));
         let snapshot = page.content().clone();
-        let initial = Self::read_values(page.content(), &ids);
+        let initial = FormValues::from_content(page.content(), &ids);
         page.disable_actions(true);
         Self(Stack::default(), page, on_save, None, true, initial, false, ids, snapshot,
             theme.clone(), false, None)
     }
 
-    fn read_values(content: &Content, fields: &[(String, Range<usize>)]) -> FormValues {
-        let children = content.children();
-        FormValues::new(fields.iter().map(|(id, range)| {
-            let mut states = children[range.clone()].iter().filter_map(|child| Input::state(&**child));
-            let state = states.next().expect("Each form field must produce one value");
-            assert!(states.next().is_none(), "A field must not produce multiple values");
-            (id.clone(), state)
-        }))
-    }
+    pub fn values(&self) -> FormValues {FormValues::from_content(self.1.content(), &self.7)}
 
-    pub(crate) fn values(&self) -> FormValues {Self::read_values(self.1.content(), &self.7)}
-
-    fn finish(&mut self, ctx: &mut Context, saved: FormValues, snapshot: Content, mut result: FormComplete) {
+    pub fn finish(&mut self, ctx: &mut Context, saved: FormValues, snapshot: Content, mut result: FormComplete) {
         self.10 = false;
         let leave = self.11.take();
         if !matches!(result, FormComplete::Error(_)) {
@@ -223,26 +217,9 @@ impl EditPage {
         } else {result.run(ctx, &self.9);}
     }
 
-    fn update_save_button(&mut self) {
+    pub fn update_save_button(&mut self) {
         let enabled = self.6 && self.values() != self.5 && !self.10;
         self.1.disable_actions(!enabled);
-    }
-
-    fn content(theme: &Theme, is_mobile: bool, inputs: Vec<Input>, display: Vec<Display>, validations: Vec<Box<dyn ValidationFn>>) -> (Content, Vec<Range<usize>>) {
-        let mut children = Vec::new();
-        let mut validators = Vec::new();
-        let mut ranges = Vec::new();
-        let mut validations = validations.into_iter();
-        for input in inputs {
-            let start = children.len();
-            children.extend(input.build(theme, is_mobile).unwrap_or_default());
-            ranges.push(start..children.len());
-            if let Some(validation) = validations.next() {
-                validators.push((start..children.len(), validation));
-            }
-        }
-        for mut item in display { children.extend(item.build(theme).unwrap_or_default()); }
-        (crate::design_system::Content::new(Offset::Start, children, Box::new(FormValidation(validators))), ranges)
     }
 
     pub fn on_change(&mut self, new: FormValues) {
@@ -287,7 +264,7 @@ impl Validate<Vec<&mut Box<dyn Drawable>>, bool> for FormValidation {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DeferredSubmit(pub crate::PendingSubmit);
+pub struct DeferredSubmit(pub crate::PendingSubmit);
 impl Event for DeferredSubmit {
     fn pass(&self, _: &mut Context, _: &mut [ChildEvent<'_, Self>]) {}
 }
@@ -320,7 +297,7 @@ impl FormHost {
         Self {inner: Box::new(inner), theme, pending: vec![]}
     }
 
-    fn confirm(&self, ctx: &mut Context, id: uuid::Uuid, navigation: ptsd::navigation::NavigationEvent) {
+    pub fn confirm(&self, ctx: &mut Context, id: uuid::Uuid, navigation: ptsd::navigation::NavigationEvent) {
         use crate::{ActionItem, Bumper, Flow, Page, PageType};
         use ptsd::navigation::NavigationEvent;
         let save_navigation = navigation.clone();
@@ -380,7 +357,7 @@ impl Drawable for FormHost {
     fn changed(&mut self) -> prism::events::ListenFuture<'_> {
         use prism::events::ListenCallback;
         Box::pin(async move {
-            let mut pending = self.pending.iter().map(|pending| Box::pin(pending.0.clone())).collect::<Vec<_>>();
+            let mut pending = self.pending.iter().map(|pending| Box::pin(pending.clone())).collect::<Vec<_>>();
             let mut inner = self.inner.as_mut().changed();
             poll_fn(|cx| {
                 for (index, pending) in pending.iter_mut().enumerate() {

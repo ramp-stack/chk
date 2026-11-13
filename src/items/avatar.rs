@@ -22,7 +22,7 @@ pub struct AvatarInput {
 }
 
 impl AvatarInput {
-    pub(crate) fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
+    pub fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
         let id = Id::random();
         let on_click = action.map(|action| match action {
             Action::PickPhoto => {

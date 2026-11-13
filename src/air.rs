@@ -3,4 +3,4 @@ pub mod profiles;
 pub mod blocking;
 pub mod typing;
 
-pub(crate) mod notifications;
+mod notifications;

@@ -1,6 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use prism::air::{Contract, Id, Metadata, Name};
 use serde::{Deserialize, Serialize};
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
+pub enum TypingAction {
+    Share(Name),
+    Activity {active: bool, at: u64},
+}
 
 /// Activity only, never draft text. Separate from chat history and notifications.
 #[derive(Clone, Debug, Hash, Serialize, Deserialize)]
@@ -10,12 +17,6 @@ pub struct TypingState {
     pub shared_with: Vec<Name>,
     active: bool,
     updated_at: u64,
-}
-
-#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
-pub enum TypingAction {
-    Share(Name),
-    Activity {active: bool, at: u64},
 }
 
 impl Contract for TypingState {
@@ -42,8 +43,6 @@ impl Contract for TypingState {
 }
 
 impl TypingState {
-    pub const LIFETIME_MS: u64 = 6_000;
-
     pub fn now() -> u64 {
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
     }
@@ -52,7 +51,7 @@ impl TypingState {
         self.active
             // Allow small clock skew, but never display a far-future update.
             && self.updated_at <= now.saturating_add(2_000)
-            && now < self.updated_at.saturating_add(Self::LIFETIME_MS)
+            && now < self.updated_at.saturating_add(6_000)
             && last_message_at.is_none_or(|sent| sent < self.updated_at)
     }
 }

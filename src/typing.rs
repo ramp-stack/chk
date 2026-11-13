@@ -1,40 +1,27 @@
-use std::time::{Duration, Instant};
-use std::{future::{Future, poll_fn}, pin::pin, task::Poll};
-use crate::design_system::{Theme, TypingIndicator};
 use prism::Context;
 use prism::{air::{Instance, Name}, drawable::Component, events::{Timer, OnChange, on_change}};
 use ptsd::layout::Column;
-use crate::{Watch, Watcher, ListWatch, messages::ChatRoom, profiles::Profile, blocking::Block};
+use std::{future::{Future, poll_fn}, pin::pin, task::Poll, time::{Duration, Instant}};
+use crate::design_system::{Theme, TypingIndicator};
+use crate::{Watcher, ListWatch, messages::ChatRoom, profiles::Profile, blocking::Block};
 use crate::air::typing::{TypingState, TypingAction};
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct TypingPublisher {
+pub struct TypingPublisher {
     instance: Option<Instance<TypingState>>,
-    activity: Activity,
+    last_sent: Option<Instant>,
+    active: bool,
     idle: Timer,
-}
-
-#[derive(Clone, Debug, Default)]
-struct Activity {last_sent: Option<Instant>, active: bool}
-impl Activity {
-    fn edit(&mut self, now: Instant, nonempty: bool) -> Option<bool> {
-        if !nonempty {return self.stop();}
-        if !self.active || self.last_sent.is_none_or(|sent| now.duration_since(sent) >= Duration::from_secs(2)) {
-            self.active = true;
-            self.last_sent = Some(now);
-            Some(true)
-        } else {None}
-    }
-    fn stop(&mut self) -> Option<bool> {
-        std::mem::take(&mut self.active).then_some(false)
-    }
 }
 
 impl TypingPublisher {
     pub fn edit(&mut self, ctx: &mut Context, room: &Instance<ChatRoom>, nonempty: bool) {
         if !nonempty || !room.pending().members.contains(&ctx.air.me()) {self.stop(); return;}
         self.idle.reset(Duration::from_secs(3));
-        if let Some(active) = self.activity.edit(Instant::now(), true) {
+        let now = Instant::now();
+        if !self.active || self.last_sent.is_none_or(|sent| now.duration_since(sent) >= Duration::from_secs(2)) {
+            self.active = true;
+            self.last_sent = Some(now);
             let instance = self.instance.get_or_insert_with(|| {
                 let instance = ctx.air.instances::<TypingState>().create(room.id());
                 instance.notify(false);
@@ -48,38 +35,22 @@ impl TypingPublisher {
                     instance.send(TypingAction::Share(member));
                 }
             }
-            instance.send(TypingAction::Activity {active, at: TypingState::now()});
+            instance.send(TypingAction::Activity {active: true, at: TypingState::now()});
         }
     }
 
     pub fn stop(&mut self) {
         self.idle.cancel();
-        if let Some(active) = self.activity.stop() && let Some(instance) = &mut self.instance {
-            instance.send(TypingAction::Activity {active, at: TypingState::now()});
+        if std::mem::take(&mut self.active) && let Some(instance) = &mut self.instance {
+            instance.send(TypingAction::Activity {active: false, at: TypingState::now()});
         }
     }
 
     pub async fn next(&mut self) {self.idle.next().await;}
 }
 
-#[derive(Clone, Debug)]
-struct Feed {
-    watch: ListWatch<TypingState>,
-    expiry: Timer,
-}
-impl Feed {
-    async fn next(&mut self) {
-        let mut watch = pin!(self.watch.next());
-        let mut expiry = pin!(self.expiry.next());
-        poll_fn(|cx| {
-            if watch.as_mut().poll(cx).is_ready() || expiry.as_mut().poll(cx).is_ready() {Poll::Ready(())}
-            else {Poll::Pending}
-        }).await;
-    }
-}
-
 #[derive(Clone, Debug, Component)]
-pub(super) struct TypingPanel {
+pub struct TypingPanel {
     layout: Column,
     indicators: Vec<TypingIndicator>,
     #[skip] feed: Feed,
@@ -91,14 +62,14 @@ impl TypingPanel {
     pub fn new(ctx: &mut Context, theme: &Theme, room: Instance<ChatRoom>) -> Self {
         let mut panel = Self {
             layout: Column::start(12.0), indicators: vec![],
-            feed: Feed {watch: Watch::list(), expiry: Timer::default()},
+            feed: Feed {watch: ListWatch::default(), expiry: Timer::default()},
             room, theme: theme.clone(), shown: vec![],
         };
         panel.refresh(ctx);
         panel
     }
 
-    fn refresh(&mut self, ctx: &mut Context) {
+    pub fn refresh(&mut self, ctx: &mut Context) {
         let room = self.room.pending();
         let me = ctx.air.me();
         let group = room.is_group();
@@ -129,4 +100,22 @@ impl TypingPanel {
 #[on_change(self.feed.next())]
 impl OnChange<()> for TypingPanel {
     fn on_change(&mut self, ctx: &mut Context, _: ()) {self.refresh(ctx);}
+}
+
+#[derive(Clone, Debug)]
+struct Feed {
+    watch: ListWatch<TypingState>,
+    expiry: Timer,
+}
+
+impl Feed {
+    pub async fn next(&mut self) {
+        let mut watch = pin!(self.watch.next());
+        let mut expiry = pin!(self.expiry.next());
+        poll_fn(|cx| {
+            if watch.as_mut().poll(cx).is_ready() || expiry.as_mut().poll(cx).is_ready() {
+                Poll::Ready(())
+            } else {Poll::Pending}
+        }).await;
+    }
 }

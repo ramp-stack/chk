@@ -1,11 +1,11 @@
 use prism::Context;
-use crate::design_system::Photo;
-use crate::design_system::Theme;
 use prism::drawable::Component;
 use prism::hardware::Image;
 use ptsd::layout::Stack;
 use ptsd::navigation::AppPage;
 
+use crate::design_system::Photo;
+use crate::design_system::Theme;
 
 #[derive(Debug, Component, Clone)]
 pub struct PhotoPage(Stack, crate::design_system::PhotoPageView);
@@ -46,7 +46,7 @@ pub struct CameraPage {
 impl AppPage for CameraPage {}
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct CapturePhoto(pub(crate) uuid::Uuid);
+struct CapturePhoto(uuid::Uuid);
 impl prism::events::Event for CapturePhoto {
     fn pass(&self, _: &mut Context, children: &mut [prism::events::ChildEvent<'_, Self>]) {
         for child in children {*child.event = Some(*self);}
@@ -67,7 +67,7 @@ impl CameraPage {
         page
     }
 
-    fn open(&mut self, ctx: &mut Context) {
+    pub fn open(&mut self, ctx: &mut Context) {
         self.failed = false;
         self.latest = None;
         self.page.reset(&self.theme);
@@ -77,7 +77,7 @@ impl CameraPage {
         }
     }
 
-    fn error(&mut self, message: &str) {
+    pub fn error(&mut self, message: &str) {
         self.camera = None;
         self.latest = None;
         self.failed = true;

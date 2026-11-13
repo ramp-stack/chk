@@ -58,8 +58,11 @@ its struct. Shared content, events, and serialized models live in PTSD, so
 adapters reuse the same form behavior and stored data. Native widgets own their
 layout and pointer handling.
 
-CHK functions are associated with their types, and constructors initialize their
-own types directly. CHK has no direct `futures` or `async-channel` dependency;
+CHK functions are public associated methods on their owning types; trait implementations
+use Rust's required visibility syntax. Inline one-use glue instead of adding private
+helpers. Constructors initialize their own types directly. Do not add tests to CHK.
+Follow Ramp's `STYLE_GUIDE.md`.
+CHK has no direct `futures` or `async-channel` dependency;
 its asynchronous state uses standard-library futures and wakers.
 
 ## Frontend development setup
@@ -268,8 +271,8 @@ returns the events that should continue to the interface.
 
 ## Refreshing pages
 
-`Page::watching` subscribes to Air changes through Prism's `OnChange`. `Watch::contract`
-watches one instance; `Watch::list` watches both new instances and changes to existing
+`Page::watching` subscribes to Air changes through Prism's `OnChange`. `ContractWatch::new`
+watches one instance; `ListWatch::default` watches both new instances and changes to existing
 members. Tuples combine sources, for example a chat room and the block list.
 
 `Listener::new` receives navigation information before building its initial page, so

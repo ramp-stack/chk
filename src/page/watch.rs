@@ -1,5 +1,4 @@
 use prism::Context;
-use crate::design_system::Theme;
 use prism::air::{Contract, Id, Instance, Instances};
 
 use std::collections::BTreeMap;
@@ -8,15 +7,24 @@ use std::future::{Future, poll_fn, ready};
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll, Waker};
 
+use crate::design_system::Theme;
 use crate::{PageBuilder, PageType};
+
+type ContractUpdate<'a, C> = Pin<Box<dyn Future<Output = Option<Instance<C>>> + 'a>>;
 
 #[derive(Debug, Clone)]
 pub struct ContractWatch<C: Contract>(Instance<C>);
+impl<C: Contract> ContractWatch<C> {
+    pub fn new(instance: Instance<C>) -> Self {Self(instance)}
+}
 
 #[derive(Debug)]
 pub struct ListWatch<C: Contract> {
     instances: Option<Instances<C>>,
     current: BTreeMap<Id, Instance<C>>,
+}
+impl<C: Contract> Default for ListWatch<C> {
+    fn default() -> Self {Self {instances: None, current: BTreeMap::new()}}
 }
 impl<C: Contract> Clone for ListWatch<C> {
     fn clone(&self) -> Self {
@@ -45,9 +53,9 @@ impl<C: Contract> Watcher for ListWatch<C> {
     async fn next(&mut self) -> Option<()> {
         let instances = self.instances.as_mut()?;
         let added = {
-            let mut waits: Vec<Pin<Box<dyn Future<Output = Option<Instance<C>>> + '_>>> = self.current.values_mut()
+            let mut waits: Vec<ContractUpdate<'_, C>> = self.current.values_mut()
                 .map(|instance| Box::pin(async move {instance.next().await; None})
-                    as Pin<Box<dyn Future<Output = Option<Instance<C>>> + '_>>).collect();
+                    as ContractUpdate<'_, C>).collect();
             waits.push(Box::pin(async move {Some(instances.next().await)}));
             poll_fn(|cx| {
                 for wait in &mut waits {
@@ -106,14 +114,6 @@ macro_rules! impl_watcher_for_tuple {
     };
 }
 impl_watcher_for_tuple!(A, B, C, D);
-
-pub struct Watch;
-impl Watch {
-    pub fn contract<C: Contract>(instance: Instance<C>) -> ContractWatch<C> {ContractWatch(instance)}
-    pub fn list<C: Contract>() -> ListWatch<C> {
-        ListWatch {instances: None, current: BTreeMap::new()}
-    }
-}
 
 pub struct Watching<W: Watcher, F> {
     watcher: W,

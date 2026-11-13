@@ -1,9 +1,9 @@
 use prism::air::{Air, Instance, Instances, Name};
 use prism::service::Service;
-use super::messages::{ChatRoom, RoomNotificationState};
 use std::{future::{Future, poll_fn}, pin::pin, task::Poll};
+use super::messages::{ChatRoom, RoomNotificationState};
 
-pub(crate) struct MessageNotifications(Instances<ChatRoom>, Air);
+pub struct MessageNotifications(Instances<ChatRoom>, Air);
 impl Service for MessageNotifications {
     type Init = ();
     type Predicate = Instance<ChatRoom>;
@@ -20,7 +20,10 @@ impl Service for MessageNotifications {
 // Watch membership and private preferences even when the conversation is hidden.
 // Leaving disables pushes; rejoining must preserve the owner's mute preference.
 struct RoomNotifications {
-    room: Instance<ChatRoom>, preferences: Instance<RoomNotificationState>, me: Name, enabled: bool,
+    room: Instance<ChatRoom>,
+    preferences: Instance<RoomNotificationState>,
+    me: Name,
+    enabled: bool,
 }
 impl Service for RoomNotifications {
     type Init = Instance<ChatRoom>;

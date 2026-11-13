@@ -13,16 +13,16 @@ pub use ptsd::media::{
 pub use ptsd::task::Task;
 pub use ptsd::content::{Content, FormEvent};
 pub use ptsd::input::{TextInputEvent, MessageBarEvent};
-pub use crate::design::{PageView, AvatarView, CameraView, VideoView};
-pub use crate::Selector;
-
 use prism::air::Name;
 use prism::drawable::{Drawable, text::Align};
 use ptsd::layout::Offset;
 use ptsd::Validate;
 use uuid::Uuid;
 use std::{any::Any, fmt::Debug, future::Future, pin::Pin, rc::Rc, sync::Arc};
+pub use crate::design::{PageView, AvatarView, CameraView, VideoView};
+pub use crate::Selector;
 
+pub type GifBytes = Pin<Box<dyn Future<Output = Result<Arc<[u8]>, String>>>>;
 pub type ListItemView = Box<dyn Drawable>;
 pub type MessageGroups = Box<dyn Drawable>;
 pub type TypingIndicator = Box<dyn Drawable>;
@@ -170,9 +170,7 @@ impl Theme {
     pub fn colors(&self) -> &ptsd::ColorResources {self.0.colors()}
     pub fn fonts(&self) -> &ptsd::FontResources {self.0.fonts()}
     pub fn configure_gifs(&self, key: &str) {self.0.configure_gifs(key);}
-    pub fn gif_bytes(&self, gif: &Gif) -> Pin<Box<dyn Future<Output = Result<Arc<[u8]>, String>>>> {
-        self.0.gif_bytes(gif)
-    }
+    pub fn gif_bytes(&self, gif: &Gif) -> GifBytes {self.0.gif_bytes(gif)}
 }
 
 macro_rules! constructors {
@@ -186,7 +184,7 @@ macro_rules! constructors {
             fn with_image(&self, name: &str, image: prism::hardware::Image) -> Box<dyn DesignSystem>;
             fn fonts(&self) -> &ptsd::FontResources;
             fn configure_gifs(&self, key: &str);
-            fn gif_bytes(&self, gif: &Gif) -> Pin<Box<dyn Future<Output = Result<Arc<[u8]>, String>>>>;
+            fn gif_bytes(&self, gif: &Gif) -> GifBytes;
             $(fn $name(&self, theme: &Theme, $($arg: $ty),*) -> $result;)+
         }
 

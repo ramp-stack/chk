@@ -1,6 +1,3 @@
-use crate::design_system::Context;
-use crate::design_system::{Video, VideoClip};
-use crate::design_system::{Icons, Theme};
 use prism::drawable::Component;
 use prism::events::{ChildEvent, DynEvent, Event};
 use prism::hardware::{Media, Frame, Player};
@@ -12,6 +9,10 @@ use uuid::Uuid;
 
 use std::time::{Duration, Instant};
 
+use crate::design_system::Context;
+use crate::design_system::{Video, VideoClip};
+use crate::design_system::{Icons, Theme};
+use crate::design_system::{PlaybackBadge as BadgeKind, PlaybackAction as Action, ScrubPhase as Phase};
 
 #[derive(Debug, Component, Clone)]
 pub struct VideoPage {
@@ -61,7 +62,7 @@ impl VideoPage {
         page
     }
 
-    fn load(&mut self, ctx: &mut Context) {
+    pub fn load(&mut self, ctx: &mut Context) {
         if let State::Waiting = self.state
             && let Some(video) = &self.video
             && let Some(bytes) = VideoClip::find(ctx, video.clip)
@@ -82,7 +83,7 @@ impl VideoPage {
         }
     }
 
-    fn update(&mut self, playback: Option<Frame>) {
+    pub fn update(&mut self, playback: Option<Frame>) {
         let duration = Duration::from_millis(self.video.as_ref().map_or(0, |video| video.duration_ms));
         let (badge, playing, position, duration) = match &self.state {
             State::Waiting => (BadgeKind::Loading, false, Duration::ZERO, duration),
@@ -129,7 +130,7 @@ impl VideoPage {
         self.shown = Some(shown);
     }
 
-    fn act(&mut self, action: Action) {
+    pub fn act(&mut self, action: Action) {
         let State::Ready { player, scrubbing } = &mut self.state else { return };
         match action {
             Action::Toggle if player.is_playing() => player.stop(),
@@ -216,10 +217,8 @@ struct Shown {
     duration: u64,
 }
 
-use crate::design_system::{PlaybackBadge as BadgeKind, PlaybackAction as Action, ScrubPhase as Phase};
-
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct VideoEvent(pub(crate) Uuid, pub(crate) Action);
+struct VideoEvent(Uuid, Action);
 impl Event for VideoEvent {
     fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
         for child in children { *child.event = Some(*self); }

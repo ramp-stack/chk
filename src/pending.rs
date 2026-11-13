@@ -6,25 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll, Wake, Waker};
 
 /// Shares one local future and its result between independently cancelable waiters.
-pub(crate) struct Pending<T: Clone> {
+pub struct Pending<T: Clone> {
     state: Rc<RefCell<PendingState<T>>>,
     wake: Arc<PendingWake>,
     waiter: Option<usize>,
 }
-struct PendingState<T> {
-    future: Option<Pin<Box<dyn Future<Output = T>>>>,
-    result: Option<T>,
-}
-struct PendingWake(Mutex<Vec<Option<Waker>>>);
-impl Wake for PendingWake {
-    fn wake(self: Arc<Self>) {self.wake_by_ref();}
-    fn wake_by_ref(self: &Arc<Self>) {
-        let waiters = self.0.lock().unwrap().clone();
-        for waker in waiters.into_iter().flatten() {waker.wake();}
-    }
-}
 impl<T: Clone> Pending<T> {
-    pub(crate) fn new(future: impl Future<Output = T> + 'static) -> Self {
+    pub fn new(future: impl Future<Output = T> + 'static) -> Self {
         Self {
             state: Rc::new(RefCell::new(PendingState {future: Some(Box::pin(future)), result: None})),
             wake: Arc::new(PendingWake(Mutex::new(Vec::new()))),
@@ -77,5 +65,18 @@ impl<T: Clone> Future for Pending<T> {
                 Poll::Ready(result)
             }
         }
+    }
+}
+
+struct PendingState<T> {
+    future: Option<Pin<Box<dyn Future<Output = T>>>>,
+    result: Option<T>,
+}
+struct PendingWake(Mutex<Vec<Option<Waker>>>);
+impl Wake for PendingWake {
+    fn wake(self: Arc<Self>) {self.wake_by_ref();}
+    fn wake_by_ref(self: &Arc<Self>) {
+        let waiters = self.0.lock().unwrap().clone();
+        for waker in waiters.into_iter().flatten() {waker.wake();}
     }
 }

@@ -1,5 +1,6 @@
+use ptsd::selection::{SelectionChange, SelectionEvent, SelectorItem};
+
 use super::*;
-use ptsd::selection::{SelectorItem, SelectionChange, SelectionEvent};
 
 /// Data for a selectable list. Clones refer to the same input.
 #[derive(Clone, Debug)]
@@ -121,32 +122,33 @@ impl Input {
         Input::QRCodeScanner { instructions: instructions.to_string(), alt, on_find }
     }
 
-    pub(crate) fn text_placeholder(label: &str) -> String {
-        let label = label.trim();
-        let first_word = label.split_whitespace().next().unwrap_or_default();
-        // Labels start sentences; placeholders continue after "Enter". Keep
-        // intentional capitalization in names such as AirName and acronyms.
-        let mut chars = label.chars();
-        let label = match chars.next() {
-            Some(first) if !first_word.chars().skip(1).any(char::is_uppercase) => {
-                first.to_lowercase().chain(chars).collect()
-            }
-            _ => label.to_string(),
-        };
-        format!("Enter {label}...")
-    }
-
     pub fn build(&self, theme: &Theme, is_mobile: bool) -> Option<Vec<Box<dyn Drawable>>> {
         let mut children = match self {
             Self::Slider {start, label, description} => vec![theme.slider_input(*start, label.as_deref(), description.as_deref())],
             Self::Text {id, label, actions, show_label, preset} => {
-                let mut children = vec![theme.text_input(*id, preset.as_deref(), show_label.then_some(label.as_str()), &Self::text_placeholder(label))];
+                let text = label.trim();
+                let first_word = text.split_whitespace().next().unwrap_or_default();
+                // Keep acronyms and mixed-case names such as AirName in the placeholder.
+                let mut chars = text.chars();
+                let text = match chars.next() {
+                    Some(first) if !first_word.chars().skip(1).any(char::is_uppercase) => {
+                        first.to_lowercase().chain(chars).collect()
+                    }
+                    _ => text.to_string(),
+                };
+                let placeholder = format!("Enter {text}...");
+                let mut children = vec![theme.text_input(
+                    *id, preset.as_deref(), show_label.then_some(label.as_str()), &placeholder,
+                )];
                 if let Some(actions) = actions.as_ref().filter(|actions| !actions.is_empty()) {
                     children.push(theme.quick_actions(Offset::Start, actions.iter().map(ActionItem::presentation).collect()));
                 }
                 children
             }
-            Self::Enumerator {items} => vec![theme.choice_input(0, items.iter().map(ValueItem::get).collect())],
+            Self::Enumerator {items} => vec![theme.choice_input(0, items.iter().map(|item| {
+                (item.title.as_str(), item.data.as_str(),
+                    Box::new(|_: &mut Context, _: &Theme| {}) as Box<dyn Callback>)
+            }).collect())],
             Self::Currency {instructions} => vec![theme.currency_input(instructions)],
             Self::Number {instructions} => vec![theme.number_input(instructions)],
             Self::Date {instructions} => vec![theme.date_input(instructions)],

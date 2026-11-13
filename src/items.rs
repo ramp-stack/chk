@@ -1,29 +1,21 @@
-use crate::design_system::{Context, Callback};
-use prism::drawable::Drawable;
-use prism::drawable::{Component, text::Align};
-use prism::events::{on_change, on_event, ChildEvent, DynEvent, Event, OnEvent, OnChange};
-use prism::hardware::{Image, Picked};
-use ptsd::layout::Stack;
+use prism::air::{Id, Instance, Name};
+use prism::drawable::{Component, Drawable, text::Align};
+use prism::events::{ChildEvent, DynEvent, Event, OnChange, OnEvent, on_change, on_event};
+use prism::hardware::{Data, Image, Picked};
+use ptsd::layout::{Offset, Stack};
 use uuid::Uuid;
-use crate::design_system::QrCodeFound;
-use prism::hardware::Data;
-use crate::design_system::{Theme, Icons};
-use ptsd::layout::Offset;
-use crate::design_system::ListItemView;
-pub use crate::design_system::Number;
-use crate::design_system::{TextStyle, TextSize};
-pub use crate::design_system::{AvatarContent, AvatarIconStyle};
-use crate::design_system::TextInputEvent;
-use crate::design_system::FormEvent;
-use crate::design_system::{MessageGroups, MessageView};
-use prism::air::{Id, Name, Instance};
-use crate::profiles::Profile;
+
 use crate::blocking::{Block, BlockAction};
-use crate::Page;
-use crate::form::State;
+use crate::design_system::{
+    Callback, Context, FormEvent, Icons, ListItemView, MessageGroups, MessageView, QrCodeFound,
+    TextInputEvent, TextSize, TextStyle, Theme,
+};
+pub use crate::design_system::{AvatarContent, AvatarIconStyle, Number};
 use crate::flow::Flow;
-use crate::ContactInvitations;
+use crate::form::State;
 use crate::messages::ChatRoom;
+use crate::profiles::Profile;
+use crate::{ContactInvitations, Page};
 
 mod action;
 pub use action::*;
@@ -35,6 +27,18 @@ mod input;
 pub use input::*;
 mod list_item;
 pub use list_item::*;
+
+/// A labeled value shared by tables and enumerated choices.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueItem {
+    pub title: String,
+    pub data: String,
+}
+impl ValueItem {
+    pub fn new(title: &str, data: &str) -> Self {
+        Self {title: title.to_string(), data: data.to_string()}
+    }
+}
 
 /// Page content keeps editable controls and presentation explicitly distinct.
 #[derive(Debug, Clone)]
@@ -49,21 +53,6 @@ impl Item {
             Self::Input(input) => input.build(theme, is_mobile),
             Self::Display(display) => display.build(theme),
         }
-    }
-}
-
-/// A labeled value shared by tables and enumerated choices.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ValueItem {
-    pub(crate) title: String,
-    pub(crate) data: String,
-}
-impl ValueItem {
-    pub fn new(title: &str, data: &str) -> Self {
-        Self {title: title.to_string(), data: data.to_string()}
-    }
-    pub(crate) fn get(&self) -> (&str, &str, Box<dyn Callback>) {
-        (&self.title, &self.data, Box::new(|_, _| {}))
     }
 }
 

@@ -1,11 +1,7 @@
-use crate::design_system::Theme;
-use prism::drawable::Component;
-use ptsd::layout::Stack;
-use prism::events::{on_change, OnChange, Event, ChildEvent};
+use prism::{Context, drawable::Component, events::{on_change, OnChange, Event, ChildEvent}};
+use ptsd::{layout::Stack, navigation::AppPage};
 use uuid::Uuid;
-use ptsd::navigation::AppPage;
-use prism::Context;
-
+use crate::design_system::Theme;
 use crate::{MessagesPage, PageBuilder, NavFn};
 
 #[derive(Debug, Clone, Copy)]

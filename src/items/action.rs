@@ -1,6 +1,14 @@
+use crate::messages::{MessageContent, RoomNotificationState};
 use super::*;
-use crate::messages::RoomNotificationState;
 
+/// Ready-to-render action data; CHK owns labels and callbacks.
+#[derive(Clone, Debug)]
+pub struct ActionPresentation {
+    pub label: String,
+    pub active: Option<String>,
+    pub icon: Icons,
+    pub on_click: Box<dyn Callback>,
+}
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -166,18 +174,15 @@ impl Action {
     }
 
     pub fn share_contact(invitations: &ContactInvitations, name: Name) -> Action {
-        Action::Share {data: match &invitations.invitations {
-            Some(invitations) => invitations.url(name),
-            None => name.to_string(),
-        }}
+        Action::Share {data: invitations.contact_url(name)}
     }
 
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ActionItem(pub(crate) Action, pub(crate) String, pub(crate) Option<String>, pub(crate) Icons);
+pub struct ActionItem(Action, String, Option<String>, Icons);
 impl ActionItem {
-    pub(crate) fn format_label(label: &str) -> String {
+    pub fn format_label(label: &str) -> String {
         let mut output = String::with_capacity(label.len());
         let mut first_word = true;
         for part in label.split_inclusive(char::is_whitespace) {
@@ -207,6 +212,37 @@ impl ActionItem {
         ActionItem(action, label.to_string(), Some(active.to_string()), icon)
     }
 
+    pub fn mute(ctx: &mut Context, room: Instance<ChatRoom>) -> Self {
+        let muted = RoomNotificationState::open(ctx, room.id()).pending().is_muted();
+        let action = Action::mute(ctx, &room, !muted);
+        let (label, icon) = if muted {("Unmute", Icons::Unmute)} else {("Mute", Icons::Mute)};
+        Self(action, label.into(), None, icon)
+    }
+
+    pub fn copy_message(ctx: &mut Context, content: &MessageContent) -> Option<Self> {
+        let action = match content {
+            MessageContent::Text(text) => Action::copy(text),
+            MessageContent::Gif(gif) => Action::copy(&gif.url),
+            MessageContent::Video(_) => return None,
+            MessageContent::Photo(photo) => {
+                let photo = photo.clone();
+                Action::custom(move |ctx: &mut Context, _: &Theme| {
+                    ctx.hardware.set_clipboard(&Data::Image(photo.image()));
+                })
+            }
+            MessageContent::Sticker(sticker) => {
+                let sticker = sticker.clone();
+                Action::custom(move |ctx: &mut Context, _: &Theme| sticker.copy(ctx))
+            }
+            MessageContent::System(notice) => {
+                let profile = Profile::from_name(ctx, notice.member());
+                let text = notice.text_for(ctx.air.me(), &profile.pending().username);
+                Action::copy(&text)
+            }
+        };
+        Some(Self(action, "Copy".into(), Some("copied".into()), Icons::Copy))
+    }
+
     pub fn contact_actions(invitations: &ContactInvitations, name: Name) -> Vec<ActionItem> {
         vec![
             ActionItem(Action::copy(&name.to_string()), "Copy".into(), Some("Copied".into()), Icons::Copy),
@@ -215,17 +251,8 @@ impl ActionItem {
             ActionItem(Action::share_contact(invitations, name), "Share".into(), None, Icons::Send),
         ]
     }
-}
+    pub fn icon_action(&self) -> (Icons, Box<dyn Callback>) { (self.3, self.0.get()) }
 
-/// Ready-to-render action data; CHK owns labels and callbacks.
-#[derive(Clone, Debug)]
-pub struct ActionPresentation {
-    pub label: String,
-    pub active: Option<String>,
-    pub icon: Icons,
-    pub on_click: Box<dyn Callback>,
-}
-impl ActionItem {
     pub fn presentation(&self) -> ActionPresentation {
         ActionPresentation {label: Self::format_label(&self.1), active: self.2.as_deref().map(Self::format_label),
             icon: self.3, on_click: self.0.get()}
