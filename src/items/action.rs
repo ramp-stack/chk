@@ -231,7 +231,7 @@ impl ActionItem {
     pub fn mute(ctx: &mut Context, room: Instance<ChatRoom>) -> Self {
         let muted = RoomNotificationState::is_muted_for(&ctx.air, &room);
         let action = Action::mute(ctx, &room, !muted);
-        let (label, icon) = if muted {("Unmute", Icons::Unmute)} else {("Mute", Icons::Mute)};
+        let (label, icon) = if muted {("Unmute group", Icons::Unmute)} else {("Mute group", Icons::Mute)};
         Self(action, label.into(), None, icon)
     }
 

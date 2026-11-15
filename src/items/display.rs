@@ -1,6 +1,5 @@
 use super::*;
 use crate::{Form, PageType};
-use crate::messages::RoomNotificationState;
 
 #[derive(Debug, Clone)]
 pub enum Display {
@@ -134,31 +133,24 @@ impl Display {
             content: details.photo.clone(), purpose: AvatarPurpose::None,
         }];
         if active {
-            let muted = RoomNotificationState::open(ctx, room.id()).pending().is_muted();
-            display.push(Display::Cta {
-                label: "Notifications".into(), data: None,
-                instructions: if muted {"Notifications are muted for this group."}
-                    else {"Notifications are on for this group."}.into(),
-                actions: vec![ActionItem::mute(ctx, room.clone())],
-            });
             let add_room = room.clone();
-            let leave_room = room;
+            let leave_room = room.clone();
+
             display.push(Display::DataList {
                 label: "Group members".into(),
                 instructions: Some(format!("This group has {} members.", data.members.len())),
                 items,
-                actions: Some(vec![ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                    let form = Form::add_members(ctx, theme, add_room.clone());
-                    (Flow::from_form(form).build(ctx, theme))(ctx, theme);
-                }), "Add Members", Icons::Add)]),
-            });
-            display.push(Display::Cta {
-                label: "Leave group".into(), data: None,
-                instructions: "Remove yourself from this group.".into(),
-                actions: vec![ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                    (Flow::new(vec![Page::Static(Box::new(PageType::leave(leave_room.clone())))])
-                        .build(ctx, theme))(ctx, theme);
-                }), "Leave Group", Icons::Block)],
+                actions: Some(vec![
+                    ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                        let form = Form::add_members(ctx, theme, add_room.clone());
+                        (Flow::from_form(form).build(ctx, theme))(ctx, theme);
+                    }), "Add Members", Icons::Add),
+                    ActionItem::mute(ctx, room.clone()),
+                    ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                        (Flow::new(vec![Page::Static(Box::new(PageType::leave(leave_room.clone())))])
+                            .build(ctx, theme))(ctx, theme);
+                    }), "Leave Group", Icons::Leave)
+                ]),
             });
         } else {
             display.push(Display::Text {
@@ -193,10 +185,11 @@ impl Display {
 
         display.extend([
             Display::Avatar {content: profile.avatar.clone(), purpose: AvatarPurpose::None},
-            Display::Actions {actions, as_icons: true},
+            
         ]);
         if let Some(text) = notice {display.push(Display::Alert {text: text.into()});}
         display.extend([
+            Display::Actions {actions, as_icons: true},
             Display::Cta {label: "About me".into(), data: None, instructions: about.into(), actions: vec![]},
             Display::Cta {
                 label: "AirName".into(), data: None, instructions: name.to_string(),
