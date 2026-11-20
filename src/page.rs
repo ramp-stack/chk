@@ -1,20 +1,24 @@
-use prism::air::{Contract, Id, Instance};
+use prism::air::{Id, Instance};
 use prism::Context;
+use prism::drawable::{Component, Drawable};
+use prism::events::ListenCallback;
+use ptsd::layout::{Stack, Offset};
 use ptsd::navigation::AppPage;
 
-use std::{fmt::Debug, future::Future, pin::Pin};
+use std::{fmt::Debug, future::Future, ops::{Deref, DerefMut}, pin::Pin};
 
 use crate::blocking::Block;
-use crate::closure::{NavFn, PageBuilderContractFn, PageBuilderContractMultiplesFn};
-use crate::design_system::Theme;
-pub use crate::form::{Review, Success};
+use crate::closure::NavFn;
+use crate::design_system::{Content, Footer, Header, PageEvent, PageView, Theme};
+pub use crate::form::{DeferredSubmit, FormHost, Review, Success};
 use crate::messages::{ChatRoom, ContactNotificationState, Message, RoomNotificationState};
-pub use crate::page_type::{Bumper, DeferredSubmit, FormHost, PageType, Root, SearchSource};
+pub use crate::page_type::{Bumper, PageType};
+pub use crate::Root;
 use crate::profiles::Profile;
-use crate::Listener;
+use crate::{ContactInvitations, Item, Listener};
 
-mod stack;
-pub use stack::*;
+mod search;
+pub use search::SearchSource;
 mod watch;
 pub use watch::*;
 mod media;
@@ -37,21 +41,12 @@ impl Page {
         Page::Refreshing(Box::new(Watching::new(watcher, builder)))
     }
 
-    pub fn contract_updates<C: Contract>(contract: Instance<C>, builder: impl PageBuilderContractFn<C> + 'static) -> Self {
-        let builder: Box<dyn PageBuilderContractFn<C>> = Box::new(builder);
-        Page::Refreshing(Box::new(Watching::new(ContractWatch::new(contract), builder)))
-    }
-
-    pub fn updates_list_changes<C: Contract>(_ctx: &mut Context, builder: impl PageBuilderContractMultiplesFn<C> + 'static) -> Self {
-        let builder: Box<dyn PageBuilderContractMultiplesFn<C>> = Box::new(builder);
-        Page::Refreshing(Box::new(Watching::new(ListWatch::<C>::default(), builder)))
-    }
-
-    pub fn profile(ctx: &mut Context, profile: &mut Instance<Profile>) -> Self {
+    pub fn profile(invitations: &ContactInvitations, ctx: &mut Context, profile: &mut Instance<Profile>) -> Self {
+        let invitations = invitations.clone();
         let my_name = profile.pending().name.unwrap();
         let is_me = my_name == ctx.air.me();
         match is_me {
-            true => Page::Static(Box::new(PageType::editing(
+            true => Page::Static(Box::new(Profile::editing(
                 is_me, profile.clone(), ctx.window.is_mobile, None,
             ))),
             false => Page::Refreshing(Box::new(Watching::new(
@@ -59,29 +54,26 @@ impl Page {
                  ListWatch::<ChatRoom>::default(),
                  (ListWatch::<RoomNotificationState>::default(),
                   ListWatch::<ContactNotificationState>::default())),
-                |ctx: &mut Context, _: &Theme, (profile, _, _, _): (Instance<Profile>, _, _, _)| {
-                    PageType::profile_view(ctx, profile)
+                move |ctx: &mut Context, _: &Theme, (profile, _, _, _): (Instance<Profile>, _, _, _)| {
+                    Profile::profile_view(&invitations, ctx, profile)
                 },
             ))),
         }
     }
 
-    pub fn messaging(_ctx: &mut Context, room: &mut Instance<ChatRoom>) -> Self {
+    pub fn messaging(invitations: &ContactInvitations, room: Instance<ChatRoom>, target: Option<Id>) -> Self {
+        let invitations = invitations.clone();
         Page::Refreshing(Box::new(Watching::new(
             (ContractWatch::new(room.clone()), ListWatch::<Block>::default(),
              ListWatch::<Profile>::default()),
-            |_: &mut Context, _: &Theme, (room, _, _): (Instance<ChatRoom>, _, _)| {
-                PageType::messaging(room)
+            move |ctx: &mut Context, _: &Theme, (room, _, _): (Instance<ChatRoom>, _, _)| {
+                ChatRoom::page(&invitations, ctx, room, target)
             },
         )))
     }
 
     pub fn builder(&self) -> Option<Box<dyn PageBuilder>> {
         match self { Page::Refreshing(p) => Some(p.clone()), _ => None }
-    }
-
-    pub fn page_type(&self) -> Option<PageType> {
-        match self {Page::Static(p) => Some(p.as_ref().clone()), _ => None}
     }
 
     pub fn build(&self, ctx: &mut Context, theme: &Theme, mut next_fn: Option<NavFn>, length: usize) -> Box<dyn AppPage> {
@@ -106,29 +98,60 @@ impl Page {
         }
     }
 
-    pub fn chat_info(room: Instance<ChatRoom>) -> Page {
+    pub fn chat_info(invitations: &ContactInvitations, room: Instance<ChatRoom>) -> Page {
+        let invitations = invitations.clone();
         Page::Refreshing(Box::new(Watching::new(
             (ContractWatch::new(room), ListWatch::<Profile>::default(),
              ListWatch::<Block>::default(),
              (ListWatch::<RoomNotificationState>::default(),
               ListWatch::<ContactNotificationState>::default())),
-            |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, _, _, _)| {
-                PageType::chat_info(ctx, room)
+            move |ctx: &mut Context, _: &Theme, (room, _, _, _): (Instance<ChatRoom>, _, _, _)| {
+                PageType::chat_info(&invitations, ctx, room)
             },
         )))
     }
 
-    pub fn messaging_at(_ctx: &mut Context, room: &mut Instance<ChatRoom>, message: Id) -> Self {
-        Page::Refreshing(Box::new(crate::Watching::new(
-            (crate::ContractWatch::new(room.clone()), crate::ListWatch::<Block>::default(),
-             crate::ListWatch::<Profile>::default()),
-            move |_: &mut Context, _: &Theme, (room, _, _): (Instance<ChatRoom>, _, _)| {
-                PageType::Messaging {room, flow_len: 1, target: Some(message)}
-            },
-        )))
+    pub fn message_details(invitations: &ContactInvitations, ctx: &mut Context, room: Instance<ChatRoom>, message: Message, pops: usize) -> Self {
+        Page::Static(Box::new(message.page(invitations, ctx, room, pops)))
     }
+}
 
-    pub fn message_details(room: Instance<ChatRoom>, message: Message, pops: usize) -> Self {
-        Page::Static(Box::new(PageType::MessageDetails {room, message, pops}))
+#[derive(Debug, Component, Clone)]
+pub struct StackPage<D: Drawable + Clone = PageView>(Stack, D);
+
+impl<D: Drawable + Clone> AppPage for StackPage<D> {}
+impl<D: Drawable + Clone> StackPage<D> {
+    pub fn new(content: D) -> Self {StackPage(Stack::default(), content)}
+}
+
+impl<D: Drawable + Clone> Deref for StackPage<D> {
+    type Target = D;
+    fn deref(&self) -> &D {&self.1}
+}
+impl<D: Drawable + Clone> DerefMut for StackPage<D> {
+    fn deref_mut(&mut self) -> &mut D {&mut self.1}
+}
+
+impl StackPage<Box<dyn Drawable>> {
+    pub fn edge_to_edge(theme: &Theme, header: Header, content: Box<dyn Drawable>) -> Self {
+        StackPage(Stack::fill(), theme.edge_to_edge(header, content))
+    }
+}
+
+impl StackPage<PageView> {
+    #[allow(clippy::too_many_arguments, reason = "Page setup is supplied directly at construction.")]
+    pub fn content(
+        ctx: &mut Context, theme: &Theme, header: Header, items: Vec<Item>, offset: Offset,
+        footer: Option<Footer>, identity: Option<String>, reveal_child: Option<usize>,
+        on_event: Option<Box<dyn PageEvent>>,
+        on_show: Option<Box<dyn ptsd::utils::Callback>>, on_create: Option<ListenCallback<PageView>>,
+    ) -> Self {
+        let items = items.into_iter().flat_map(|item| item.build(ctx, theme)).collect();
+        let mut content = Content::new(offset, items,
+            Box::new(|_: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true));
+        if let Some(index) = reveal_child {content.reveal_child(index);}
+        StackPage(Stack::default(), theme.page(
+            ctx, header, content, footer, vec![], false, identity, on_event, on_show, on_create,
+        ))
     }
 }

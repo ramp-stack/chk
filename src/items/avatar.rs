@@ -93,9 +93,6 @@ impl OnEvent<FormEvent> for AvatarInput {
 
 impl InputControl for AvatarInput {
     fn state(&self) -> State {State::Avatar(self.content().clone())}
-    fn validation_value(&self) -> Option<String> {
-        Some(self.content().get_image().unwrap_or_default().to_string())
-    }
 }
 
 #[derive(Debug, Clone)]

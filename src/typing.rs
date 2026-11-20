@@ -2,7 +2,7 @@ use prism::Context;
 use prism::{air::{Instance, Name}, drawable::Component, events::{Timer, OnChange, on_change}};
 use ptsd::layout::Column;
 
-use std::time::{Duration, Instant};
+use std::{collections::HashMap, time::{Duration, Instant}};
 
 use crate::design_system::{Theme, TypingIndicator};
 use crate::{Watcher, ListWatch, messages::ChatRoom, profiles::Profile, blocking::Block};
@@ -12,16 +12,13 @@ use crate::air::typing::{TypingState, TypingAction};
 pub struct TypingPublisher {
     instance: Option<Instance<TypingState>>,
     last_sent: Option<Instant>,
-    active: bool,
 }
 
 impl TypingPublisher {
     pub fn edit(&mut self, ctx: &mut Context, room: &Instance<ChatRoom>, nonempty: bool) {
         if !nonempty || !room.pending().members.contains(&ctx.air.me()) {self.stop(); return;}
         let now = Instant::now();
-        if !self.active
-            || self.last_sent.is_none_or(|sent| now.duration_since(sent) >= Duration::from_secs(2)) {
-            self.active = true;
+        if self.last_sent.is_none_or(|sent| now.duration_since(sent) >= Duration::from_secs(2)) {
             self.last_sent = Some(now);
             let instance = self.instance.get_or_insert_with(|| {
                 let instance = ctx.air.instances::<TypingState>().create(room.id());
@@ -42,7 +39,7 @@ impl TypingPublisher {
     }
 
     pub fn stop(&mut self) {
-        if std::mem::take(&mut self.active) && let Some(instance) = &mut self.instance {
+        if self.last_sent.take().is_some() && let Some(instance) = &mut self.instance {
             instance.send(TypingAction::Activity {active: false, at: TypingState::now()});
         }
     }
@@ -74,16 +71,20 @@ impl TypingPanel {
         let me = ctx.air.me();
         let group = room.is_group();
         let now = TypingState::now();
+        let mut sent = HashMap::<Name, u64>::new();
+        for message in room.messages(me) {
+            if matches!(message.body, crate::messages::MessageContent::System(_)) {continue;}
+            // AIR message timestamps are nanoseconds; typing timestamps are milliseconds.
+            let timestamp = message.timestamp / 1_000_000;
+            sent.entry(message.author).and_modify(|latest| *latest = (*latest).max(timestamp))
+                .or_insert(timestamp);
+        }
         let mut shown = self.watch.get(ctx).into_iter().filter_map(|instance| {
             let state = instance.pending();
             if state.room != self.room.id() || state.author == me
                 || !room.members.contains(&state.author) || Block::did_i_block(ctx, state.author)
                 || Block::am_i_blocked(ctx, state.author) {return None;}
-            // AIR message timestamps are nanoseconds; typing timestamps are milliseconds.
-            let sent = room.messages(me).filter(|message| message.author == state.author
-                && !matches!(message.body, crate::messages::MessageContent::System(_)))
-                .map(|message| message.timestamp / 1_000_000).max();
-            state.is_typing(now, sent).then(|| {
+            state.is_typing(now, sent.get(&state.author).copied()).then(|| {
                 (state.author, Profile::from_name(ctx, state.author).pending().username.clone())
             })
         }).collect::<Vec<_>>();

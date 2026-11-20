@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::{Action, Context, Theme};
+use crate::blocking::Block;
 
 type InvitationParser<T> = Rc<dyn Fn(&str) -> Option<T>>;
 type InvitationAction<T> = Rc<dyn Fn(&mut Context, T) -> Action>;
@@ -162,6 +163,16 @@ impl ContactInvitations {
                 .or_else(|| value.trim().parse().ok()),
             None => value.trim().parse().ok(),
         }
+    }
+
+    pub fn validate_contact(&self, ctx: &mut Context, value: &str, excluded: &[Name], allow_self: bool) -> Result<Name, &'static str> {
+        let name = self.parse_contact(value).ok_or("Enter a valid AirName or contact link.")?;
+        if !allow_self && name == ctx.air.me() {return Err("You cannot add yourself as a contact.");}
+        if excluded.contains(&name) {return Err("Already in this group.");}
+        if Block::am_i_blocked(ctx, name) {
+            return Err("This user blocked you. You cannot add them as a contact.");
+        }
+        Ok(name)
     }
 }
 

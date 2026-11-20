@@ -1,5 +1,6 @@
 use prism::air::{Instance, Name};
 use prism::hardware::Data;
+use ptsd::navigation::NavigationEvent;
 use uuid::Uuid;
 
 use crate::blocking::{Block, BlockAction};
@@ -24,7 +25,6 @@ pub struct ActionPresentation {
 #[derive(Debug, Clone)]
 pub enum Action {
     Share { data: String },
-    SelectImage,
     Custom { action: Box<dyn Callback> },
     None,
     Flow { flow: Flow },
@@ -32,10 +32,6 @@ pub enum Action {
     SetText { id: Uuid, value: String },
     Copy { data: String },
     PickPhoto,
-}
-
-impl PartialEq for Action {
-    fn eq(&self, _: &Self) -> bool {true}
 }
 
 impl Action {
@@ -47,11 +43,11 @@ impl Action {
 
     pub fn copy(data: &str) -> Self {Action::Copy { data: data.to_string() }}
 
-    pub fn select_image() -> Self {Action::SelectImage}
-
     pub fn scan_qr(instructions: &str, id: Uuid) -> Self {
         let on_find = Box::new(move |ctx: &mut Context, value: String| {
-            ctx.emit(TextInputEvent::Set { id, value });
+            ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| {
+                ctx.emit(TextInputEvent::Set {id, value: value.clone()});
+            }));
         });
         Action::Flow {
             flow: Flow::new(vec![Page::Static(Box::new(crate::PageType::scan_qr(
@@ -180,10 +176,6 @@ impl Action {
                 })
             }
 
-            Action::SelectImage => {
-                Box::new(move |_ctx: &mut Context, _: &Theme| println!("Selecting image"))
-            }
-
             Action::Custom { action } => {
                 let mut action = action.clone();
                 Box::new(move |ctx: &mut Context, theme: &Theme| (action)(ctx, theme))
@@ -225,11 +217,12 @@ impl Action {
         }
     }
 
-    pub fn message(name: Name) -> Action {
+    pub fn message(invitations: &ContactInvitations, name: Name) -> Action {
+        let invitations = invitations.clone();
         Action::Custom {
             action: Box::new(move |ctx: &mut Context, theme: &Theme| {
-                let mut room = ChatRoom::create(ctx, vec![name]);
-                let mut flow = Flow::new(vec![Page::messaging(ctx, &mut room)]);
+                let room = ChatRoom::create(ctx, vec![name]);
+                let mut flow = Flow::new(vec![Page::messaging(&invitations, room, None)]);
                 (flow.build(ctx, theme))(ctx, theme);
             }),
         }
@@ -240,7 +233,7 @@ impl Action {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ActionItem(Action, String, Option<String>, Icons);
 impl ActionItem {
     pub fn format_label(label: &str) -> String {

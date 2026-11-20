@@ -1,42 +1,28 @@
-use prism::{Context, air::{Air, Id, Name, Metadata, Contract, Instance}};
+use prism::{Context, air::{Contract, Id, Instance, Metadata, Name}};
+use prism::events::{DynEvent, ListenCallback};
 use prism::hardware::Data;
+use ptsd::layout::Offset;
 use ptsd::navigation::NavigationEvent;
 use ptsd::utils::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use std::{collections::{BTreeMap, BTreeSet}, io::Write, sync::Arc};
+use std::{
+    cell::{Cell, RefCell}, collections::BTreeMap, future::Future, io::Write, pin::Pin,
+    rc::Rc, sync::Arc,
+};
 
-use crate::design_system::{Theme, AvatarContent, AvatarIconStyle, Icons, MessageView, Task};
+use crate::design_system::{Header, Icons, MessageView, PageCallbacks, PageView, Task, Theme};
+use crate::form::SubmitRequest;
 use crate::profiles::Profile;
-use crate::blocking::Block;
 use crate::items::{Action, Display, Item};
-use crate::{ActionItem, Flow, Page, ValueItem};
+use crate::{ActionItem, Bumper, ContactInvitations, ContractWatch, Flow, NavFn, Page, PageType, ValueItem};
 pub use crate::design_system::{MessageContent, SystemMessage, Sticker, StickerPack, Gif};
 pub use crate::design_system::{Photo, Video, VideoClip};
+pub use super::chat_room::{ChatRoom, ChatRoomAction, GroupDetails};
+pub use super::notifications::{ContactNotificationState, RoomNotificationState};
 
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
-pub enum ChatRoomAction {
-    Share(Name), SendMessage(String), SendSticker(Sticker), SendGif(Gif), SendPhoto(Photo),
-    SendVideo(Video), DeleteMessage(Message),
-    // Append variants: existing signed actions must keep their discriminants.
-    CreateGroup, RenameGroup(String), SetGroupPhoto(AvatarContent), Leave,
-    AddMember(Name), LeaveGroup,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GroupDetails {
-    pub name: String,
-    pub photo: AvatarContent,
-}
-impl Default for GroupDetails {
-    fn default() -> Self {
-        Self {
-            name: "Group message".into(),
-            photo: AvatarContent::icon(Icons::Group, AvatarIconStyle::Secondary),
-        }
-    }
-}
+type SaveRequest = Pin<Box<dyn Future<Output = Result<Data, String>>>>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct Message {
@@ -82,25 +68,31 @@ impl Message {
         else {text.to_string()}
     }
 
-    pub fn details(&self, ctx: &mut Context, mut room: Instance<ChatRoom>, pops: usize, share: Option<ActionItem>) -> Vec<Item> {
+    pub fn details(
+        &self, invitations: &ContactInvitations, ctx: &mut Context, mut room: Instance<ChatRoom>,
+        pops: usize, share: Option<ActionItem>,
+    ) -> Vec<Item> {
         let is_mine = self.author == ctx.air.me();
         let author = self.author;
         let sender_name = if is_mine {"You".to_string()}
             else {Profile::from_name(ctx, author).pending().username.clone()};
         let bubble = self.to_view(ctx, |_: &mut Context, _: &Theme| {});
 
-        let message = self.clone();
-        let delete = ActionItem::new(Action::custom(move |ctx: &mut Context, _: &Theme| {
-            room.send(ChatRoomAction::DeleteMessage(message.clone()));
-            (0..pops).for_each(|_| ctx.emit(NavigationEvent::Pop));
-        }), "Delete", Icons::Delete);
+        let mut actions = Vec::new();
+        if !matches!(self.body, MessageContent::System(_)) {
+            let message = self.clone();
+            actions.push(ActionItem::new(Action::custom(move |ctx: &mut Context, _: &Theme| {
+                room.send(ChatRoomAction::DeleteMessage(message.clone()));
+                (0..pops).for_each(|_| ctx.emit(NavigationEvent::Pop));
+            }), "Delete", Icons::Delete));
+        }
         let timestamp = Timestamp::from_u64(self.timestamp);
-        let mut actions = vec![delete];
         if let Some(copy) = ActionItem::copy_message(ctx, &self.body) {actions.push(copy);}
         if let Some(share) = share {actions.push(share);}
+        let invitations = invitations.clone();
         actions.push(ActionItem::new(Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
             let mut profile = Profile::from_name(ctx, author);
-            Flow::new(vec![Page::profile(ctx, &mut profile)])
+            Flow::new(vec![Page::profile(&invitations, ctx, &mut profile)])
         }), "View profile", Icons::Profile));
 
         vec![
@@ -134,6 +126,98 @@ impl Message {
             Ok(Data::File(path))
         }).next().await.ok_or_else(|| "Could not prepare this media for saving.".to_string())?
     }
+
+    pub fn page(&self, invitations: &ContactInvitations, ctx: &Context, room: Instance<ChatRoom>, pops: usize) -> PageType {
+        let title = if self.author == ctx.air.me() {"Sent message"} else {"Received message"};
+        let message = self.clone();
+        let invitations = invitations.clone();
+        let lifecycle = Box::new(move |ctx: &mut Context, theme: &Theme, _: Option<NavFn>, _: usize| -> PageCallbacks {
+            let message = message.clone();
+            let room = room.clone();
+            let id = Uuid::new_v4();
+            let content = message.body.clone();
+            let share = (!matches!(content, MessageContent::Text(_) | MessageContent::System(_))).then(|| {
+                ActionItem::new(Action::custom(move |ctx: &mut Context, _: &Theme| {
+                    ctx.emit(SubmitRequest(id));
+                }), "Share", Icons::Send)
+            });
+            let profile = Profile::from_name(ctx, message.author);
+            let error = Rc::new(RefCell::new(None::<String>));
+            let visible_error = error.clone();
+            let render_theme = theme.clone();
+            let invitations = invitations.clone();
+            let update = move |ctx: &mut Context, page: &mut PageView, _: Instance<Profile>| {
+                let mut items = message.details(&invitations, ctx, room.clone(), pops, share.clone());
+                if let Some(error) = visible_error.borrow().as_deref() {
+                    items.push(Item::Display(Display::instructions(error)));
+                }
+                *page.content_mut().children_mut() = items.into_iter()
+                    .flat_map(|item| item.build(ctx, &render_theme)).collect();
+            };
+            let watcher = ContractWatch::new(profile.clone());
+            let render = update.clone();
+            let on_create: ListenCallback<PageView> = Box::new(move |page, ctx| {
+                page.watch(ctx, watcher, render);
+            });
+            let event_theme = theme.clone();
+            let mut request = None;
+            let on_event = Box::new(move |ctx: &mut Context, page: &mut PageView, event: &dyn DynEvent| {
+                if !matches!(event.downcast_ref::<SubmitRequest>(),
+                    Some(SubmitRequest(target)) if *target == id) {
+                    return false;
+                }
+                if request.is_some_and(|request| page.pending(request)) {return true;}
+                let future: SaveRequest = match &content {
+                    MessageContent::Photo(photo) => {
+                        Box::pin(Message::export(Arc::from(photo.jpeg()), "jpg"))
+                    }
+                    MessageContent::Sticker(sticker) => {
+                        let image = sticker.image();
+                        Box::pin(async move {Ok(Data::Image(image))})
+                    }
+                    MessageContent::Video(video) => {
+                        let bytes = crate::messages::VideoClip::find(ctx, video.clip);
+                        Box::pin(async move {
+                            let bytes = bytes.ok_or(
+                                "This video is still downloading. Try again when it finishes.",
+                            )?;
+                            Message::export(bytes, "mp4").await
+                        })
+                    }
+                    MessageContent::Gif(gif) => {
+                        let bytes = event_theme.gif_bytes(gif);
+                        Box::pin(async move {
+                            let bytes = bytes.await?;
+                            let extension = Message::image_extension(&bytes)
+                                .or_else(|| (bytes.get(4..8) == Some(b"ftyp")).then_some("mp4"))
+                                .ok_or("This GIF's format cannot be saved to Photos.")?;
+                            Message::export(bytes, extension).await
+                        })
+                    }
+                    _ => return true,
+                };
+                let (error, update, profile) = (error.clone(), update.clone(), profile.clone());
+                let shared = Cell::new(false);
+                request = Some(page.spawn(future, move |ctx, page, result| {
+                    *error.borrow_mut() = match result {
+                        Ok(data) => {
+                            if !shared.replace(true) {ctx.hardware.share(&data);}
+                            None
+                        }
+                        Err(error) => Some(error),
+                    };
+                    update(ctx, page, profile.clone());
+                }));
+                true
+            });
+            (Some(on_event), None, Some(on_create))
+        });
+        PageType::Content {
+            header: Header::stack(title, None), items: vec![], offset: Offset::Start,
+            bumper: Bumper::None, next: None, flow_len: 1, lifecycle: Some(lifecycle),
+            identity: None, reveal_child: None,
+        }
+    }
 }
 
 /// Private, per-reader flags kept outside the shared message's binary schema.
@@ -165,7 +249,11 @@ impl RoomReadState {
     pub fn open(ctx: &Context, room: Id) -> Instance<Self> {
         // AIR includes the creator in the location. Never share this instance
         // or enable notifications: reading must not notify the other members.
-        ctx.air.instances::<Self>().create(room)
+        let owner = ctx.air.me();
+        ctx.air.instances::<RoomReadState>().list().into_values().find(|instance| {
+            let state = instance.pending();
+            state.room == room && state.owner == owner
+        }).unwrap_or_else(|| ctx.air.instances::<RoomReadState>().create(room))
     }
 
     pub fn is_read(&self, message: &Message) -> bool {
@@ -176,398 +264,5 @@ impl RoomReadState {
 
     pub fn unread<'a>(&'a self, room: &'a ChatRoom) -> impl Iterator<Item = Id> + 'a {
         room.messages(self.owner).filter(|message| !self.is_read(message)).map(|message| message.id)
-    }
-}
-
-/// Private direct-message preference, saved even before a conversation exists.
-#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
-pub struct ContactNotificationState {
-    pub contact: Name,
-    pub owner: Name,
-    muted: bool,
-}
-
-impl Contract for ContactNotificationState {
-    type Message = bool;
-    type Init = Name;
-    type Result = ();
-
-    fn id() -> Id {Id::hash("CHK.ContactNotificationState.v1")}
-    fn init(contact: Name, metadata: Metadata) -> Self {
-        Self {contact, owner: metadata.signer, muted: false}
-    }
-    fn apply(&mut self, muted: bool, metadata: Metadata) {
-        if metadata.signer == self.owner {self.muted = muted;}
-    }
-}
-
-impl ContactNotificationState {
-    pub fn find(air: &Air, contact: Name) -> Option<Instance<Self>> {
-        let owner = air.me();
-        air.instances::<Self>().list().into_values().find(|instance| {
-            let preferences = instance.pending();
-            preferences.contact == contact && preferences.owner == owner
-        })
-    }
-
-    pub fn is_muted_for(air: &Air, contact: Name) -> bool {
-        if let Some(preferences) = ContactNotificationState::find(air, contact) {
-            return preferences.pending().muted;
-        }
-        // Preserve old DM mutes until the owner explicitly sets a person preference.
-        let owner = air.me();
-        let muted_rooms: BTreeSet<_> = air.instances::<RoomNotificationState>().list().into_values()
-            .filter_map(|instance| {
-                let preferences = instance.pending();
-                (preferences.owner == owner && preferences.muted).then_some(preferences.room)
-            }).collect();
-        !muted_rooms.is_empty() && air.instances::<ChatRoom>().list().into_values().any(|room| {
-            muted_rooms.contains(&room.id()) && room.pending().direct_contact(owner) == Some(contact)
-        })
-    }
-
-    pub fn set_muted(ctx: &Context, contact: Name, muted: bool) {
-        let mut preferences = ContactNotificationState::find(&ctx.air, contact)
-            .unwrap_or_else(|| ctx.air.instances::<Self>().create(contact));
-        if preferences.pending().muted != muted {preferences.send(muted);}
-        // Never share this preference or create a room just to apply it.
-        let me = ctx.air.me();
-        for room in ctx.air.instances::<ChatRoom>().list().into_values() {
-            if room.pending().direct_contact(me) == Some(contact) {
-                RoomNotificationState::apply_to(ctx, &room);
-            }
-        }
-    }
-}
-
-/// Private group preferences and legacy DM preferences; never shared with other members.
-#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
-pub struct RoomNotificationState {
-    pub room: Id,
-    pub owner: Name,
-    muted: bool,
-}
-
-impl Contract for RoomNotificationState {
-    type Message = bool;
-    type Init = Id;
-    type Result = ();
-
-    fn id() -> Id {Id::hash("CHK.RoomNotificationState.v1")}
-    fn init(room: Id, metadata: Metadata) -> Self {
-        Self {room, owner: metadata.signer, muted: false}
-    }
-    fn apply(&mut self, muted: bool, metadata: Metadata) {
-        if metadata.signer == self.owner {self.muted = muted;}
-    }
-}
-
-impl RoomNotificationState {
-    pub fn find(air: &Air, room: Id) -> Option<Instance<Self>> {
-        let owner = air.me();
-        air.instances::<Self>().list().into_values().find(|instance| {
-            let preferences = instance.pending();
-            preferences.room == room && preferences.owner == owner
-        })
-    }
-
-    pub fn open(ctx: &Context, room: Id) -> Instance<Self> {
-        // Creating an existing instance still notifies list watchers. Keep reads
-        // quiet so rebuilding chat info cannot trigger another rebuild itself.
-        RoomNotificationState::find(&ctx.air, room)
-            .unwrap_or_else(|| ctx.air.instances::<RoomNotificationState>().create(room))
-    }
-
-    pub fn is_muted(&self) -> bool {self.muted}
-
-    pub fn is_muted_for(air: &Air, room: &Instance<ChatRoom>) -> bool {
-        match room.pending().direct_contact(air.me()) {
-            Some(contact) => ContactNotificationState::is_muted_for(air, contact),
-            None => RoomNotificationState::find(air, room.id())
-                .is_some_and(|preferences| preferences.pending().muted),
-        }
-    }
-
-    pub fn enabled(air: &Air, room: &Instance<ChatRoom>) -> bool {
-        room.pending().members.contains(&air.me()) && !RoomNotificationState::is_muted_for(air, room)
-    }
-
-    pub fn set_muted(ctx: &Context, room: &Instance<ChatRoom>, muted: bool) {
-        if let Some(contact) = room.pending().direct_contact(ctx.air.me()) {
-            ContactNotificationState::set_muted(ctx, contact, muted);
-            return;
-        }
-        let mut preferences = RoomNotificationState::open(ctx, room.id());
-        if preferences.pending().is_muted() != muted {preferences.send(muted);}
-        RoomNotificationState::apply_to(ctx, room);
-    }
-
-    pub fn apply_to(ctx: &Context, room: &Instance<ChatRoom>) {
-        room.notify(RoomNotificationState::enabled(&ctx.air, room));
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ChatRoom {
-    pub members: Vec<Name>,
-    messages: Vec<Message>,
-    pub id: Id,
-    group: Option<GroupDetails>,
-}
-
-impl Serialize for ChatRoom {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match &self.group {
-            None => (&self.members, &self.messages, self.id).serialize(serializer),
-            Some(details) => (Vec::<Name>::new(), GroupStorage::V1 {
-                members: &self.members, messages: &self.messages, details,
-            }, self.id).serialize(serializer),
-        }
-    }
-}
-impl<'de> Deserialize<'de> for ChatRoom {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_tuple(3, RoomVisitor)
-    }
-}
-
-impl Contract for ChatRoom {
-    type Message = ChatRoomAction;
-    type Init = Id;
-    type Result = usize;
-
-    fn id() -> Id {Id::hash("ChatRoom")}
-
-    fn init(init: Id, metadata: Metadata) -> Self {
-        ChatRoom {members: vec![metadata.signer], messages: Vec::new(), id: init, group: None}
-    }
-
-    fn apply(&mut self, message: ChatRoomAction, metadata: Metadata) -> usize {
-        if !self.members.contains(&metadata.signer) {return self.messages.len();}
-        match message {
-            ChatRoomAction::Share(recipient) => {
-                if !self.members.contains(&recipient) {self.members.push(recipient);}
-            }
-            ChatRoomAction::SendMessage(message) => {
-                self.append(MessageContent::Text(message), metadata);
-            }
-            ChatRoomAction::SendSticker(sticker) => {
-                self.append(MessageContent::Sticker(sticker), metadata);
-            }
-            ChatRoomAction::SendGif(gif) => {self.append(MessageContent::Gif(gif), metadata);}
-            ChatRoomAction::SendPhoto(photo) => {
-                self.append(MessageContent::Photo(photo), metadata);
-            }
-            ChatRoomAction::SendVideo(video) => {
-                self.append(MessageContent::Video(video), metadata);
-            }
-            ChatRoomAction::DeleteMessage(message) => {
-                if matches!(message.body, MessageContent::System(_)) {return self.messages.len();}
-                if let Some(i) = self.messages.iter().position(|m| *m == message) {
-                    let message = &mut self.messages[i];
-                    if message.author == metadata.signer {
-                        self.messages.remove(i);
-                    } else if !message.hidden_from.contains(&metadata.signer) {
-                        message.hidden_from.push(metadata.signer);
-                    }
-                }
-            }
-            ChatRoomAction::CreateGroup => {
-                if self.members.len() == 1 && self.messages.is_empty() {
-                    self.group.get_or_insert_with(GroupDetails::default);
-                }
-            }
-            ChatRoomAction::RenameGroup(name) => {
-                let name = name.trim();
-                if self.is_group() && !name.is_empty() && name.chars().count() <= 80 {
-                    self.group.get_or_insert_with(GroupDetails::default).name = name.into();
-                }
-            }
-            ChatRoomAction::SetGroupPhoto(photo) => {
-                if self.is_group() {
-                    self.group.get_or_insert_with(GroupDetails::default).photo = photo;
-                }
-            }
-            ChatRoomAction::Leave => {
-                if self.is_group() {
-                    self.group.get_or_insert_with(GroupDetails::default);
-                    self.members.retain(|name| *name != metadata.signer);
-                }
-            }
-            // New actions keep old Share/Leave replays unchanged. Membership
-            // and its notice are one AIR update, not two separate notifications.
-            ChatRoomAction::AddMember(recipient) => {
-                if self.is_group() && !self.members.contains(&recipient) {
-                    self.members.push(recipient);
-                    self.append_system(SystemMessage::MemberAdded(recipient), metadata);
-                }
-            }
-            ChatRoomAction::LeaveGroup => {
-                if self.is_group() {
-                    self.group.get_or_insert_with(GroupDetails::default);
-                    self.members.retain(|name| *name != metadata.signer);
-                    self.append_system(SystemMessage::MemberLeft(metadata.signer), metadata);
-                }
-            }
-        }
-
-        self.messages.len()
-    }
-}
-
-impl ChatRoom {
-    pub fn can_message(&self, ctx: &mut Context) -> bool {
-        let me = ctx.air.me();
-        self.members.contains(&me) && self.direct_contact(me).filter(|name| *name != me)
-            .is_none_or(|name| !Block::did_i_block(ctx, name) && !Block::am_i_blocked(ctx, name))
-    }
-
-    pub fn direct_contact(&self, me: Name) -> Option<Name> {
-        if self.is_group() || !self.members.contains(&me) {return None;}
-        let contact = self.members.iter().copied().find(|name| *name != me).unwrap_or(me);
-        self.members.iter().all(|name| *name == me || *name == contact).then_some(contact)
-    }
-
-    pub fn start_notifications(ctx: &Context) {
-        ctx.air.start::<super::notifications::MessageNotifications>(());
-    }
-
-    pub fn find_direct(ctx: &Context, recipient: Name) -> Option<Instance<Self>> {
-        let me = ctx.air.me();
-        // Received and older DMs may have a different creator or init ID.
-        ctx.air.instances::<Self>().list().into_values().filter(|instance| {
-            let room = instance.pending();
-            !room.is_group() && room.members.contains(&me) && room.members.contains(&recipient)
-                && room.members.iter().all(|name| *name == me || *name == recipient)
-        }).min_by_key(|instance| {
-            // Prefer actual conversations over empty duplicates, with a
-            // stable tie-breaker independent of HashMap iteration order.
-            (instance.pending().messages.is_empty(), instance.id())
-        })
-    }
-
-    pub fn create(ctx: &mut Context, mut recipients: Vec<Name>) -> Instance<ChatRoom> {
-        let me = ctx.air.me();
-        recipients.retain(|name| *name != me);
-        recipients.sort_unstable();
-        recipients.dedup();
-        let rooms = ctx.air.instances::<ChatRoom>();
-        let id = if recipients.len() <= 1 {
-            let recipient = recipients.first().copied().unwrap_or(me);
-            if let Some(room) = ChatRoom::find_direct(ctx, recipient) {return room;}
-            Id::hash(&recipient)
-        } else {
-            Id::random()
-        };
-
-        let mut room = rooms.create(id);
-        let group = recipients.len() > 1;
-        if group {room.send(ChatRoomAction::CreateGroup);}
-
-        for recipient in recipients {
-            room.share(recipient);
-            room.send(if group {ChatRoomAction::AddMember(recipient)}
-                else {ChatRoomAction::Share(recipient)});
-        }
-
-        room
-    }
-
-    pub fn name(&self, ctx: &mut Context) -> String {
-        if self.is_group() {return self.group_details().name;}
-
-        let member = match self.members.len() == 1 {
-            true => self.members[0],
-            false => *self.members.iter().find(|p| **p != ctx.air.me()).unwrap(),
-        };
-
-        let profile = Profile::from_name(ctx, member);
-        let username = &profile.pending().username;
-
-        match member == ctx.air.me() {
-            true => format!("{username} (You)"), false => username.to_string(),
-        }
-    }
-
-    pub fn messages(&self, me: Name) -> impl DoubleEndedIterator<Item = &Message> {
-        self.messages.iter().filter(move |m| !m.hidden_from.contains(&me))
-    }
-
-    pub fn is_group(&self) -> bool {self.group.is_some() || self.members.len() > 2}
-
-    pub fn group_details(&self) -> GroupDetails {self.group.clone().unwrap_or_default()}
-
-    pub fn add_members(ctx: &mut Context, room: &mut Instance<Self>, recipients: Vec<Name>) {
-        let current = room.pending();
-        if !current.is_group() || !current.members.contains(&ctx.air.me()) {return;}
-        let mut recipients: Vec<_> = recipients.into_iter()
-            .filter(|name| !current.members.contains(name)).collect();
-        recipients.sort_unstable();
-        recipients.dedup();
-        // Video attachments use separate AIR instances; invitees need those too.
-        let videos: Vec<_> = current.messages.iter().filter_map(|message| {
-            if let MessageContent::Video(video) = &message.body {Some(video.clone())} else {None}
-        }).collect();
-        drop(current);
-        let clips = if videos.is_empty() {Vec::new()} else {
-            ctx.air.instances::<VideoClip>().list().into_values().filter(|clip| {
-                videos.iter().any(|video| video.clip == clip.pending().id)
-            }).collect()
-        };
-        for recipient in recipients {
-            room.send(ChatRoomAction::AddMember(recipient));
-            room.share(recipient);
-            for clip in &clips {clip.share(recipient);}
-        }
-    }
-
-    pub fn append(&mut self, body: MessageContent, metadata: Metadata) {
-        let id = Id::hash(&(metadata.signer, metadata.timestamp));
-        self.messages.push(Message {
-            author: metadata.signer, timestamp: metadata.timestamp, body, id,
-            hidden_from: Vec::new(),
-        });
-    }
-
-    pub fn append_system(&mut self, notice: SystemMessage, metadata: Metadata) {
-        let id = Id::hash(&(
-            "GroupNotice.v1", self.id, metadata.signer, metadata.timestamp,
-            &notice, self.messages.len(),
-        ));
-        self.messages.push(Message {
-            author: metadata.signer, timestamp: metadata.timestamp,
-            body: MessageContent::System(notice), id, hidden_from: Vec::new(),
-        });
-    }
-}
-
-// Old rooms are (members, messages, id), nested inside AIR's cached instances.
-// An empty first vector was impossible in the old schema (the creator never
-// left). Reserve it as a version marker, without reading past an old room into
-// the surrounding cache. Ordinary DMs retain their exact existing encoding.
-#[derive(Serialize, Deserialize)]
-enum GroupStorage<M, T, D> {
-    V1 {members: M, messages: T, details: D},
-}
-
-struct RoomVisitor;
-impl<'de> serde::de::Visitor<'de> for RoomVisitor {
-    type Value = ChatRoom;
-    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {f.write_str("a chat room")}
-    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<ChatRoom, A::Error> {
-        let members: Vec<Name> = seq.next_element()?
-            .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-        let (members, messages, group) = if members.is_empty() {
-            let GroupStorage::V1 {members, messages, details} = seq
-                .next_element::<GroupStorage<Vec<Name>, Vec<Message>, GroupDetails>>()?
-                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-            (members, messages, Some(details))
-        } else {
-            let messages = seq.next_element()?
-                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-            (members, messages, None)
-        };
-        let id = seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
-        Ok(ChatRoom {members, messages, id, group})
     }
 }

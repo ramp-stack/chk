@@ -10,14 +10,14 @@ use crate::items::{Action, ActionItem, AvatarPurpose, ListItem, ValueItem};
 use crate::messages::ChatRoom;
 use crate::profiles::Profile;
 use crate::typing_ui::TypingPanel;
-use crate::{Flow, Form, Page, PageType};
+use crate::{ContactInvitations, Flow, Form, Page, PageType};
 
 #[derive(Debug, Clone)]
 pub enum Display {
     Text {text: String, size: TextSize, style: TextStyle, align: Align},
     Alert {text: String},
     Icon {icon: Icons},
-    Image {image: String, size: (f32, f32)},
+    Image {image: String, width: f32},
     Cta {label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem>},
     Table {label: String, items: Vec<ValueItem>, actions: Option<Vec<ActionItem>>},
     DataList {
@@ -69,8 +69,8 @@ impl Display {
 
     pub fn icon(icon: Icons) -> Self {Display::Icon { icon }}
 
-    pub fn image(image: &str, size: (f32, f32)) -> Self {
-        Display::Image { image: image.to_string(), size }
+    pub fn image(image: &str, width: f32) -> Self {
+        Display::Image { image: image.to_string(), width }
     }
 
     pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<ActionItem>) -> Self {
@@ -123,7 +123,7 @@ impl Display {
         Display::Messages { messages, group }
     }
 
-    pub fn group_info(ctx: &mut Context, room: Instance<ChatRoom>) -> Vec<Self> {
+    pub fn group_info(invitations: &ContactInvitations, ctx: &mut Context, room: Instance<ChatRoom>) -> Vec<Self> {
         let data = room.pending().clone();
         let details = data.group_details();
         let me = ctx.air.me();
@@ -134,14 +134,16 @@ impl Display {
                 let title = if *name == me {
                     format!("{} (You)", data.username)
                 } else {data.username.clone()};
-                let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
+                let flow = Flow::new(vec![Page::profile(invitations, ctx, &mut profile)]);
                 ListItem::avatar(
-                    data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)),
+                    data.avatar.clone(), &title, &data.name(), None,
+                    Some(Action::flow(flow)), false, None,
                 )
             }).collect();
         let mut display =
             vec![Display::Avatar { content: details.photo.clone(), purpose: AvatarPurpose::None }];
         if active {
+            let invitations = invitations.clone();
             let add_room = room.clone();
             let leave_room = room.clone();
 
@@ -152,7 +154,7 @@ impl Display {
                 actions: Some(vec![
                     ActionItem::new(
                         Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                            let form = Form::add_members(ctx, theme, add_room.clone());
+                            let form = Form::add_members(&invitations, ctx, theme, add_room.clone());
                             (Flow::from_form(form).build(ctx, theme))(ctx, theme);
                         }),
                         "Add Members", Icons::Add,
@@ -180,7 +182,7 @@ impl Display {
         display
     }
 
-    pub fn profile(ctx: &mut Context, profile: Instance<Profile>) -> Vec<Self> {
+    pub fn profile(invitations: &ContactInvitations, ctx: &mut Context, profile: Instance<Profile>) -> Vec<Self> {
         let instance = profile.clone();
         let profile = profile.pending().clone();
         let name = profile.name.unwrap();
@@ -193,7 +195,7 @@ impl Display {
         display.extend([
             Display::Actions {
                 actions: vec![
-                    ActionItem::new(Action::message(name), "Message", Icons::Messages),
+                    ActionItem::new(Action::message(invitations, name), "Message", Icons::Messages),
                     ActionItem::block_profile(ctx, &instance),
                     ActionItem::mute_profile(ctx, &instance),
                 ],
@@ -232,17 +234,17 @@ impl Display {
         let name = profile.pending().name.unwrap();
         match (name == ctx.air.me(), Block::did_i_block(ctx, name), Block::am_i_blocked(ctx, name))
         {
-            (false, true, _) => Some(Display::Alert { text: "This user blocked you.".into() }),
-            (false, _, true) => Some(Display::Alert { text: "You blocked this user.".into() }),
+            (false, true, _) => Some(Display::Alert { text: "You blocked this user.".into() }),
+            (false, _, true) => Some(Display::Alert { text: "This user blocked you.".into() }),
             _ => None,
         }
     }
 
-    pub fn build(&mut self, ctx: &mut Context, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
-        Some(match self {
+    pub fn build(&self, ctx: &mut Context, theme: &Theme) -> Vec<Box<dyn Drawable>> {
+        match self {
             Display::Alert { text } => vec![theme.alert_view(text)],
             Display::Icon { icon } => vec![theme.icon_view(*icon, 128.0)],
-            Display::Image { image, size } => vec![theme.image_view(image, size.0)],
+            Display::Image { image, width } => vec![theme.image_view(image, *width)],
             Display::Text { text, size, style, align } if !text.is_empty() => {
                 vec![theme.text_view(text, *size, *style, *align)]
             }
@@ -302,7 +304,7 @@ impl Display {
                 vec![theme.message_group(ctx, messages.clone(), *group)]
             }
             Display::Typing { room } => vec![Box::new(TypingPanel::new(ctx, theme, room.clone()))],
-            _ => return None,
-        })
+            Display::Text { .. } => vec![],
+        }
     }
 }

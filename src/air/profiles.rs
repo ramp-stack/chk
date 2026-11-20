@@ -1,9 +1,15 @@
 use prism::Context;
 use prism::air::{Metadata, Contract, Id, Name, Instance};
+use ptsd::layout::Offset;
 use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::design_system::{AvatarContent, ProfileView};
+use crate::closure::FormSubmit;
+use crate::design_system::{AvatarContent, Header, Icons, ProfileView, Theme};
+use crate::form::{FormItem, FormValues};
+use crate::items::{Action, Display, Item};
+use crate::{ActionItem, Bumper, ContactInvitations, Flow, FormComplete, FormValidState, Page, PageType};
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ProfileAction {
@@ -83,6 +89,93 @@ impl Profile {
             "{}...{}", c[..17].iter().collect::<String>(),
             c[c.len() - 4..].iter().collect::<String>()
         )
+    }
+
+    pub fn profile_view(invitations: &ContactInvitations, ctx: &mut Context, profile: Instance<Profile>) -> PageType {
+        let name = profile.pending().name.unwrap();
+        let title = profile.pending().username.clone();
+        let is_me = name == ctx.air.me();
+        let items = Display::profile(invitations, ctx, profile.clone())
+            .into_iter().map(Item::Display).collect();
+        let header = Some((Icons::Edit, Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
+            Flow::new(vec![Page::Static(Box::new(Profile::editing(
+                is_me, profile.clone(), ctx.window.is_mobile, None,
+            )))])
+        })));
+        PageType::Content {
+            header: Header::stack(
+                &title, header.map(|(icon, action)| (icon, action.get())),
+            ),
+            items, bumper: Bumper::None, offset: Offset::Start,
+            flow_len: 1, next: None, lifecycle: None, identity: None, reveal_child: None,
+        }
+    }
+
+    pub fn editing(is_me: bool, profile: Instance<Profile>, is_mobile: bool, contact_actions: Option<Vec<ActionItem>>) -> PageType {
+        let p = (*profile.pending()).clone();
+        let mut saved = p.clone();
+        let mut profile = profile;
+        let closure = Box::new(move |_ctx: &mut Context, objects: &FormValues| {
+            if let Some(result) = objects.text("username") && result != saved.username {
+                profile.send(ProfileAction::ChangeUsername(result.to_string()));
+                saved.username = result.to_string();
+            }
+            if let Some(result) = objects.text("about") && result != saved.notes {
+                profile.send(ProfileAction::ChangeNotes(result.to_string()));
+                saved.notes = result.to_string();
+            }
+            if let Some(result) = objects.avatar("avatar") && *result != saved.avatar {
+                profile.send(ProfileAction::ChangeAvatar(result.clone()));
+                saved.avatar = result.clone();
+            }
+            FormComplete::None
+        }) as Box<dyn FormSubmit>;
+
+        let my_name = p.name.unwrap();
+        let display = if is_me {
+            vec![Display::cta(
+                "AirName", None, &my_name.to_string(),
+                contact_actions.unwrap_or_else(|| vec![
+                    ActionItem::new_with_active(
+                        Action::copy(&my_name.to_string()), "Copy", "Copied", Icons::Copy,
+                    ),
+                    ActionItem::new(
+                        Action::flow(Flow::new(vec![Page::Static(Box::new(PageType::display_qr_code(
+                            "Share AirName", &my_name.to_string(), "Scan to share AirName.",
+                            is_mobile,
+                        )))])), "Display QR Code", Icons::QrCode,
+                    ),
+                ]),
+            )]
+        } else {
+            vec![]
+        };
+
+        PageType::Edit {
+            title: if is_me {"My profile"} else {"Edit profile"}.into(),
+            header: None,
+            items: vec![
+                FormItem::avatar_with_preset(
+                    "avatar", "Avatar", p.avatar.clone(), Action::PickPhoto,
+                    |_ctx: &mut Context, _: String| FormValidState::Valid,
+                ),
+                FormItem::text_with_preset(
+                    "username", Uuid::new_v4(), "Username", &p.username, None,
+                    |_ctx: &mut Context, value: String| {
+                        if value.trim().is_empty() {
+                            FormValidState::InvalidWithData("Username cannot be empty".to_string())
+                        } else {
+                            FormValidState::Valid
+                        }
+                    },
+                ),
+                FormItem::text_with_preset(
+                    "about", Uuid::new_v4(), "About me", &p.notes, None,
+                    |_ctx: &mut Context, _: String| FormValidState::Valid,
+                ),
+            ],
+            display, on_save: closure,
+        }
     }
 }
 

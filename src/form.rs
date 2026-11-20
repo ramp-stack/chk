@@ -1,45 +1,31 @@
 use prism::Context;
 use prism::air::{Instance, Name};
-use prism::drawable::Drawable;
-use prism::events::{ChildEvent, Event};
-use ptsd::Validate;
+use prism::drawable::text::Align;
+use prism::events::{ChildEvent, DynEvent, Event};
 use ptsd::layout::Offset;
 use ptsd::navigation::NavigationEvent;
-use ptsd::utils::ValidationFn;
 use uuid::Uuid;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
 
 use crate::blocking::Block;
-use crate::closure::{FormSubmit, ReviewItemGetter, SuccessGetter, ValidityFn};
-use crate::design_system::{AvatarContent, AvatarIconStyle, Content, Icons, Selector, Theme};
-use crate::items::{Action, ActionItem, Display, Input, ListItem, ValueItem};
+use crate::closure::{FormSubmit, NavFn, ReviewItemGetter, SuccessGetter};
+use crate::design_system::{
+    AvatarContent, Content, Footer, FormEvent, Header, Icons, PageCallbacks, PageView, Selector,
+    TextSize, TextStyle, Theme,
+};
+use crate::items::{Action, ActionItem, Display, Input, ListItem};
+pub use crate::items::{FormAction, FormItem, FormValidState, NumberVariant, State};
 use crate::messages::ChatRoom;
 use crate::profiles::Profile;
 use crate::{Bumper, ContactInvitations, Flow, Page, PageType};
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum State {
-    Slider(f32),
-    Text(String),
-    Enumerator(usize),
-    Number(String),
-    Avatar(AvatarContent),
-    Selection(Vec<String>),
-    ScanCode(Option<String>),
-}
-
-#[derive(Clone, Debug)]
-pub enum NumberVariant {
-    Currency,
-    Date,
-    Time,
-    Number,
-}
+mod runtime;
+pub use runtime::{DeferredSubmit, FormHost, Submission, SubmitFinished, SubmitRequest};
 
 #[derive(Debug, Clone)]
 pub struct Success {
@@ -50,6 +36,37 @@ pub struct Success {
 impl Success {
     pub fn new(title: &str, getter: impl SuccessGetter + 'static) -> Self {
         Success { title: title.to_string(), getter: Box::new(getter) }
+    }
+
+    pub fn page(title: &str, getter: Box<dyn SuccessGetter>, on_submit: Option<Box<dyn FormSubmit>>) -> PageType {
+        let lifecycle = Box::new(move |
+            _: &mut Context, theme: &Theme, _: Option<NavFn>, _: usize,
+        | -> PageCallbacks {
+            let event_theme = theme.clone();
+            let mut getter = getter.clone();
+            let mut on_submit = on_submit.clone();
+            let mut values = None;
+            let on_event = Box::new(move |ctx: &mut Context, page: &mut PageView, event: &dyn DynEvent| {
+                let Some(new) = event.downcast_ref::<FormValues>() else {return false;};
+                if values.as_ref() == Some(new) {return true;}
+                values = Some(new.clone());
+                if let Some(mut submit) = on_submit.take() {submit(ctx, new).run(ctx, &event_theme);}
+                let (icon, description) = getter(new.clone());
+                let items = vec![Display::icon(icon), Display::Text {
+                    text: description, size: TextSize::H4,
+                    style: TextStyle::Heading, align: Align::Center,
+                }];
+                *page.content_mut().children_mut() = items.into_iter()
+                    .flat_map(|item| item.build(ctx, &event_theme)).collect();
+                true
+            });
+            (Some(on_event), None, None)
+        });
+        PageType::Content {
+            header: Header::stack(title, None), items: vec![], bumper: Bumper::Done,
+            offset: Offset::Center, flow_len: 1, next: None, lifecycle: Some(lifecycle),
+            identity: None, reveal_child: None,
+        }
     }
 }
 
@@ -63,21 +80,61 @@ impl Review {
     pub fn new(title: &str, getter: impl ReviewItemGetter + 'static) -> Self {
         Review { title: title.to_string(), getter: Box::new(getter) }
     }
-}
 
-#[derive(Debug, Clone)]
-pub struct SubmitRequest(pub Uuid);
-impl Event for SubmitRequest {
-    fn pass(&self, _: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
-        for child in children {*child.event = Some(self.clone());}
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SubmitFinished(pub Uuid, pub FormComplete);
-impl Event for SubmitFinished {
-    fn pass(&self, _: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
-        for child in children {*child.event = Some(self.clone());}
+    pub fn page(title: &str, getter: Box<dyn ReviewItemGetter>, on_submit: Box<dyn FormSubmit>) -> PageType {
+        let request_id = Uuid::new_v4();
+        let footer = Footer::stack(
+            None, Box::new(move |ctx: &mut Context, _: &Theme| ctx.emit(SubmitRequest(request_id))),
+            None,
+        );
+        let lifecycle = Box::new(move |
+            _: &mut Context, theme: &Theme, next: Option<NavFn>, _: usize,
+        | -> PageCallbacks {
+            let event_theme = theme.clone();
+            let mut getter = getter.clone();
+            let mut on_submit = on_submit.clone();
+            let mut values = None;
+            let mut submission = Submission::default();
+            let on_event = Box::new(move |ctx: &mut Context, page: &mut PageView, event: &dyn DynEvent| {
+                let id = page.content().id();
+                if submission.check_navigation(id, event) {return true;}
+                if let Some(new) = event.downcast_ref::<FormValues>() {
+                    if values.as_ref() == Some(new) {return true;}
+                    values = Some(new.clone());
+                    let children = getter(new).into_iter()
+                        .flat_map(|item| item.build(ctx, &event_theme)).collect();
+                    *page.content_mut().children_mut() = children;
+                    if submission.pending() {page.disable_actions(true);}
+                    return true;
+                }
+                if let Some(SubmitRequest(target)) = event.downcast_ref::<SubmitRequest>() {
+                    if *target != request_id {return false;}
+                    if submission.pending() {return true;}
+                    let Some(values) = values.as_ref() else {return true;};
+                    let result = on_submit(ctx, values);
+                    submission.start(page, result, ctx, &event_theme, next.clone());
+                    return true;
+                }
+                if let Some(SubmitFinished(target, result)) = event.downcast_ref::<SubmitFinished>() {
+                    if *target != id {return false;}
+                    submission.finish(page);
+                    result.clone().then(next.clone()).run(ctx, &event_theme);
+                    return true;
+                }
+                if let Some(FormEvent::Validated {id: target, ..}) = event.downcast_ref::<FormEvent>()
+                    && *target == id && submission.pending() {
+                    page.disable_actions(true);
+                    return true;
+                }
+                false
+            });
+            (Some(on_event), None, None)
+        });
+        PageType::Content {
+            header: Header::stack(title, None), items: vec![], bumper: Bumper::Footer(footer),
+            offset: Offset::Start, flow_len: 1, next: None, lifecycle: Some(lifecycle),
+            identity: None, reveal_child: None,
+        }
     }
 }
 
@@ -145,7 +202,6 @@ impl FormValues {
 #[derive(Debug, Clone)]
 pub enum Form {
     Flow {
-        theme: Box<Theme>,
         inputs: Vec<FormItem>,
         review: Option<Review>,
         success: Option<Success>,
@@ -160,9 +216,9 @@ pub enum Form {
 }
 
 impl Form {
-    pub fn flow(theme: &Theme, inputs: Vec<FormItem>, review: Option<Review>, success: Option<Success>, on_submit: Box<dyn FormSubmit>) -> Self {
+    pub fn flow(inputs: Vec<FormItem>, review: Option<Review>, success: Option<Success>, on_submit: Box<dyn FormSubmit>) -> Self {
         FormItem::ids(&inputs);
-        Form::Flow { inputs, theme: Box::new(theme.clone()), review, success, on_submit }
+        Form::Flow { inputs, review, success, on_submit }
     }
 
     pub fn page(title: &str, inputs: Vec<FormItem>, display: Vec<Display>, on_save: Box<dyn FormSubmit>) -> Self {
@@ -171,7 +227,8 @@ impl Form {
     }
 
     pub fn new_message(invitations: &ContactInvitations, ctx: &mut Context, theme: &Theme) -> Form {
-        let submit = Box::new(|ctx: &mut Context, state: &FormValues| {
+        let messaging_invitations = invitations.clone();
+        let submit = Box::new(move |ctx: &mut Context, state: &FormValues| {
             let Some(keys) = state.selection("recipients") else {return FormComplete::None;};
             let recipients = match ContactInvitations::selected_recipients(keys) {
                 Ok(recipients) => recipients,
@@ -185,9 +242,9 @@ impl Form {
             if recipients.iter().any(|name| Block::am_i_blocked(ctx, *name)) {
                 return FormComplete::Error("A selected user has blocked you.".into());
             }
-            let mut room = ChatRoom::create(ctx, recipients);
+            let room = ChatRoom::create(ctx, recipients);
             crate::messages::RoomNotificationState::apply_to(ctx, &room);
-            FormComplete::Next(Page::messaging(ctx, &mut room))
+            FormComplete::Next(Page::messaging(&messaging_invitations, room, None))
         }) as Box<dyn FormSubmit>;
 
         let items = ctx.air.instances::<Profile>().list().into_values().filter_map(|profile| {
@@ -196,97 +253,58 @@ impl Form {
                 Some((row, profile.name?))
             }).map(|(item, name)| (item, name.to_string())).collect();
 
-        let selector = Selector::new("contacts", items).with_alphabetical_order();
+        let selector_id = Uuid::new_v4();
         let input_id = Uuid::new_v4();
         let contact_inputs = vec![FormItem::contact(invitations, vec![], true, input_id)];
-
         FormItem::ids(&contact_inputs);
-
-        let parse = invitations.clone();
-        let row_theme = theme.clone();
-        let contact_selector = selector.clone();
-        let on_submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
-            let value = values.text("airname").unwrap_or_default();
-            if parse.parse_contact(value).is_some_and(|name| Block::am_i_blocked(ctx, name)) {
-                ctx.emit(crate::design_system::TextInputEvent::Changed {
-                    id: input_id, value: value.to_string(),
-                });
-                return FormComplete::Action(Action::None);
-            }
-            let Some(value) = values.text("airname") else {return FormComplete::None;};
-            let Some(name) = parse.parse_contact(value) else {return FormComplete::None;};
-            let profile = Profile::from_name(ctx, name);
-            let profile = profile.pending();
-            let Some(row) = ListItem::recipient(ctx, &row_theme, &profile) else {
-                return FormComplete::None;
-            };
-            FormComplete::Return(contact_selector.select(row, profile.name.unwrap().to_string()))
-        });
         let add_contact = Form::Flow {
-            theme: Box::new(theme.clone()), inputs: contact_inputs, review: None, success: None,
-            on_submit,
+            inputs: contact_inputs, review: None, success: None,
+            on_submit: Selector::contact_submit(selector_id, invitations, theme, vec![], input_id),
         };
-        let selector = selector.with_actions(vec![FormAction::Custom(ActionItem::new(
+        let actions = vec![FormAction::Custom(ActionItem::new(
             Action::flow(Flow::from_form(add_contact)), "New contact", Icons::Add,
-        ))]);
-        let inputs = vec![FormItem::selection("New message", selector).named("recipients")];
+        ))];
+        let selector = Selector::new(
+            selector_id, "contacts", items, usize::MAX, actions, false, true,
+        );
+        let inputs = vec![FormItem::selection("recipients", "New message", selector)];
         FormItem::ids(&inputs);
         Form::Flow {
-            theme: Box::new(theme.clone()), inputs, review: None, success: None, on_submit: submit,
+            inputs, review: None, success: None, on_submit: submit,
         }
     }
 
-    pub fn select_contact(invitations: &ContactInvitations, theme: &Theme, selector: Selector, excluded: Vec<Name>) -> Form {
+    pub fn select_contact(invitations: &ContactInvitations, theme: &Theme, selector_id: Uuid, excluded: Vec<Name>) -> Form {
         let input_id = Uuid::new_v4();
         let inputs = vec![FormItem::contact(invitations, excluded.clone(), true, input_id)];
         FormItem::ids(&inputs);
-        let parse = invitations.clone();
-        let row_theme = theme.clone();
-        let contact_selector = selector;
-        let on_submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
-            let value = values.text("airname").unwrap_or_default();
-            if parse.parse_contact(value).is_some_and(|name| Block::am_i_blocked(ctx, name)) {
-                ctx.emit(crate::design_system::TextInputEvent::Changed {
-                    id: input_id, value: value.to_string(),
-                });
-                return FormComplete::Action(Action::None);
-            }
-            let Some(value) = values.text("airname") else {return FormComplete::None;};
-            let Some(name) = parse.parse_contact(value) else {return FormComplete::None;};
-            if excluded.contains(&name) {return FormComplete::None;}
-            let profile = Profile::from_name(ctx, name);
-            let profile = profile.pending();
-            let Some(row) = ListItem::recipient(ctx, &row_theme, &profile) else {
-                return FormComplete::None;
-            };
-            FormComplete::Return(contact_selector.select(row, profile.name.unwrap().to_string()))
-        });
-        Form::Flow {theme: Box::new(theme.clone()), inputs, review: None, success: None, on_submit}
+        let on_submit = Selector::contact_submit(selector_id, invitations, theme, excluded, input_id);
+        Form::Flow {inputs, review: None, success: None, on_submit}
     }
 
-    pub fn new_contact(invitations: &ContactInvitations, theme: &Theme) -> Form {
+    pub fn new_contact(invitations: &ContactInvitations) -> Form {
         let input_id = Uuid::new_v4();
         let inputs = vec![FormItem::contact(invitations, vec![], false, input_id)];
         FormItem::ids(&inputs);
         let parse = invitations.clone();
         let on_submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
             let value = values.text("airname").unwrap_or_default();
-            if parse.parse_contact(value).is_some_and(|name| Block::am_i_blocked(ctx, name)) {
-                ctx.emit(crate::design_system::TextInputEvent::Changed {
-                    id: input_id, value: value.to_string(),
-                });
-                return FormComplete::Action(Action::None);
-            }
-            let Some(value) = values.text("airname") else {return FormComplete::None;};
-            let Some(name) = parse.parse_contact(value) else {return FormComplete::None;};
-            if name == ctx.air.me() {return FormComplete::None;}
+            let name = match parse.validate_contact(ctx, value, &[], false) {
+                Ok(name) => name,
+                Err(_) => {
+                    ctx.emit(crate::design_system::TextInputEvent::Changed {
+                        id: input_id, value: value.to_string(),
+                    });
+                    return FormComplete::Action(Action::None);
+                }
+            };
             let mut profile = Profile::from_name(ctx, name);
-            FormComplete::Next(Page::profile(ctx, &mut profile))
+            FormComplete::Next(Page::profile(&parse, ctx, &mut profile))
         });
-        Form::Flow {theme: Box::new(theme.clone()), inputs, review: None, success: None, on_submit}
+        Form::Flow {inputs, review: None, success: None, on_submit}
     }
 
-    pub fn add_members(ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>) -> Form {
+    pub fn add_members(invitations: &ContactInvitations, ctx: &mut Context, theme: &Theme, mut room: Instance<ChatRoom>) -> Form {
         let members = room.pending().members.clone();
         let mut items: Vec<_> = ctx.air.instances::<Profile>().list().into_values()
             .filter_map(|profile| {
@@ -297,37 +315,14 @@ impl Form {
             }).collect();
         items.sort_by_key(|(_, name)| *name);
         items.dedup_by_key(|(_, name)| *name);
-        let selector = Selector::new(
-            "contacts", items.into_iter().map(|(item, name)| (item, name.to_string())).collect(),
-        ).with_alphabetical_order();
-        let invitations = ContactInvitations::default();
+        let items = items.into_iter().map(|(item, name)| (item, name.to_string())).collect();
+        let selector_id = Uuid::new_v4();
         let input_id = Uuid::new_v4();
-        let contact_inputs = vec![FormItem::contact(&invitations, members.clone(), true, input_id)];
+        let contact_inputs = vec![FormItem::contact(invitations, members.clone(), true, input_id)];
         FormItem::ids(&contact_inputs);
-        let parse = invitations.clone();
-        let row_theme = theme.clone();
-        let contact_selector = selector.clone();
-        let on_submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
-            let value = values.text("airname").unwrap_or_default();
-            if parse.parse_contact(value).is_some_and(|name| Block::am_i_blocked(ctx, name)) {
-                ctx.emit(crate::design_system::TextInputEvent::Changed {
-                    id: input_id, value: value.to_string(),
-                });
-                return FormComplete::Action(Action::None);
-            }
-            let Some(value) = values.text("airname") else {return FormComplete::None;};
-            let Some(name) = parse.parse_contact(value) else {return FormComplete::None;};
-            if members.contains(&name) {return FormComplete::None;}
-            let profile = Profile::from_name(ctx, name);
-            let profile = profile.pending();
-            let Some(row) = ListItem::recipient(ctx, &row_theme, &profile) else {
-                return FormComplete::None;
-            };
-            FormComplete::Return(contact_selector.select(row, profile.name.unwrap().to_string()))
-        });
         let new_contact = Form::Flow {
-            theme: Box::new(theme.clone()), inputs: contact_inputs, review: None, success: None,
-            on_submit,
+            inputs: contact_inputs, review: None, success: None,
+            on_submit: Selector::contact_submit(selector_id, invitations, theme, members, input_id),
         };
         let submit = Box::new(move |ctx: &mut Context, values: &FormValues| {
             let Some(keys) = values.selection("members") else {return FormComplete::None;};
@@ -339,17 +334,16 @@ impl Form {
             ctx.emit(NavigationEvent::Pop);
             FormComplete::None
         }) as Box<dyn FormSubmit>;
-        let inputs = vec![
-            FormItem::selection(
-                "Add members",
-                selector.with_actions(vec![FormAction::Custom(ActionItem::new(
-                    Action::flow(Flow::from_form(new_contact)), "New contact", Icons::Add,
-                ))]),
-            ).named("members"),
-        ];
+        let actions = vec![FormAction::Custom(ActionItem::new(
+            Action::flow(Flow::from_form(new_contact)), "New contact", Icons::Add,
+        ))];
+        let selector = Selector::new(
+            selector_id, "contacts", items, usize::MAX, actions, false, true,
+        );
+        let inputs = vec![FormItem::selection("members", "Add members", selector)];
         FormItem::ids(&inputs);
         Form::Flow {
-            theme: Box::new(theme.clone()), inputs, review: None, success: None, on_submit: submit,
+            inputs, review: None, success: None, on_submit: submit,
         }
     }
 }
@@ -426,310 +420,9 @@ impl FormComplete {
                 (Flow::new(vec![Page::Static(Box::new(page))]).build(ctx, theme))(ctx, theme);
             }
             FormComplete::Pending(pending) => {
-                ctx.emit(crate::page::DeferredSubmit(pending.clone()))
+                ctx.emit(DeferredSubmit(pending.clone()))
             }
             FormComplete::None => {}
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum FormValidState {
-    InvalidWithData(String),
-    Invalid,
-    Valid,
-    ValidWithData(String),
-}
-
-impl FormValidState {
-    pub fn eval(&self) -> Result<String, String> {
-        match self {
-            FormValidState::InvalidWithData(s) => Err(s.to_string()),
-            FormValidState::Invalid => Err(String::new()),
-            FormValidState::Valid => Ok(String::new()),
-            FormValidState::ValidWithData(s) => Ok(s.to_string()),
-        }
-    }
-
-    pub fn from(r: Result<String, String>) -> Self {
-        match r {
-            Ok(e) if e.is_empty() => FormValidState::Valid,
-            Ok(e) => FormValidState::ValidWithData(e),
-            Err(e) if e.is_empty() => FormValidState::Invalid,
-            Err(e) => FormValidState::InvalidWithData(e),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum FormAction {
-    Paste,
-    ScanQRCode(String),
-    Custom(ActionItem),
-}
-
-impl FormAction {
-    pub fn scan_qr_code(instructions: &str) -> Self {
-        FormAction::ScanQRCode(instructions.to_string())
-    }
-
-    pub fn get(&self, id: Uuid) -> ActionItem {
-        match self {
-            FormAction::Paste => ActionItem::new_with_active(
-                Action::Paste { id }, "Paste clipboard", "Pasted", Icons::Paste,
-            ),
-            FormAction::ScanQRCode(instructions) => {
-                ActionItem::new(Action::scan_qr(instructions, id), "Scan QR code", Icons::QrCode)
-            }
-            FormAction::Custom(action) => action.clone(),
-        }
-    }
-}
-#[derive(Debug, Clone)]
-pub enum FormItem {
-    Named { id: String, item: Box<FormItem> },
-    InputId { id: Uuid, item: Box<FormItem> },
-    Text(String, String, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
-    TextWithPreset(String, String, Option<Vec<FormAction>>, Box<dyn ValidityFn>),
-    Number(String, NumberVariant, Box<dyn ValidityFn>),
-    Enum(String, Vec<ValueItem>),
-    Selection(String, Selector),
-    ScanQR(String, String, Option<(String, Icons, Action)>),
-    Avatar(String, AvatarContent, Action, Box<dyn ValidityFn>),
-    AvatarWithPreset(String, AvatarContent, Action, Box<dyn ValidityFn>),
-}
-
-impl FormItem {
-    pub fn contact(invitations: &ContactInvitations, excluded: Vec<Name>, allow_self: bool, input_id: Uuid) -> Self {
-        let invitations = invitations.clone();
-        let valid = Box::new(move |ctx: &mut Context, value: String| {
-            if value.trim().is_empty() {return FormValidState::Invalid;}
-            match invitations.parse_contact(&value) {
-                Some(name) if !allow_self && name == ctx.air.me() => {
-                    FormValidState::InvalidWithData("You cannot add yourself as a contact.".into())
-                }
-                Some(name) if excluded.contains(&name) => {
-                    FormValidState::InvalidWithData("Already in this group.".into())
-                }
-                Some(name) if Block::am_i_blocked(ctx, name) => FormValidState::InvalidWithData(
-                    "This user blocked you. You cannot add them as a contact.".into(),
-                ),
-                Some(_) => FormValidState::Valid,
-                None => {
-                    FormValidState::InvalidWithData("Enter a valid AirName or contact link.".into())
-                }
-            }
-        });
-        FormItem::Named {
-            id: "airname".into(),
-            item: Box::new(FormItem::InputId {
-                id: input_id,
-                item: Box::new(FormItem::Text(
-                    "New contact".into(), "AirName".into(),
-                    Some(vec![
-                        FormAction::Paste, FormAction::ScanQRCode("Scan an AirName QR code".into()),
-                    ]),
-                    valid,
-                )),
-            }),
-        }
-    }
-
-    /// Use a stable ID when the visible label may change or repeat.
-    pub fn named(self, id: &str) -> Self {
-        assert!(!id.trim().is_empty(), "Form field IDs must not be empty");
-        let item = match self {FormItem::Named { item, .. } => item, item => Box::new(item)};
-        FormItem::Named { id: id.into(), item }
-    }
-
-    /// Bind a text input to a UUID used by `Action::set_text`.
-    /// This is independent of the field ID used by `FormValues`; built-in Paste
-    /// and Scan actions use the same UUID. Other input kinds are not supported.
-    pub fn with_input_id(self, id: Uuid) -> Self {
-        match self {
-            FormItem::Named { id: name, item } => {
-                FormItem::Named { id: name, item: Box::new(item.with_input_id(id)) }
-            }
-            FormItem::InputId { item, .. } => FormItem::InputId { id, item },
-            item @ (FormItem::Text(..) | FormItem::TextWithPreset(..)) => {
-                FormItem::InputId { id, item: Box::new(item) }
-            }
-            _ => panic!("Only text fields support an input UUID"),
-        }
-    }
-
-    pub fn id(&self) -> String {
-        match self {
-            FormItem::Named { id, .. } => id.clone(),
-            FormItem::InputId { item, .. } => item.id(),
-            _ => self.title(),
-        }
-    }
-
-    pub fn ids(items: &[Self]) -> Vec<String> {
-        let mut seen = HashSet::new();
-        items.iter().map(|item| {
-                let id = item.id();
-                assert!(
-                    !id.trim().is_empty() && seen.insert(id.clone()),
-                    "Empty or duplicate form field ID: {id}"
-                );
-                id
-            }).collect()
-    }
-
-    pub fn text(text: &str, request: &str, actions: Option<Vec<FormAction>>, valid: impl ValidityFn + 'static) -> Self {
-        let text = text.to_string();
-        FormItem::Text(text, request.to_string(), actions, Box::new(valid))
-    }
-
-    pub fn text_with_preset(text: &str, preset: &str, actions: Option<Vec<FormAction>>, valid: impl ValidityFn + 'static) -> Self {
-        FormItem::TextWithPreset(text.to_string(), preset.to_string(), actions, Box::new(valid))
-    }
-
-    pub fn number(title: &str, number: NumberVariant, valid: impl ValidityFn + 'static) -> Self {
-        FormItem::Number(title.to_string(), number, Box::new(valid))
-    }
-
-    pub fn enumerator(label: &str, items: Vec<(&str, &str)>) -> Self {
-        let items =
-            items.into_iter().map(|(a, b)| ValueItem::new(a, b)).collect::<Vec<ValueItem>>();
-        FormItem::Enum(label.to_string(), items)
-    }
-
-    /// Search and select application-owned keys with the standard list selector.
-    pub fn selection(title: &str, selector: Selector) -> Self {
-        FormItem::Selection(title.to_string(), selector)
-    }
-
-    pub fn avatar(title: &str, action: Action, valid: impl ValidityFn + 'static) -> Self {
-        FormItem::Avatar(title.to_string(), AvatarContent::default(), action, Box::new(valid))
-    }
-
-    pub fn avatar_with_preset(title: &str, avatar: AvatarContent, action: Action, valid: impl ValidityFn + 'static) -> Self {
-        FormItem::AvatarWithPreset(title.to_string(), avatar, action, Box::new(valid))
-    }
-
-    pub fn scan_qr_code(title: &str, instructions: &str, alt: Option<(String, Icons, Action)>) -> Self {
-        FormItem::ScanQR(title.to_string(), instructions.to_string(), alt)
-    }
-
-    pub fn title(&self) -> String {
-        match self {
-            FormItem::Named { item, .. } | FormItem::InputId { item, .. } => item.title(),
-            FormItem::Selection(title, ..)
-            | FormItem::Text(title, ..)
-            | FormItem::TextWithPreset(title, ..)
-            | FormItem::Number(title, ..)
-            | FormItem::Avatar(title, ..)
-            | FormItem::AvatarWithPreset(title, ..)
-            | FormItem::ScanQR(title, ..)
-            | FormItem::Enum(title, ..) => title.to_string(),
-        }
-    }
-
-    pub fn validation(&self) -> Box<dyn ValidationFn> {
-        match self {
-            FormItem::Named { item, .. } | FormItem::InputId { item, .. } => item.validation(),
-            FormItem::Text(_, _, _, validation)
-            | FormItem::TextWithPreset(_, _, _, validation)
-            | FormItem::Number(_, _, validation)
-            | FormItem::Avatar(_, _, _, validation)
-            | FormItem::AvatarWithPreset(_, _, _, validation) => {
-                Box::new(InputValidation(validation.clone()))
-            }
-            FormItem::Selection(..) => {
-                Box::new(|_ctx: &mut Context, children: Vec<&mut Box<dyn Drawable>>| {
-                    children.first().and_then(|child| Input::state(child.as_ref())).is_some_and(
-                        |state| matches!(state, State::Selection(keys) if !keys.is_empty()),
-                    )
-                })
-            }
-            _ => Box::new(|_ctx: &mut Context, _: Vec<&mut Box<dyn Drawable>>| true),
-        }
-    }
-
-    pub fn build(&self) -> Input {
-        let mut input = self;
-        let mut id = None;
-        while let FormItem::Named { item, .. } | FormItem::InputId { item, .. } = input {
-            if let FormItem::InputId { id: input_id, .. } = input {id = Some(*input_id);}
-            input = item;
-        }
-        match input {
-            FormItem::Named { .. } | FormItem::InputId { .. } => unreachable!(),
-            FormItem::Text(_, request, actions, _) => {
-                let id = id.unwrap_or_else(Uuid::new_v4);
-                let request = request.clone();
-                let actions = actions.clone()
-                    .map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
-                Input::text(id, &request, false, None, actions)
-            }
-            FormItem::TextWithPreset(title, preset, actions, _) => {
-                let id = id.unwrap_or_else(Uuid::new_v4);
-                let title = title.clone();
-                let actions = actions.clone()
-                    .map(|act| act.into_iter().map(|a| a.get(id)).collect::<Vec<_>>());
-                Input::text(id, &title, true, Some(preset.to_string()), actions)
-            }
-            FormItem::Number(_, variant, _) => match variant {
-                NumberVariant::Currency => Input::currency("Enter dollar amount"),
-                NumberVariant::Date => Input::date("Enter date"),
-                NumberVariant::Time => Input::time("Enter time"),
-                NumberVariant::Number => Input::number("Enter number"),
-            },
-            FormItem::Enum(_, items) => Input::enumerator(items.clone()),
-            FormItem::Selection(_, selector) => Input::selection(selector.clone()),
-            FormItem::ScanQR(_, instructions, alt) => Input::qr_code_scanner(
-                instructions, alt.clone(), Box::new(|_ctx: &mut Context, _value: String| {}),
-            ),
-            FormItem::Avatar(_, _, action, _) => Input::avatar(
-                AvatarContent::default(), Some((Icons::Edit, AvatarIconStyle::Secondary)),
-                Some(action.clone()),
-            ),
-            FormItem::AvatarWithPreset(_, avatar, action, _) => Input::avatar(
-                avatar.clone(), Some((Icons::Edit, AvatarIconStyle::Secondary)),
-                Some(action.clone()),
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Submission {
-    pending: bool,
-}
-impl Submission {
-    pub fn pending(&self) -> bool {self.pending}
-    pub fn finish(&mut self) {self.pending = false;}
-
-    pub fn start(&mut self, id: Uuid, result: FormComplete, ctx: &mut Context, theme: &Theme, next: Option<crate::NavFn>) {
-        match result {
-            FormComplete::Pending(pending) => {
-                self.pending = true;
-                FormComplete::pending(async move {
-                    let result = pending.await.resolved().await;
-                    FormComplete::Action(Action::custom(move |ctx: &mut Context, _: &Theme| {
-                        ctx.emit(SubmitFinished(id, result.clone()));
-                    }))
-                }).run(ctx, theme);
-            }
-            result => result.then(next).run(ctx, theme),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct InputValidation(Box<dyn ValidityFn>);
-impl Validate<Vec<&mut Box<dyn Drawable>>, bool> for InputValidation {
-    fn validate(&mut self, ctx: &mut Context, mut children: Vec<&mut Box<dyn Drawable>>) -> bool {
-        let Some(child) = children.first_mut() else {return false;};
-        let Some(control) = child.downcast_mut::<crate::Control>() else {return true;};
-        let Some(value) = control.0.validation_value() else {return true;};
-        let result = self.0.validate(ctx, value);
-        control.0.feedback(&result);
-
-        matches!(result, FormValidState::Valid | FormValidState::ValidWithData(_))
-    }
-    fn change(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>> {self.0.change()}
 }

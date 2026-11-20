@@ -2,23 +2,26 @@ use prism::drawable::Component;
 use prism::events::{DynEvent, OnChange, OnEvent, on_change, on_event};
 use ptsd::layout::Stack;
 use ptsd::navigation::{
-    AppPage, Flow as NavigationFlow, FlowContainer, NavigationChanged, NavigationEvent,
+    Flow as NavigationFlow, FlowContainer, NavigationChanged, NavigationEvent,
 };
 
 use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 use crate::design_system::{Callback, Context, FormEvent, PageView, Theme};
-use crate::form::{Form, FormValues};
+use crate::form::{Form, FormValues, Review, Success};
 use crate::page::{Page, PageType, StackPage};
 use crate::closure::NavFn;
 use crate::{
-    Action, AvatarContent, AvatarPurpose, Bumper, ContentSurface, Display, Listener, Offset, PageChanged,
+    Action, AvatarContent, AvatarPurpose, Bumper, Display, Listener, Offset, PageChanged,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Flow(pub Vec<Page>);
 impl Flow {
-    pub fn new(builders: Vec<Page>) -> Self {Flow(builders)}
+    pub fn new(builders: Vec<Page>) -> Self {
+        assert!(!builders.is_empty(), "A flow must contain at least one page");
+        Flow(builders)
+    }
 
     pub fn action_target(
         action: (&str, Action), past_action: &str, target_kind: &str,
@@ -59,7 +62,7 @@ impl Flow {
 
     pub fn from_form(form: Form) -> Self {
         match form {
-            Form::Flow {theme: _, inputs, on_submit, review, success} => {
+            Form::Flow {inputs, on_submit, review, success} => {
                 let mut pages: Vec<Page> = vec![];
 
                 let mut submit = review.is_none().then(|| on_submit.clone());
@@ -67,22 +70,23 @@ impl Flow {
                 inputs.into_iter().rev().map(|input| {
                     let submit = submit.take();
                     Page::Static(Box::new(PageType::form(
-                        &input.id(), &input.title(), input.build(), input.validation(), submit.clone(),
+                        &input.id, &input.title, input.input, input.validation, submit,
                     )))
                 }).collect::<Vec<Page>>().into_iter().rev().for_each(|s| pages.push(s));
 
                 if let Some(review) = review {
-                    pages.push(Page::Static(Box::new(PageType::review(
+                    pages.push(Page::Static(Box::new(Review::page(
                         &review.title, review.getter, on_submit.clone(),
                     ))));
                 }
 
                 if let Some(success) = success {
-                    pages.push(Page::Static(Box::new(PageType::success(
+                    pages.push(Page::Static(Box::new(Success::page(
                         &success.title, success.getter, submit.clone(),
                     ))));
                 }
 
+                assert!(!pages.is_empty(), "A form flow must contain at least one page");
                 Flow(pages)
             },
             Form::Page {title, inputs, display, on_save} => {
@@ -102,25 +106,15 @@ impl Flow {
     }
 
     pub fn build_as_flow(&mut self, ctx: &mut Context, theme: &Theme) -> FlowWrapper {
-        let mut new: Vec<Box<dyn AppPage>> = vec![];
+        assert!(!self.0.is_empty(), "A flow must contain at least one page");
         let length = self.0.len();
-        if self.0.is_empty() { return FlowWrapper::new(NavigationFlow::new(vec![])) }
-
-        let mut pages = self.0.clone();
-        let first = pages.remove(0);
-        let mut next_fn: Option<NavFn> = None;
-
-        pages.into_iter().rev().for_each(|page| {
-            new.push(page.build(ctx, theme, next_fn.take(), length));
-            next_fn = Some(NavFn(Rc::new(RefCell::new(move |ctx: &mut Context, _: &Theme| {
-                ctx.emit(NavigationEvent::Next);
-            }))));
-        });
-
-        new.push(first.build(ctx, theme, next_fn.clone(), length));
-        new.reverse();
-
-        FlowWrapper::new(NavigationFlow::new(new.clone()))
+        let next = NavFn(Rc::new(RefCell::new(|ctx: &mut Context, _: &Theme| {
+            ctx.emit(NavigationEvent::Next);
+        })));
+        let pages = self.0.iter().enumerate().map(|(index, page)| {
+            page.build(ctx, theme, (index + 1 < length).then(|| next.clone()), length)
+        }).collect();
+        FlowWrapper::new(NavigationFlow::new(pages))
     }
 }
 

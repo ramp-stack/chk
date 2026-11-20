@@ -45,17 +45,15 @@ pub struct CameraCapture {
 impl CameraCapture {
     pub fn new(theme: &Theme, on_capture: Box<dyn PhotoCaptured>) -> Self {
         let token = Uuid::new_v4();
-        let mut capture = Self {
+        CameraCapture {
             layout: Stack::fill(),
-            view: theme.camera_view(Box::new(move |ctx: &mut Context, _: &Theme| {
+            view: theme.camera_view(true, Box::new(move |ctx: &mut Context, _: &Theme| {
                 ctx.emit(CapturePhoto(token));
             })),
             camera: None, latest: None,
             encoding: None, start: Timer::new(Duration::ZERO),
             token, theme: theme.clone(), on_capture, failed: false, focused: true, finished: false,
-        };
-        capture.view.disable(true);
-        capture
+        }
     }
 
     pub fn open(&mut self, ctx: &mut Context) {
@@ -144,11 +142,7 @@ impl OnChange<Option<Photo>> for CameraCapture {
         match photo {
             Some(photo) => {
                 self.finished = true;
-                let mut on_capture = self.on_capture.clone();
-                // Restore the conversation before delivering the attachment.
-                ctx.emit(NavigationEvent::reset_with_fn(move |ctx: &mut Context| {
-                    on_capture.captured(ctx, photo.clone());
-                }));
+                self.on_capture.captured(ctx, photo);
             }
             None => self.error("This photo could not be captured. Please try again."),
         }

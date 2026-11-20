@@ -23,7 +23,13 @@ use uuid::Uuid;
 use std::{any::Any, fmt::Debug, future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc};
 
 pub use crate::design::{PageView, AvatarView, CameraView, VideoView};
+use crate::design::{Control, PageSurface};
 pub use crate::Selector;
+
+pub type PageCallbacks = (
+    Option<Box<dyn PageEvent>>, Option<Box<dyn ptsd::utils::Callback>>,
+    Option<ListenCallback<PageView>>,
+);
 
 pub type GifBytes = Pin<Box<dyn Future<Output = Result<Arc<[u8]>, String>>>>;
 pub type ListItemView = Box<dyn Drawable>;
@@ -59,18 +65,9 @@ pub struct MessageView {
 
 macro_rules! callback {
     ($name:ident, $($signature:tt)+) => {
-        pub trait $name: $($signature)+ + 'static {
-            fn clone_box(&self) -> Box<dyn $name>;
-        }
-        impl<F: $($signature)+ + Clone + 'static> $name for F {
-            fn clone_box(&self) -> Box<dyn $name> {Box::new(self.clone())}
-        }
-        impl Clone for Box<dyn $name> {
-            fn clone(&self) -> Self {self.as_ref().clone_box()}
-        }
-        impl PartialEq for dyn $name {
-            fn eq(&self, _: &Self) -> bool {true}
-        }
+        pub trait $name: $($signature)+ + dyn_clone::DynClone + 'static {}
+        impl<F: $($signature)+ + Clone + 'static> $name for F {}
+        dyn_clone::clone_trait_object!($name);
         impl Debug for dyn $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str(stringify!($name))
@@ -80,23 +77,16 @@ macro_rules! callback {
 }
 
 callback!(Callback, FnMut(&mut Context, &Theme));
+callback!(PageContent, Fn(&mut Context, &Theme) -> Box<dyn Drawable>);
+callback!(PageLifecycle, Fn(&mut Context, &Theme, Option<crate::NavFn>, usize) -> PageCallbacks);
 callback!(PageEvent, FnMut(&mut Context, &mut PageView, &dyn prism::events::DynEvent) -> bool);
 callback!(QrCodeFound, FnMut(&mut Context, String));
 callback!(PlaybackCallback, FnMut(&mut Context, PlaybackAction));
 callback!(SendFn, FnMut(&mut Context, &mut String));
 
-pub trait ValidFn: for<'a> Validate<&'a mut String, bool> {
-    fn clone_box(&self) -> Box<dyn ValidFn>;
-}
-impl<V: for<'a> Validate<&'a mut String, bool> + Clone> ValidFn for V {
-    fn clone_box(&self) -> Box<dyn ValidFn> {Box::new(self.clone())}
-}
-impl Clone for Box<dyn ValidFn> {
-    fn clone(&self) -> Self {self.as_ref().clone_box()}
-}
-impl PartialEq for dyn ValidFn {
-    fn eq(&self, _: &Self) -> bool {true}
-}
+pub trait ValidFn: for<'a> Validate<&'a mut String, bool> {}
+impl<V: for<'a> Validate<&'a mut String, bool>> ValidFn for V {}
+dyn_clone::clone_trait_object!(ValidFn);
 impl Debug for dyn ValidFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {f.write_str("ValidFn")}
 }
@@ -111,6 +101,7 @@ macro_rules! constructors {
             fn fonts(&self) -> &ptsd::FontResources;
             fn configure_gifs(&self, key: &str);
             fn gif_bytes(&self, gif: &Gif) -> GifBytes;
+            fn page(&self, theme: &Theme, header: Header, content: Content, footer: Option<Footer>) -> Box<dyn PageSurface>;
             $($(#[$attribute])* fn $name(&self, theme: &Theme, $($arg: $ty),*) -> $result;)+
         }
 
@@ -130,6 +121,18 @@ macro_rules! constructors {
             pub fn fonts(&self) -> &ptsd::FontResources {self.0.fonts()}
             pub fn configure_gifs(&self, key: &str) {self.0.configure_gifs(key);}
             pub fn gif_bytes(&self, gif: &Gif) -> GifBytes {self.0.gif_bytes(gif)}
+            #[allow(clippy::too_many_arguments, reason = "Page setup is supplied directly at construction.")]
+            pub fn page(
+                &self, ctx: &mut Context, header: Header, content: Content, footer: Option<Footer>,
+                fields: Vec<(String, Range<usize>)>, disabled: bool, identity: Option<String>,
+                on_event: Option<Box<dyn PageEvent>>, on_show: Option<Box<dyn ptsd::utils::Callback>>,
+                on_create: Option<ListenCallback<PageView>>,
+            ) -> PageView {
+                PageView::new(
+                    ctx, self.0.page(self, header, content, footer), fields, disabled,
+                    identity, on_event, on_show, on_create,
+                )
+            }
             $($(#[$attribute])* pub fn $name(&self, $($arg: $ty),*) -> $result {
                 self.0.$name(self, $($arg),*)
             })+
@@ -139,24 +142,17 @@ macro_rules! constructors {
 
 constructors! {
     fn interface(ctx: &mut Context, roots: Vec<crate::RootInfo>, keyboard: Option<Box<dyn Drawable>>) -> Box<dyn Drawable>;
-    #[allow(clippy::too_many_arguments, reason = "Page setup is supplied directly at construction.")]
-    fn page(
-        ctx: &mut Context, header: Header, content: Content, footer: Option<Footer>,
-        fields: Vec<(String, Range<usize>)>, disabled: bool, identity: Option<String>,
-        on_event: Option<Box<dyn PageEvent>>, on_show: Option<Box<dyn ptsd::utils::Callback>>,
-        on_create: Option<ListenCallback<PageView>>,
-    ) -> PageView;
     fn edge_to_edge(header: Header, content: Box<dyn Drawable>) -> Box<dyn Drawable>;
-    fn slider_input(start: f32, label: Option<&str>, description: Option<&str>) -> Box<dyn Drawable>;
-    fn text_input(id: Uuid, preset: Option<&str>, label: Option<&str>, placeholder: &str) -> Box<dyn Drawable>;
-    fn choice_input(index: usize, items: Vec<(&str, &str, Box<dyn Callback>)>) -> Box<dyn Drawable>;
-    fn currency_input(instructions: &str) -> Box<dyn Drawable>;
-    fn number_input(instructions: &str) -> Box<dyn Drawable>;
-    fn date_input(instructions: &str) -> Box<dyn Drawable>;
-    fn time_input(instructions: &str) -> Box<dyn Drawable>;
+    fn slider_input(start: f32, label: Option<&str>, description: Option<&str>) -> Control;
+    fn text_input(id: Uuid, preset: Option<&str>, label: Option<&str>, placeholder: &str) -> Control;
+    fn choice_input(index: usize, items: Vec<(&str, &str, Box<dyn Callback>)>) -> Control;
+    fn currency_input(instructions: &str) -> Control;
+    fn number_input(instructions: &str) -> Control;
+    fn date_input(instructions: &str) -> Control;
+    fn time_input(instructions: &str) -> Control;
     fn keypad() -> Box<dyn Drawable>;
-    fn selection_input(selector: Selector) -> Box<dyn Drawable>;
-    fn scanner_input(on_find: Box<dyn QrCodeFound>) -> Box<dyn Drawable>;
+    fn selection_input(selector: Selector) -> Control;
+    fn scanner_input(on_find: Box<dyn QrCodeFound>) -> Control;
     fn text_view(text: &str, size: TextSize, style: TextStyle, align: Align) -> Box<dyn Drawable>;
     fn alert_view(text: &str) -> Box<dyn Drawable>;
     fn icon_view(icon: Icons, size: f32) -> Box<dyn Drawable>;
@@ -179,7 +175,7 @@ constructors! {
     fn photo_view(photo: &Photo) -> Box<dyn Drawable>;
     fn video_poster(photo: &Photo, action: Box<dyn PlaybackCallback>) -> VideoView;
     fn video_player(player: prism::hardware::Player, size: (u32, u32), action: Box<dyn PlaybackCallback>) -> VideoView;
-    fn camera_view(capture: Box<dyn Callback>) -> CameraView;
+    fn camera_view(disabled: bool, capture: Box<dyn Callback>) -> CameraView;
     fn message_group(ctx: &mut Context, messages: Vec<MessageView>, group: bool) -> MessageGroups;
     fn typing_indicator(name: Option<&str>) -> TypingIndicator;
 }
@@ -197,6 +193,13 @@ pub enum Header {
 }
 
 impl Header {
+    pub fn title(&self) -> &str {
+        match self {
+            Header::Stack {title, ..} | Header::End {title} | Header::Home {title, ..}
+            | Header::Leading {title, ..} | Header::Messaging {title, ..} => title,
+        }
+    }
+
     pub fn stack(title: &str, action: Option<(Icons, Box<dyn Callback>)>) -> Self {
         Header::Stack {title: title.into(), action}
     }

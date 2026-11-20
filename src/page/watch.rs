@@ -11,11 +11,23 @@ use crate::design_system::Theme;
 use crate::{PageBuilder, PageType};
 
 type ContractUpdate<'a, C> = Pin<Box<dyn Future<Output = Option<Instance<C>>> + 'a>>;
+type WatchUpdate<W> = Pin<Box<dyn Future<Output = (Option<()>, W)>>>;
 
 pub trait Watcher: Debug + Clone + 'static {
     type Output;
     fn next(&mut self) -> impl Future<Output = Option<()>>;
     fn get(&mut self, ctx: &mut Context) -> Self::Output;
+    fn observe(&mut self, ctx: &mut Context) -> (Self::Output, WatchUpdate<Self>) {
+        self.get(ctx);
+        let mut watcher = self.clone();
+        // Prime deferred subscriptions before the final snapshot and retain them while hidden.
+        let mut pending = Box::pin(async move {(watcher.next().await, watcher)});
+        let pending: WatchUpdate<Self> =
+            match pending.as_mut().poll(&mut TaskContext::from_waker(Waker::noop())) {
+                Poll::Ready(update) => Box::pin(ready(update)), Poll::Pending => pending,
+            };
+        (self.get(ctx), pending)
+    }
 }
 impl<C: Contract> Watcher for ContractWatch<C> {
     type Output = Instance<C>;
@@ -147,17 +159,8 @@ impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone +
     }
     fn build(&mut self, ctx: &mut Context, theme: &Theme) -> PageType {
         self.pending = None;
-        self.watcher.get(ctx);
-        let mut watcher = self.watcher.clone();
-        // Prime deferred subscriptions before the final snapshot and retain them while hidden.
-        let mut pending: Pin<Box<dyn Future<Output = Option<()>>>> =
-            Box::pin(async move {watcher.next().await});
-        if let Poll::Ready(update) =
-            pending.as_mut().poll(&mut TaskContext::from_waker(Waker::noop())) {
-            pending = Box::pin(ready(update));
-        }
-        self.pending = Some(pending);
-        let value = self.watcher.get(ctx);
+        let (value, pending) = self.watcher.observe(ctx);
+        self.pending = Some(Box::pin(async move {pending.await.0}));
         (self.builder)(ctx, theme, value)
     }
 }

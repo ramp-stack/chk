@@ -23,9 +23,7 @@ use ::pelican_ui::interface::general::{
 };
 use ::pelican_ui::interface::navigation::RootInfo as NativeRoot;
 
-pub use native::{FittedPhoto, AspectFit as Fit, MediaBadge as Badge};
-
-use std::{any::Any, future::Future, ops::Range, pin::Pin};
+use std::{any::Any, future::Future, pin::Pin};
 
 /// Owns the native theme or widget so its CHK trait implementations also work in external crates.
 #[derive(Debug, Clone)]
@@ -107,8 +105,10 @@ impl PelicanUi {
         NativeListItem::new(
             native,
             item.avatar.clone().map(|content| Avatar::new(native, content, None, AvatarSize::Md, None)),
-            ListItemInfoLeft::new(&item.title, Some(&item.subtitle), None, item.flair)
-                .with_badge(item.badge),
+            ListItemInfoLeft {
+                title: TitleSubtitle::new(&item.title, Some(&item.subtitle)),
+                description: None, flair: item.flair, badge: item.badge,
+            },
             item.secondary.as_ref().map(|value| TitleSubtitle::new(value, Some("Details"))),
             None, item.action.is_some().then_some(Icons::Forward),
             PelicanUi::callback(item.action.as_ref().unwrap_or(&chk::Action::None).get(), theme),
@@ -173,6 +173,14 @@ impl DesignSystem for PelicanUi {
         let (gifs, gif) = (self.inner.gifs().clone(), gif.clone());
         Box::pin(async move {gifs.bytes(&gif).await})
     }
+    fn page(&self, theme: &Theme, header: Header, content: Content, footer: Option<Footer>) -> Box<dyn chk::PageSurface> {
+        Box::new(PelicanUi {
+            inner: NativePage::new(
+                self.header(header, theme), content,
+                footer.map(|footer| self.footer(footer, theme)),
+            ),
+        })
+    }
     fn interface(&self, _: &Theme, ctx: &mut Context, roots: Vec<chk::RootInfo>, keyboard: Option<Box<dyn Drawable>>) -> Box<dyn Drawable> {
         let roots = roots.into_iter().map(|root| match root.icon {
             chk::RootIcon::Icon(icon) => NativeRoot::icon(icon, &root.label, root.page),
@@ -180,66 +188,51 @@ impl DesignSystem for PelicanUi {
         }).collect();
         Box::new(Interface::new(ctx, &self.inner, roots, keyboard))
     }
-    fn page(
-        &self, theme: &Theme, ctx: &mut Context, header: Header, content: Content,
-        footer: Option<Footer>, fields: Vec<(String, Range<usize>)>, disabled: bool,
-        identity: Option<String>, on_event: Option<Box<dyn PageEvent>>,
-        on_show: Option<Box<dyn ptsd::utils::Callback>>, on_create: Option<ListenCallback<PageView>>,
-    ) -> PageView {
-        PageView::new(
-            ctx, PelicanUi {
-                inner: NativePage::new(
-                    self.header(header, theme), content,
-                    footer.map(|footer| self.footer(footer, theme)),
-                ),
-            }, fields, disabled, identity, on_event, on_show, on_create,
-        )
-    }
     fn edge_to_edge(&self, theme: &Theme, header: Header, content: Box<dyn Drawable>) -> Box<dyn Drawable> {
         Box::new(FullScreen::without_footer(&self.inner, self.header(header, theme), content))
     }
-    fn slider_input(&self, _: &Theme, start: f32, label: Option<&str>, description: Option<&str>) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {
+    fn slider_input(&self, _: &Theme, start: f32, label: Option<&str>, description: Option<&str>) -> Control {
+        Control::new(PelicanUi {
             inner: native::Slider::new(
                 &self.inner, start, label, description, |_: &mut Context, _: &NativeTheme, _: f32| {},
             ),
         })
     }
-    fn text_input(&self, _: &Theme, id: Uuid, preset: Option<&str>, label: Option<&str>, placeholder: &str) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {
+    fn text_input(&self, _: &Theme, id: Uuid, preset: Option<&str>, label: Option<&str>, placeholder: &str) -> Control {
+        Control::new(PelicanUi {
             inner: TextInput::new(&self.inner, id, preset, label, Some(placeholder), None, None),
         })
     }
-    fn choice_input(&self, theme: &Theme, index: usize, items: Vec<(&str, &str, Box<dyn Callback>)>) -> Box<dyn Drawable> {
+    fn choice_input(&self, theme: &Theme, index: usize, items: Vec<(&str, &str, Box<dyn Callback>)>) -> Control {
         let items = items.into_iter()
             .map(|(label, description, action)| (label, description, PelicanUi::callback(action, theme)))
             .collect();
-        Control::boxed(PelicanUi {inner: RadioSelector::new(&self.inner, index, items)})
+        Control::new(PelicanUi {inner: RadioSelector::new(&self.inner, index, items)})
     }
-    fn currency_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {inner: NumericalInput::numerical(&self.inner, instructions)})
+    fn currency_input(&self, _: &Theme, instructions: &str) -> Control {
+        Control::new(PelicanUi {inner: NumericalInput::numerical(&self.inner, instructions)})
     }
-    fn number_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {inner: NumericalInput::number(&self.inner, instructions)})
+    fn number_input(&self, _: &Theme, instructions: &str) -> Control {
+        Control::new(PelicanUi {inner: NumericalInput::number(&self.inner, instructions)})
     }
-    fn date_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {inner: NumericalInput::date(&self.inner, instructions)})
+    fn date_input(&self, _: &Theme, instructions: &str) -> Control {
+        Control::new(PelicanUi {inner: NumericalInput::date(&self.inner, instructions)})
     }
-    fn time_input(&self, _: &Theme, instructions: &str) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {inner: NumericalInput::time(&self.inner, instructions)})
+    fn time_input(&self, _: &Theme, instructions: &str) -> Control {
+        Control::new(PelicanUi {inner: NumericalInput::time(&self.inner, instructions)})
     }
     fn keypad(&self, _: &Theme) -> Box<dyn Drawable> {Box::new(Keypad::new(&self.inner))}
-    fn selection_input(&self, theme: &Theme, selector: Selector) -> Box<dyn Drawable> {
+    fn selection_input(&self, theme: &Theme, selector: Selector) -> Control {
         let actions = selector.actions.iter()
             .map(|action| PelicanUi::action(action.get(selector.id).presentation(), theme)).collect();
         let selector = native::Selector::from_parts(
             selector.id, selector.label, selector.items, selector.limit,
             selector.chip_subtitles, selector.sort_by_title,
         );
-        Control::boxed(PelicanUi {inner: SelectionInput::with_actions(&self.inner, selector, actions)})
+        Control::new(PelicanUi {inner: SelectionInput::with_actions(&self.inner, selector, actions)})
     }
-    fn scanner_input(&self, _: &Theme, mut on_find: Box<dyn QrCodeFound>) -> Box<dyn Drawable> {
-        Control::boxed(PelicanUi {
+    fn scanner_input(&self, _: &Theme, mut on_find: Box<dyn QrCodeFound>) -> Control {
+        Control::new(PelicanUi {
             inner: QRCodeScanner::new(
                 &self.inner, Box::new(move |ctx: &mut Context, value: String| on_find(ctx, value)),
             ),
@@ -350,9 +343,9 @@ impl DesignSystem for PelicanUi {
             ),
         })
     }
-    fn camera_view(&self, theme: &Theme, capture: Box<dyn Callback>) -> CameraView {
+    fn camera_view(&self, theme: &Theme, disabled: bool, capture: Box<dyn Callback>) -> CameraView {
         CameraView::new(PelicanUi {
-            inner: native::CameraView::new(&self.inner, PelicanUi::callback(capture, theme)),
+            inner: native::CameraView::new(&self.inner, disabled, PelicanUi::callback(capture, theme)),
         })
     }
     fn message_group(&self, theme: &Theme, ctx: &mut Context, messages: Vec<MessageView>, group: bool) -> MessageGroups {
@@ -370,7 +363,6 @@ impl DesignSystem for PelicanUi {
 impl chk::PageSurface for PelicanUi<NativePage> {
     fn content(&self) -> &Content {&self.inner.content}
     fn content_mut(&mut self) -> &mut Content {&mut self.inner.content}
-    fn replace_content(&mut self, content: Content) {self.inner.content = content;}
     fn disable_actions(&mut self, disabled: bool) {
         if let Some(footer) = &mut self.inner.bumper {footer.disable(disabled);}
     }
@@ -424,39 +416,25 @@ impl chk::PlaybackSurface for PelicanUi<native::PlaybackView> {
         self.inner.duration(theme.downcast_ref::<PelicanUi>().unwrap().native_theme(), seconds);
     }
 }
-impl chk::Slider for PelicanUi<native::Slider> {fn value(&self) -> f32 {self.inner.current_value()}}
 impl chk::InputControl for PelicanUi<native::Slider> {
-    fn state(&self) -> State {State::Slider(chk::Slider::value(self))}
-}
-impl chk::TextField for PelicanUi<TextInput> {
-    fn value(&self) -> String {self.inner.value()}
-    fn id(&self) -> Uuid {self.inner.id()}
-    fn focused(&self) -> bool {self.inner.has_focus()}
+    fn state(&self) -> State {State::Slider(self.inner.current_value())}
 }
 impl chk::InputControl for PelicanUi<TextInput> {
-    fn state(&self) -> State {State::Text(chk::TextField::value(self))}
-    fn validation_value(&self) -> Option<String> {Some(chk::TextField::value(self))}
+    fn state(&self) -> State {State::Text(self.inner.value())}
     fn feedback(&mut self, result: &chk::FormValidState) {self.inner.error(result.eval().map(|_|()))}
 }
-impl chk::NumberField for PelicanUi<NumericalInput> {fn value(&self) -> String {self.inner.value()}}
 impl chk::InputControl for PelicanUi<NumericalInput> {
-    fn state(&self) -> State {State::Number(chk::NumberField::value(self))}
-    fn validation_value(&self) -> Option<String> {Some(chk::NumberField::value(self))}
+    fn state(&self) -> State {State::Number(self.inner.value())}
     fn feedback(&mut self, result: &chk::FormValidState) {self.inner.error(result.eval())}
 }
-impl chk::ChoiceField for PelicanUi<RadioSelector> {fn value(&self) -> usize {self.inner.value()}}
 impl chk::InputControl for PelicanUi<RadioSelector> {
-    fn state(&self) -> State {State::Enumerator(chk::ChoiceField::value(self))}
-}
-impl chk::SelectionField for PelicanUi<SelectionInput> {
-    fn value(&self) -> Vec<String> {self.inner.results()}
+    fn state(&self) -> State {State::Enumerator(self.inner.value())}
 }
 impl chk::InputControl for PelicanUi<SelectionInput> {
-    fn state(&self) -> State {State::Selection(chk::SelectionField::value(self))}
+    fn state(&self) -> State {State::Selection(self.inner.results())}
 }
-impl chk::Scanner for PelicanUi<QRCodeScanner> {fn value(&self) -> Option<String> {self.inner.found()}}
 impl chk::InputControl for PelicanUi<QRCodeScanner> {
-    fn state(&self) -> State {State::ScanCode(chk::Scanner::value(self))}
+    fn state(&self) -> State {State::ScanCode(self.inner.found())}
 }
 
 impl ptsd::Validate<&mut String, bool> for PelicanUi<Box<dyn ValidFn>> {

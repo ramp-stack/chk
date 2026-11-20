@@ -4,31 +4,15 @@ use prism::hardware::{Image, Player};
 use ptsd::content::Content;
 use uuid::Uuid;
 
-use std::{
-    collections::BTreeMap, future::{Future, ready}, ops::Range, pin::Pin, rc::Rc,
-    task::{Context as TaskContext, Poll, Waker}, time::Duration,
-};
+use std::{collections::BTreeMap, future::Future, ops::Range, rc::Rc, time::Duration};
 
 use crate::{State, FormValidState, FormValues, Watcher};
-use crate::design_system::{Theme, PlaybackBadge, AvatarContent, PageEvent};
+use crate::design_system::{Theme, PlaybackBadge, AvatarContent, FormEvent, PageEvent};
 
 type PageTask = crate::pending::Pending<Rc<dyn Fn(&mut Context, &mut PageView)>>;
 
-pub trait Slider: Drawable {fn value(&self) -> f32;}
-
-pub trait TextField: InputControl {
-    fn value(&self) -> String;
-    fn id(&self) -> Uuid;
-    fn focused(&self) -> bool;
-}
-pub trait NumberField: InputControl {fn value(&self) -> String;}
-pub trait ChoiceField: InputControl {fn value(&self) -> usize;}
-pub trait SelectionField: InputControl {fn value(&self) -> Vec<String>;}
-pub trait Scanner: InputControl {fn value(&self) -> Option<String>;}
-
 pub trait InputControl: Drawable {
     fn state(&self) -> State;
-    fn validation_value(&self) -> Option<String> {None}
     fn feedback(&mut self, _result: &FormValidState) {}
 }
 dyn_clone::clone_trait_object!(InputControl);
@@ -36,7 +20,6 @@ dyn_clone::clone_trait_object!(InputControl);
 pub trait PageSurface: Drawable + dyn_clone::DynClone {
     fn content(&self) -> &Content;
     fn content_mut(&mut self) -> &mut Content;
-    fn replace_content(&mut self, content: Content);
     fn disable_actions(&mut self, disabled: bool);
     fn composer_state(&mut self) -> Option<(Uuid, bool)>;
     fn take_footer_from(&mut self, old: &mut dyn PageSurface);
@@ -66,24 +49,6 @@ pub trait PlaybackSurface: Drawable + dyn_clone::DynClone {
     fn duration(&mut self, theme: &Theme, seconds: u64);
 }
 dyn_clone::clone_trait_object!(PlaybackSurface);
-
-pub trait ContentSurface: Drawable + Clone {
-    fn id(&self) -> Uuid;
-    fn children(&self) -> &Vec<Box<dyn Drawable>>;
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Drawable>>;
-    fn scroll(&self) -> f32;
-    fn set_scroll(&mut self, value: f32);
-}
-
-impl ContentSurface for Content {
-    fn id(&self) -> Uuid {std::ops::Deref::deref(self).id()}
-    fn children(&self) -> &Vec<Box<dyn Drawable>> {std::ops::Deref::deref(self).children()}
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Drawable>> {
-        std::ops::DerefMut::deref_mut(self).children_mut()
-    }
-    fn scroll(&self) -> f32 {self.children.scroll()}
-    fn set_scroll(&mut self, value: f32) {self.children.set_scroll(value);}
-}
 
 macro_rules! delegate_drawable {
     ($($view:ident),+ $(,)?) => {$(
@@ -133,29 +98,34 @@ pub struct PageView {
     focused: bool,
     timeout: Option<(Timer, Box<dyn ptsd::utils::Callback>)>,
     fields: Vec<(String, Range<usize>)>,
+    validity: Option<(Uuid, bool)>,
     tasks: BTreeMap<Uuid, PageTask>,
 }
 impl PageView {
     /// Runs `on_create` once after installing the page state and handlers; clones do not rerun it.
     #[allow(clippy::too_many_arguments, reason = "Page setup is supplied directly at construction.")]
     pub fn new(
-        ctx: &mut Context, mut widget: impl PageSurface + 'static,
+        ctx: &mut Context, mut widget: Box<dyn PageSurface>,
         fields: Vec<(String, Range<usize>)>, disabled: bool, identity: Option<String>,
         on_event: Option<Box<dyn PageEvent>>, on_show: Option<Box<dyn ptsd::utils::Callback>>,
         on_create: Option<ListenCallback<PageView>>,
     ) -> Self {
         widget.disable_actions(disabled);
         let mut page = Self {
-            surface: Box::new(widget), identity, events: on_event, activate: on_show.is_some(),
-            activation: on_show, focused: true, timeout: None, fields, tasks: BTreeMap::new(),
+            surface: widget, identity, events: on_event, activate: on_show.is_some(),
+            activation: on_show, focused: true, timeout: None, fields,
+            validity: None, tasks: BTreeMap::new(),
         };
         if let Some(on_create) = on_create {on_create(&mut page, ctx);}
         page
     }
     pub fn content(&self) -> &Content {self.surface.content()}
     pub fn content_mut(&mut self) -> &mut Content {self.surface.content_mut()}
-    pub fn replace_content(&mut self, content: Content) {self.surface.replace_content(content);}
     pub fn disable_actions(&mut self, disabled: bool) {self.surface.disable_actions(disabled);}
+    pub fn restore_actions(&mut self) {
+        let valid = self.validity.is_some_and(|(id, valid)| id == self.content().id() && valid);
+        self.surface.disable_actions(!valid);
+    }
     pub fn composer_state(&mut self) -> Option<(Uuid, bool)> {self.surface.composer_state()}
     pub fn take_footer_from(&mut self, old: &mut Self) {
         self.surface.take_footer_from(old.surface.as_mut());
@@ -181,22 +151,19 @@ impl PageView {
     pub fn cancel(&mut self, id: Uuid) {self.tasks.remove(&id);}
 
     pub fn watch<W: Watcher>(&mut self, ctx: &mut Context, mut watcher: W, update: impl Fn(&mut Context, &mut PageView, W::Output) + Clone + 'static) {
-        watcher.get(ctx);
-        let mut waiting = watcher.clone();
-        // Establish the subscription before taking the final snapshot, including while hidden.
-        let mut future = Box::pin(async move {(waiting.next().await, waiting)});
-        let future: Pin<Box<dyn Future<Output = (Option<()>, W)>>> =
-            match future.as_mut().poll(&mut TaskContext::from_waker(Waker::noop())) {
-                Poll::Ready(result) => Box::pin(ready(result)), Poll::Pending => future,
-            };
+        let (value, future) = watcher.observe(ctx);
         let next = update.clone();
         self.spawn(future, move |ctx, page, (changed, watcher)| {
             if changed.is_some() {page.watch(ctx, watcher, next.clone());}
         });
-        let value = watcher.get(ctx);
         update(ctx, self, value);
     }
     pub fn handle_event(&mut self, ctx: &mut Context, event: &dyn DynEvent) -> bool {
+        if let Some(FormEvent::Validated {id, valid}) = event.downcast_ref()
+            && *id == self.content().id() {
+            self.validity = Some((*id, *valid));
+            self.surface.disable_actions(!valid);
+        }
         if let Some(WindowEvent::Focused(focused)) = event.downcast_ref() {
             self.focused = *focused;
             self.activate = *focused && self.activation.is_some();
@@ -214,9 +181,10 @@ impl PageView {
     }
 
     pub fn retain(&mut self, ctx: &mut Context, old: &mut Self) {
-        if self.identity.is_none() || self.identity != old.identity {return;}
+        if self.identity != old.identity {return;}
         self.focused = old.focused;
         self.content_mut().retain_scroll_from(old.content());
+        if self.identity.is_none() {return;}
         if self.composer_state().is_some() && old.composer_state().is_some() {
             self.take_footer_from(old);
             self.events = old.events.take();

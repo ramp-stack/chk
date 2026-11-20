@@ -28,7 +28,8 @@ impl Contract for Block {
         }
     }
 
-    fn apply(&mut self, message: BlockAction, _metadata: Metadata) {
+    fn apply(&mut self, message: BlockAction, metadata: Metadata) {
+        if metadata.signer != self.blocker {return;}
         match message {
             BlockAction::Block => self.is_blocked = true,
             BlockAction::Unblock => self.is_blocked = false,

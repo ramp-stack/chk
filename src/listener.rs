@@ -2,8 +2,10 @@ use prism::{Context, drawable::Component, events::{on_change, OnChange, Event, C
 use ptsd::{layout::Stack, navigation::AppPage};
 use uuid::Uuid;
 
+use std::mem::{Discriminant, discriminant};
+
 use crate::design_system::Theme;
-use crate::{PageView, StackPage, PageBuilder, NavFn};
+use crate::{PageType, PageView, StackPage, PageBuilder, NavFn};
 
 #[derive(Debug, Clone, Copy)]
 pub struct PageChanged(pub Uuid);
@@ -29,6 +31,8 @@ pub struct Listener {
     flow_len: usize,
     #[skip]
     id: Uuid,
+    #[skip]
+    kind: Discriminant<PageType>,
 }
 
 impl AppPage for Listener {}
@@ -36,6 +40,7 @@ impl AppPage for Listener {}
 impl Listener {
     pub fn new(ctx: &mut Context, theme: &Theme, mut builder: Box<dyn PageBuilder>, is_root: bool, next: Option<NavFn>, flow_len: usize) -> Self {
         let mut page_type = builder.build(ctx, theme);
+        let kind = discriminant(&page_type);
         page_type.update(flow_len, next.clone());
         let page = if is_root {
             page_type.build_root(ctx, theme)
@@ -47,7 +52,7 @@ impl Listener {
             page, builder,
             theme: theme.clone(),
             is_root, next, flow_len,
-            id: Uuid::new_v4(),
+            id: Uuid::new_v4(), kind,
         }
     }
     pub fn id(&self) -> Uuid {self.id}
@@ -59,6 +64,7 @@ impl Listener {
 impl OnChange<()> for Listener {
     fn on_change(&mut self, ctx: &mut Context, _: ()) {
         let mut page_type = self.builder.build(ctx, &self.theme);
+        let kind = discriminant(&page_type);
         page_type.update(self.flow_len, self.next.clone());
         let mut page = if self.is_root {
             page_type.build_root(ctx, &self.theme)
@@ -67,9 +73,10 @@ impl OnChange<()> for Listener {
         };
         if let (Some(new), Some(old)) = (
             page.downcast_mut::<StackPage<PageView>>(), self.page.downcast_mut::<StackPage<PageView>>(),
-        ) {
+        ) && kind == self.kind {
             new.retain(ctx, old);
         }
+        self.kind = kind;
         self.page = page;
         ctx.emit(PageChanged(self.id));
     }
