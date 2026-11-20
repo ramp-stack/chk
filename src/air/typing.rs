@@ -20,8 +20,8 @@ pub struct TypingState {
 }
 
 impl Contract for TypingState {
-    type Init = Id;
     type Message = TypingAction;
+    type Init = Id;
     type Result = ();
     fn id() -> Id {Id::hash("CHK.TypingState.v1")}
     fn init(room: Id, metadata: Metadata) -> Self {

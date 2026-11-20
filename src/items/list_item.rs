@@ -1,5 +1,10 @@
-use super::*;
-use crate::design_system::Color;
+use prism::air::Name;
+use ptsd::selection::SelectorItem;
+
+use crate::blocking::Block;
+use crate::design_system::{AvatarContent, Color, Context, Icons, ListItemView, Theme};
+use crate::items::Action;
+use crate::profiles::Profile;
 
 #[derive(Debug, Clone)]
 pub struct ListItem {
@@ -26,21 +31,15 @@ impl PartialEq for ListItem {
 impl ListItem {
     pub fn plain(title: &str, subtitle: &str, secondary: Option<&str>, action: Option<Action>) -> Self {
         ListItem {
-            avatar: None,
-            title: title.to_string(),
-            subtitle: subtitle.to_string(),
-            secondary: secondary.map(|s| s.to_string()),
-            action, badge: false, flair: None,
+            avatar: None, title: title.to_string(), subtitle: subtitle.to_string(),
+            secondary: secondary.map(|s| s.to_string()), action, badge: false, flair: None,
         }
     }
 
     pub fn avatar(avatar: AvatarContent, title: &str, subtitle: &str, secondary: Option<&str>, action: Option<Action>) -> Self {
         ListItem {
-            avatar: Some(avatar),
-            title: title.to_string(),
-            subtitle: subtitle.to_string(),
-            secondary: secondary.map(|s| s.to_string()),
-            action, badge: false, flair: None,
+            avatar: Some(avatar), title: title.to_string(), subtitle: subtitle.to_string(),
+            secondary: secondary.map(|s| s.to_string()), action, badge: false, flair: None,
         }
     }
 
@@ -53,12 +52,14 @@ impl ListItem {
         let name = profile.name?;
         if Block::am_i_blocked(ctx, name) {return None;}
         let blocked = Block::did_i_block(ctx, name);
-        let subtitle = if blocked {"You blocked this user".to_string()} else {profile.name()};
-        let title = if name == ctx.air.me() {format!("{} (You)", profile.username)}
-            else {profile.username.clone()};
-        Some(Self {
+        let subtitle = if blocked { "You blocked this user".to_string() } else { profile.name() };
+        let title = if name == ctx.air.me() {
+            format!("{} (You)", profile.username)
+        } else {profile.username.clone()};
+        Some(ListItem {
             avatar: Some(profile.avatar.clone()), title, subtitle, secondary: None, action: None,
-            badge: false, flair: blocked.then(|| (Icons::Block, theme.colors().get(ptsd::Status::Danger))),
+            badge: false,
+            flair: blocked.then(|| (Icons::Block, theme.colors().get(ptsd::Status::Danger))),
         })
     }
 
@@ -66,20 +67,22 @@ impl ListItem {
         let name = profile.name?;
         let username = if name == me {
             format!("{} (You)", profile.username)
-        } else {
-            profile.username.clone()
-        };
+        } else {profile.username.clone()};
         Some((
             ListItem {
-                avatar: Some(profile.avatar.clone()),
-                title: username,
-                subtitle: profile.name(),
-                secondary: None,
-                action: None,
-                badge: false,
-                flair: None,
+                avatar: Some(profile.avatar.clone()), title: username, subtitle: profile.name(),
+                secondary: None, action: None, badge: false, flair: None,
             },
             name.to_string(),
         ))
+    }
+}
+
+impl From<ListItem> for SelectorItem {
+    fn from(item: ListItem) -> SelectorItem {
+        SelectorItem {
+            title: item.title, subtitle: item.subtitle, avatar: item.avatar,
+            secondary: item.secondary, badge: item.badge, flair: item.flair,
+        }
     }
 }

@@ -26,17 +26,11 @@ pub mod form;
 pub use form::*;
 pub mod items;
 pub use items::*;
+pub mod page_type;
 pub mod page;
 pub use page::*;
 pub mod air;
 pub use air::*;
-#[path = "typing.rs"]
-mod typing_ui;
-
-mod pending;
-
-mod app;
-pub use app::*;
 
 pub mod design;
 pub use design::{
@@ -44,3 +38,11 @@ pub use design::{
     ContentSurface, PageSurface, PageView, AvatarSurface, AvatarView, CameraSurface, CameraView,
     PlaybackSurface, VideoView,
 };
+
+#[path = "typing.rs"]
+mod typing_ui;
+
+mod pending;
+
+mod app;
+pub use app::*;

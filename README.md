@@ -98,6 +98,17 @@ accepts those fields directly with optional display content and a header action;
 there is no separate `EditAndDisplay` variant. `Form::page` uses the same editor.
 `Form::flow` still provides one field per step, with optional `Review` and `Success`.
 
+`PageType::edge_to_edge(title, content, action)` builds a page whose content fills the
+available area, with the header overlaid above it. The Pelican adapter uses
+`pelican_ui::interface::general::FullScreen` for this layout. Camera, photo, video,
+and app-provided playback use the same edge-to-edge builder.
+
+Messages and search use `StackPage` with the ordinary page shell. Messages build the entire
+visible history as ordinary `Content` children. `PageView` handles page events, activation,
+and draft retention; `Content` retains scrolling and reveals selected children. There is no
+message-specific history loader. Search is represented by `PageType::Search` and follows
+normal CHK flows.
+
 Standard screens are associated functions on `Root`, `Page`, `PageType`, and `Form`. Chat applications can construct
 their navigation directly, including the user's avatar on the Profile tab.
 The Profile tab watches the saved avatar, including synced changes, and refreshes
@@ -371,8 +382,9 @@ keyed by the room's instance ID. Missing flags mean unread. This preserves the e
 binary format of shared messages and delete actions, and keeps group members' read state
 independent. Read-state instances are not shared and do not enable notifications.
 
-The active `MessagesPage` acknowledges its displayed conversation snapshot. Constructing a
-page does not mark it read, and background or hidden pages do not acknowledge messages.
+The messages builder registers a `PageView::on_show` callback to acknowledge its displayed
+history. Constructing a page does not mark it read, and background or hidden pages do not
+acknowledge messages.
 Refreshing an open conversation acknowledges newly displayed incoming messages; reopening
 the app retains saved flags. Existing history has no flags until first opened.
 

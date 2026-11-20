@@ -1,9 +1,11 @@
 use prism::Context;
+use prism::air::{Id, Name, Metadata, Contract, Instance};
+use serde::{Deserialize, Serialize};
+
 pub use crate::design_system::{MessageContent, Sticker, Gif};
 
-use prism::air::{Id, Name, Metadata, Contract, Instance};
-
-use serde::{Deserialize, Serialize};
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+pub enum BlockAction {Block, Unblock}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Block {
@@ -11,15 +13,14 @@ pub struct Block {
     pub blocked: Name, // if this is me, then i have been blocked
     pub is_blocked: bool, // so the user can be unblocked
 }
-
 impl Contract for Block {
-    type Init = Name;
     type Message = BlockAction;
+    type Init = Name;
     type Result = ();
 
     fn id() -> Id {Id::hash("Block")}
 
-    fn init(init: Self::Init, metadata: Metadata) -> Self {
+    fn init(init: Name, metadata: Metadata) -> Self {
         Block {
             blocker: metadata.signer,
             blocked: init,
@@ -27,7 +28,7 @@ impl Contract for Block {
         }
     }
 
-    fn apply(&mut self, message: Self::Message, _metadata: Metadata) -> Self::Result {
+    fn apply(&mut self, message: BlockAction, _metadata: Metadata) {
         match message {
             BlockAction::Block => self.is_blocked = true,
             BlockAction::Unblock => self.is_blocked = false,
@@ -63,6 +64,3 @@ impl Block {
         })
     }
 }
-
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
-pub enum BlockAction {Block, Unblock}

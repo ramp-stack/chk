@@ -1,7 +1,13 @@
-use prism::{air::Name, drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
-    events::{DynEvent, ListenCallback, ListenFuture}};
-use std::{any::Any, cell::RefCell, collections::{HashSet, VecDeque}, rc::{Rc, Weak},
-    future::poll_fn, task::{Poll, Waker}};
+use prism::{
+    air::Name, drawable::{Drawable, Instruction, LayoutTree, Offset, Rect},
+    events::{DynEvent, ListenCallback, ListenFuture},
+};
+
+use std::{
+    any::Any, cell::RefCell, collections::{HashSet, VecDeque}, rc::{Rc, Weak},
+    future::poll_fn, task::{Poll, Waker},
+};
+
 use crate::{Action, Context, Theme};
 
 type InvitationParser<T> = Rc<dyn Fn(&str) -> Option<T>>;
@@ -40,7 +46,7 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
 
     pub fn receive(&self, url: &str) -> bool {
         let url = url.trim();
-        let Some(payload) = self.parse_invite(url) else {return false};
+        let Some(payload) = self.parse_invite(url) else {return false;};
         let mut inbox = self.inbox.borrow_mut();
         if inbox.pending.contains(url) {return true;}
         if inbox.queue.len() == 16 {return false;}
@@ -59,7 +65,6 @@ impl<T: Clone + std::fmt::Debug + 'static> Invitations<T> {
         let invitations = self.clone();
         ctx.hardware.listen_app_links(move |url| invitations.receive(url))
     }
-
 }
 
 #[derive(Clone)]
@@ -125,7 +130,6 @@ impl<T: Clone + std::fmt::Debug + 'static> Drawable for InvitationLinks<T> {
     }
 }
 
-
 #[derive(Clone, Debug, Default)]
 pub struct ContactInvitations {
     invitations: Option<Invitations<Name>>,
@@ -135,23 +139,27 @@ impl ContactInvitations {
     pub fn new(invitations: Invitations<Name>) -> Self {Self {invitations: Some(invitations)}}
 
     pub fn contact_url(&self, name: Name) -> String {
-        self.invitations.as_ref().map_or_else(|| name.to_string(), |invitations| invitations.url(name))
+        self.invitations.as_ref()
+            .map_or_else(|| name.to_string(), |invitations| invitations.url(name))
     }
 
     pub fn selected_recipients(keys: &[String]) -> Result<Vec<Name>, &'static str> {
-        if keys.is_empty() { return Err("Choose at least one contact."); }
+        if keys.is_empty() {return Err("Choose at least one contact.");}
         let mut recipients = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         for key in keys {
-            let name = key.parse::<Name>().map_err(|_| "One of the selected contacts is invalid. Choose your contacts again.")?;
-            if seen.insert(name) { recipients.push(name); }
+            let name = key.parse::<Name>().map_err(|_| {
+                "One of the selected contacts is invalid. Choose your contacts again."
+            })?;
+            if seen.insert(name) {recipients.push(name);}
         }
         Ok(recipients)
     }
 
     pub fn parse_contact(&self, value: &str) -> Option<Name> {
         match &self.invitations {
-            Some(invitations) => invitations.parse_invite(value).or_else(|| value.trim().parse().ok()),
+            Some(invitations) => invitations.parse_invite(value)
+                .or_else(|| value.trim().parse().ok()),
             None => value.trim().parse().ok(),
         }
     }

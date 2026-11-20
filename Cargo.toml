@@ -3,7 +3,7 @@ name = "chk"
 version = "2.0.0"
 authors = ["Ella Mae <ellaammae@email.com>"]
 edition = "2024"
-description = "The guided, locked-down layer of Pelican UI for consistent, reliable RAMP interfaces."
+description = "Guided, consistent RAMP interfaces with interchangeable design systems."
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/chk"
 readme = "README.md"
@@ -18,12 +18,10 @@ default = []
 pelican_ui = ["dep:pelican_ui"]
 
 [dependencies]
-serde = "1.0.219"
+serde = {version = "1.0.219", features = ["derive"]}
 pelican_ui = {optional = true, version = "3.0.0", git = "https://github.com/ramp-stack/pelican_ui", rev = "4522d2919738a6e042faa530c3f04f8bca66a5cf"}
 prism = {package = "prism2", version = "3.1.0"}
 ptsd = {package = "ptsd2", version = "0.2.0", git = "https://github.com/ramp-stack/ptsd", rev = "965e94c3094e0e871381b34d9b0ba9976232b10e"}
 dyn-clone = "1.0.20"
 rand = "0.8"
 uuid = {version = "1.16.0", features = ["v4", "js"]}
-
-include_dir = "0.7.4"

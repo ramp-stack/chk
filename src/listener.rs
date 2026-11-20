@@ -1,14 +1,15 @@
 use prism::{Context, drawable::Component, events::{on_change, OnChange, Event, ChildEvent}};
 use ptsd::{layout::Stack, navigation::AppPage};
 use uuid::Uuid;
+
 use crate::design_system::Theme;
-use crate::{MessagesPage, PageBuilder, NavFn};
+use crate::{PageView, StackPage, PageBuilder, NavFn};
 
 #[derive(Debug, Clone, Copy)]
 pub struct PageChanged(pub Uuid);
 impl Event for PageChanged {
     fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
-        for child in children { *child.event = Some(*self); }
+        for child in children {*child.event = Some(*self);}
     }
 }
 
@@ -37,7 +38,7 @@ impl Listener {
         let mut page_type = builder.build(ctx, theme);
         page_type.update(flow_len, next.clone());
         let page = if is_root {
-            page_type.build_root(theme, ctx.window.is_mobile)
+            page_type.build_root(ctx, theme)
         } else {
             page_type.build(ctx, theme)
         };
@@ -49,7 +50,7 @@ impl Listener {
             id: Uuid::new_v4(),
         }
     }
-    pub fn id(&self) -> Uuid { self.id }
+    pub fn id(&self) -> Uuid {self.id}
 }
 
 #[on_change(async {
@@ -60,13 +61,14 @@ impl OnChange<()> for Listener {
         let mut page_type = self.builder.build(ctx, &self.theme);
         page_type.update(self.flow_len, self.next.clone());
         let mut page = if self.is_root {
-            page_type.build_root(&self.theme, ctx.window.is_mobile)
+            page_type.build_root(ctx, &self.theme)
         } else {
             page_type.build(ctx, &self.theme)
         };
-        if let (Some(new), Some(old)) =
-            (page.downcast_mut::<MessagesPage>(), self.page.downcast_mut::<MessagesPage>()) {
-            new.take_input_from(old);
+        if let (Some(new), Some(old)) = (
+            page.downcast_mut::<StackPage<PageView>>(), self.page.downcast_mut::<StackPage<PageView>>(),
+        ) {
+            new.retain(ctx, old);
         }
         self.page = page;
         ctx.emit(PageChanged(self.id));

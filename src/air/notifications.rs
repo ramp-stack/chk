@@ -1,6 +1,8 @@
 use prism::air::{Air, Instance, Instances};
 use prism::service::Service;
+
 use std::{future::{Future, pending, poll_fn}, pin::pin, task::Poll};
+
 use super::messages::{ChatRoom, ContactNotificationState, RoomNotificationState};
 
 pub struct MessageNotifications(Instances<ChatRoom>, Air);
@@ -28,7 +30,7 @@ struct RoomNotifications {
     enabled: bool,
 }
 impl RoomNotifications {
-    fn refresh_contact(&mut self) {
+    pub fn refresh_contact(&mut self) {
         let me = self.air.me();
         let contact = self.room.pending().direct_contact(me);
         // Read through the subscribed catalog before choosing the instance, so
@@ -43,7 +45,7 @@ impl RoomNotifications {
 impl Service for RoomNotifications {
     type Init = Instance<ChatRoom>;
     type Predicate = bool;
-    async fn init(air: Air, room: Self::Init) -> Self {
+    async fn init(air: Air, room: Instance<ChatRoom>) -> Self {
         let preferences = air.instances::<RoomNotificationState>().create(room.id());
         let contacts = air.instances::<ContactNotificationState>();
         let mut service = Self {room, preferences, contacts, contact: None, air, enabled: false};
@@ -66,8 +68,9 @@ impl Service for RoomNotifications {
             });
             poll_fn(|cx| {
                 if room.as_mut().poll(cx).is_ready() || preferences.as_mut().poll(cx).is_ready()
-                    || contacts.as_mut().poll(cx).is_ready() || contact.as_mut().poll(cx).is_ready() {Poll::Ready(())}
-                else {Poll::Pending}
+                    || contacts.as_mut().poll(cx).is_ready() || contact.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(())
+                } else {Poll::Pending}
             }).await;
         }
         self.refresh_contact();
@@ -82,4 +85,3 @@ impl Service for RoomNotifications {
         }
     }
 }
-

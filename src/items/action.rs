@@ -1,5 +1,16 @@
-use crate::messages::{ContactNotificationState, MessageContent, RoomNotificationState};
-use super::*;
+use prism::air::{Instance, Name};
+use prism::hardware::Data;
+use uuid::Uuid;
+
+use crate::blocking::{Block, BlockAction};
+use crate::design_system::{
+    AvatarIconStyle, Callback, Context, Icons, TextInputEvent, Theme,
+};
+use crate::flow::Flow;
+use crate::items::AvatarPurpose;
+use crate::messages::{ChatRoom, ContactNotificationState, MessageContent, RoomNotificationState};
+use crate::profiles::Profile;
+use crate::{ContactInvitations, Page};
 
 /// Ready-to-render action data; CHK owns labels and callbacks.
 #[derive(Clone, Debug)]
@@ -24,7 +35,7 @@ pub enum Action {
 }
 
 impl PartialEq for Action {
-    fn eq(&self, _: &Self) -> bool { true }
+    fn eq(&self, _: &Self) -> bool {true}
 }
 
 impl Action {
@@ -32,11 +43,11 @@ impl Action {
         Action::SetText { id, value: value.into() }
     }
 
-    pub fn share(data: &str) -> Self { Action::Share { data: data.to_string() } }
+    pub fn share(data: &str) -> Self {Action::Share { data: data.to_string() }}
 
-    pub fn copy(data: &str) -> Self { Action::Copy { data: data.to_string() } }
+    pub fn copy(data: &str) -> Self {Action::Copy { data: data.to_string() }}
 
-    pub fn select_image() -> Self { Action::SelectImage }
+    pub fn select_image() -> Self {Action::SelectImage}
 
     pub fn scan_qr(instructions: &str, id: Uuid) -> Self {
         let on_find = Box::new(move |ctx: &mut Context, value: String| {
@@ -53,36 +64,52 @@ impl Action {
         Action::Custom { action: Box::new(action) }
     }
 
-    pub fn flow(flow: Flow) -> Self { Action::Flow { flow } }
+    pub fn flow(flow: Flow) -> Self {Action::Flow { flow }}
 
     pub fn deferred_flow(mut build: impl FnMut(&mut Context, &Theme) -> Flow + Clone + 'static) -> Self {
-        Action::Custom {action: Box::new(move |ctx: &mut Context, theme: &Theme| {
-            (build(ctx, theme).build(ctx, theme))(ctx, theme);
-        })}
+        Action::Custom {
+            action: Box::new(move |ctx: &mut Context, theme: &Theme| {
+                (build(ctx, theme).build(ctx, theme))(ctx, theme);
+            }),
+        }
     }
 
     pub fn block(profile: Instance<Profile>) -> Action {
         let profile = profile.pending();
         let name = profile.name.unwrap();
-        Action::Flow {flow: Flow::action_target(
-            ("block", Action::Custom {action: Box::new(move |ctx: &mut Context, _: &Theme| {
-                Block::create(ctx, name).send(BlockAction::Block);
-            })}),
-            "blocked", "user", &profile.username, profile.avatar.clone(),
-            AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger)
-        )}
+        Action::Flow {
+            flow: Flow::action_target(
+                (
+                    "block",
+                    Action::Custom {
+                        action: Box::new(move |ctx: &mut Context, _: &Theme| {
+                            Block::create(ctx, name).send(BlockAction::Block);
+                        }),
+                    },
+                ),
+                "blocked", "user", &profile.username, profile.avatar.clone(),
+                AvatarPurpose::new(Icons::Block, AvatarIconStyle::Danger),
+            ),
+        }
     }
 
     pub fn unblock(profile: Instance<Profile>) -> Action {
         let profile = profile.pending();
         let name = profile.name.unwrap();
-        Action::Flow {flow: Flow::action_target(
-            ("unblock", Action::Custom {action: Box::new(move |ctx: &mut Context, _: &Theme| {
-                Block::create(ctx, name).send(BlockAction::Unblock);
-            })}),
-            "unblocked", "user", &profile.username, profile.avatar.clone(),
-            AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success)
-        )}
+        Action::Flow {
+            flow: Flow::action_target(
+                (
+                    "unblock",
+                    Action::Custom {
+                        action: Box::new(move |ctx: &mut Context, _: &Theme| {
+                            Block::create(ctx, name).send(BlockAction::Unblock);
+                        }),
+                    },
+                ),
+                "unblocked", "user", &profile.username, profile.avatar.clone(),
+                AvatarPurpose::new(Icons::Unblock, AvatarIconStyle::Success),
+            ),
+        }
     }
 
     pub fn mute(ctx: &mut Context, room: &Instance<ChatRoom>, muted: bool) -> Action {
@@ -95,37 +122,53 @@ impl Action {
             let name = data.members.iter().copied().find(|name| *name != me).unwrap_or(me);
             let profile = Profile::from_name(ctx, name);
             let profile = profile.pending();
-            let target = if name == me {format!("{} (You)", profile.username)} else {profile.username.clone()};
-            (if name == me {"chat"} else {"user"}, target, profile.avatar.clone())
+            let target = if name == me {
+                format!("{} (You)", profile.username)
+            } else {profile.username.clone()};
+            (if name == me { "chat" } else { "user" }, target, profile.avatar.clone())
         };
         let room = room.clone();
-        Action::mute_target(kind, &target, avatar, muted, move |ctx: &mut Context, _: &Theme| {
-            RoomNotificationState::set_muted(ctx, &room, muted);
-        })
+        let (label, past_action, icon, style) = if muted {
+            ("mute", "muted", Icons::Mute, AvatarIconStyle::Danger)
+        } else {("unmute", "unmuted", Icons::Unmute, AvatarIconStyle::Success)};
+        Action::Flow {
+            flow: Flow::action_target(
+                (
+                    label,
+                    Action::Custom {
+                        action: Box::new(move |ctx: &mut Context, _: &Theme| {
+                            RoomNotificationState::set_muted(ctx, &room, muted);
+                        }),
+                    },
+                ),
+                past_action, kind, &target, avatar, AvatarPurpose::Custom { icon, style },
+            ),
+        }
     }
 
     pub fn mute_profile(ctx: &Context, profile: &Instance<Profile>, muted: bool) -> Action {
         let profile = profile.pending();
         let name = profile.name.unwrap();
         let is_me = name == ctx.air.me();
-        let target = if is_me {format!("{} (You)", profile.username)} else {profile.username.clone()};
-        Action::mute_target(if is_me {"chat"} else {"user"}, &target, profile.avatar.clone(), muted,
-            move |ctx: &mut Context, _: &Theme| {
-                ContactNotificationState::set_muted(ctx, name, muted);
-            })
-    }
-
-    fn mute_target(kind: &str, target: &str, avatar: AvatarContent, muted: bool,
-        on_confirm: impl Callback + 'static) -> Action {
+        let target =
+            if is_me { format!("{} (You)", profile.username) } else { profile.username.clone() };
         let (label, past_action, icon, style) = if muted {
             ("mute", "muted", Icons::Mute, AvatarIconStyle::Danger)
-        } else {
-            ("unmute", "unmuted", Icons::Unmute, AvatarIconStyle::Success)
-        };
-        Action::Flow {flow: Flow::action_target(
-            (label, Action::custom(on_confirm)),
-            past_action, kind, target, avatar, AvatarPurpose::new(icon, style)
-        )}
+        } else {("unmute", "unmuted", Icons::Unmute, AvatarIconStyle::Success)};
+        Action::Flow {
+            flow: Flow::action_target(
+                (
+                    label,
+                    Action::Custom {
+                        action: Box::new(move |ctx: &mut Context, _: &Theme| {
+                            ContactNotificationState::set_muted(ctx, name, muted);
+                        }),
+                    },
+                ),
+                past_action, if is_me { "chat" } else { "user" }, &target, profile.avatar.clone(),
+                AvatarPurpose::Custom { icon, style },
+            ),
+        }
     }
 
     pub fn get(&self) -> Box<dyn Callback> {
@@ -164,7 +207,8 @@ impl Action {
                 let id = *id;
                 Box::new(move |ctx: &mut Context, _: &Theme| {
                     let text = match ctx.hardware.get_clipboard() {
-                        Some(Data::Text(text)) => text, _ => String::new(),
+                        Some(Data::Text(text)) => text,
+                        _ => String::new(),
                     };
                     ctx.emit(TextInputEvent::Set { id, value: text });
                 })
@@ -182,17 +226,18 @@ impl Action {
     }
 
     pub fn message(name: Name) -> Action {
-        Action::Custom {action: Box::new(move |ctx: &mut Context, theme: &Theme| {
-            let mut room = ChatRoom::create(ctx, vec![name]);
-            let mut flow = Flow::new(vec![Page::messaging(ctx, &mut room)]);
-            (flow.build(ctx, theme))(ctx, theme);
-        })}
+        Action::Custom {
+            action: Box::new(move |ctx: &mut Context, theme: &Theme| {
+                let mut room = ChatRoom::create(ctx, vec![name]);
+                let mut flow = Flow::new(vec![Page::messaging(ctx, &mut room)]);
+                (flow.build(ctx, theme))(ctx, theme);
+            }),
+        }
     }
 
     pub fn share_contact(invitations: &ContactInvitations, name: Name) -> Action {
-        Action::Share {data: invitations.contact_url(name)}
+        Action::Share { data: invitations.contact_url(name) }
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -209,10 +254,7 @@ impl ActionItem {
                 if first_letter && character.is_alphabetic() {
                     first_letter = false;
                     first_word = false;
-                    if capitalize {
-                        output.extend(character.to_uppercase());
-                        continue;
-                    }
+                    if capitalize {output.extend(character.to_uppercase()); continue;}
                 }
                 output.push(character);
             }
@@ -231,16 +273,17 @@ impl ActionItem {
     pub fn mute(ctx: &mut Context, room: Instance<ChatRoom>) -> Self {
         let muted = RoomNotificationState::is_muted_for(&ctx.air, &room);
         let action = Action::mute(ctx, &room, !muted);
-        let (label, icon) = if muted {("Unmute group", Icons::Unmute)} else {("Mute group", Icons::Mute)};
-        Self(action, label.into(), None, icon)
+        let (label, icon) =
+            if muted { ("Unmute group", Icons::Unmute) } else { ("Mute group", Icons::Mute) };
+        ActionItem(action, label.into(), None, icon)
     }
 
     pub fn mute_profile(ctx: &Context, profile: &Instance<Profile>) -> Self {
         let name = profile.pending().name.unwrap();
         let muted = ContactNotificationState::is_muted_for(&ctx.air, name);
         let action = Action::mute_profile(ctx, profile, !muted);
-        let (label, icon) = if muted {("Unmute", Icons::Unmute)} else {("Mute", Icons::Mute)};
-        Self(action, label.into(), None, icon)
+        let (label, icon) = if muted { ("Unmute", Icons::Unmute) } else { ("Mute", Icons::Mute) };
+        ActionItem(action, label.into(), None, icon)
     }
 
     pub fn copy_message(ctx: &mut Context, content: &MessageContent) -> Option<Self> {
@@ -264,21 +307,24 @@ impl ActionItem {
                 Action::copy(&text)
             }
         };
-        Some(Self(action, "Copy".into(), Some("copied".into()), Icons::Copy))
+        Some(ActionItem(action, "Copy".into(), Some("copied".into()), Icons::Copy))
     }
 
-    pub fn contact_actions(invitations: &ContactInvitations, name: Name) -> Vec<ActionItem> {
-        vec![
-            ActionItem(Action::copy(&name.to_string()), "Copy".into(), Some("Copied".into()), Icons::Copy),
-            ActionItem(Action::flow(Flow::new(vec![Page::Static(Box::new(crate::PageType::qr_page(invitations, name)))])),
-                "Display QR Code".into(), None, Icons::QrCode),
-            ActionItem(Action::share_contact(invitations, name), "Share".into(), None, Icons::Send),
-        ]
-    }
-    pub fn icon_action(&self) -> (Icons, Box<dyn Callback>) { (self.3, self.0.get()) }
+    pub fn icon_action(&self) -> (Icons, Box<dyn Callback>) {(self.3, self.0.get())}
 
     pub fn presentation(&self) -> ActionPresentation {
-        ActionPresentation {label: ActionItem::format_label(&self.1), active: self.2.as_deref().map(ActionItem::format_label),
-            icon: self.3, on_click: self.0.get()}
+        ActionPresentation {
+            label: ActionItem::format_label(&self.1),
+            active: self.2.as_deref().map(ActionItem::format_label), icon: self.3,
+            on_click: self.0.get(),
+        }
+    }
+
+    pub fn block_profile(ctx: &mut Context, profile: &Instance<Profile>) -> Self {
+        let name = profile.pending().name.unwrap();
+        let (action, label, icon) = if name != ctx.air.me() && Block::did_i_block(ctx, name) {
+            (Action::unblock(profile.clone()), "Unblock", Icons::Unblock)
+        } else {(Action::block(profile.clone()), "Block", Icons::Block)};
+        ActionItem(action, label.into(), None, icon)
     }
 }

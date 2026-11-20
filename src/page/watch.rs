@@ -12,29 +12,6 @@ use crate::{PageBuilder, PageType};
 
 type ContractUpdate<'a, C> = Pin<Box<dyn Future<Output = Option<Instance<C>>> + 'a>>;
 
-#[derive(Debug, Clone)]
-pub struct ContractWatch<C: Contract>(Instance<C>);
-impl<C: Contract> ContractWatch<C> {
-    pub fn new(instance: Instance<C>) -> Self {Self(instance)}
-}
-
-#[derive(Debug)]
-pub struct ListWatch<C: Contract> {
-    instances: Option<Instances<C>>,
-    current: BTreeMap<Id, Instance<C>>,
-}
-impl<C: Contract> Default for ListWatch<C> {
-    fn default() -> Self {Self {instances: None, current: BTreeMap::new()}}
-}
-impl<C: Contract> Clone for ListWatch<C> {
-    fn clone(&self) -> Self {
-        let instances = self.instances.clone();
-        let current = instances.as_ref().map(|instances| instances.list().into_iter().collect())
-            .unwrap_or_default();
-        Self {instances, current}
-    }
-}
-
 pub trait Watcher: Debug + Clone + 'static {
     type Output;
     fn next(&mut self) -> impl Future<Output = Option<()>>;
@@ -59,7 +36,9 @@ impl<C: Contract> Watcher for ListWatch<C> {
             waits.push(Box::pin(async move {Some(instances.next().await)}));
             poll_fn(|cx| {
                 for wait in &mut waits {
-                    if let Poll::Ready(update) = wait.as_mut().poll(cx) {return Poll::Ready(update);}
+                    if let Poll::Ready(update) = wait.as_mut().poll(cx) {
+                        return Poll::Ready(update);
+                    }
                 }
                 Poll::Pending
             }).await
@@ -79,19 +58,18 @@ impl<C: Contract> Watcher for ListWatch<C> {
 }
 
 macro_rules! impl_watcher_for_tuple {
-    ($first:ident, $($w:ident),+) => {
-        impl_watcher_for_tuple!(@impl $first, $($w),+);
-        impl_watcher_for_tuple!($($w),+);
+    ($first:ident => $first_value:ident, $($w:ident => $value:ident),+) => {
+        impl_watcher_for_tuple!(@impl $first => $first_value, $($w => $value),+);
+        impl_watcher_for_tuple!($($w => $value),+);
     };
-    ($last:ident) => {};
-    (@impl $($w:ident),+) => {
+    ($last:ident => $value:ident) => {};
+    (@impl $($w:ident => $value:ident),+) => {
         impl<$($w: Watcher),+> Watcher for ($($w,)+) {
             type Output = ($($w::Output,)+);
-            #[allow(non_snake_case)]
             async fn next(&mut self) -> Option<()> {
-                let ($($w,)+) = self;
+                let ($($value,)+) = self;
                 let mut waits: Vec<Pin<Box<dyn Future<Output = Option<()>> + '_>>> = vec![
-                    $(Box::pin($w.next()),)+
+                    $(Box::pin($value.next()),)+
                 ];
                 poll_fn(|cx| {
                     let mut index = 0;
@@ -105,15 +83,37 @@ macro_rules! impl_watcher_for_tuple {
                     if waits.is_empty() {Poll::Ready(None)} else {Poll::Pending}
                 }).await
             }
-            #[allow(non_snake_case)]
-            fn get(&mut self, ctx: &mut Context) -> Self::Output {
-                let ($($w,)+) = self;
-                ($($w.get(ctx),)+)
+            fn get(&mut self, ctx: &mut Context) -> ($($w::Output,)+) {
+                let ($($value,)+) = self;
+                ($($value.get(ctx),)+)
             }
         }
     };
 }
-impl_watcher_for_tuple!(A, B, C, D);
+impl_watcher_for_tuple!(A => a, B => b, C => c, D => d);
+
+#[derive(Debug, Clone)]
+pub struct ContractWatch<C: Contract>(Instance<C>);
+impl<C: Contract> ContractWatch<C> {
+    pub fn new(instance: Instance<C>) -> Self {Self(instance)}
+}
+
+#[derive(Debug)]
+pub struct ListWatch<C: Contract> {
+    instances: Option<Instances<C>>,
+    current: BTreeMap<Id, Instance<C>>,
+}
+impl<C: Contract> Default for ListWatch<C> {
+    fn default() -> Self {Self {instances: None, current: BTreeMap::new()}}
+}
+impl<C: Contract> Clone for ListWatch<C> {
+    fn clone(&self) -> Self {
+        let instances = self.instances.clone();
+        let current = instances.as_ref().map(|instances| instances.list().into_iter().collect())
+            .unwrap_or_default();
+        Self {instances, current}
+    }
+}
 
 pub struct Watching<W: Watcher, F> {
     watcher: W,
@@ -121,9 +121,7 @@ pub struct Watching<W: Watcher, F> {
     pending: Option<Pin<Box<dyn Future<Output = Option<()>>>>>,
 }
 impl<W: Watcher, F> Watching<W, F> {
-    pub fn new(watcher: W, builder: F) -> Self {
-        Self {watcher, builder, pending: None}
-    }
+    pub fn new(watcher: W, builder: F) -> Self {Self {watcher, builder, pending: None}}
 }
 impl<W: Watcher, F: Clone> Clone for Watching<W, F> {
     fn clone(&self) -> Self {
@@ -138,7 +136,8 @@ impl<W: Watcher, F> Debug for Watching<W, F> {
         f.debug_tuple("Watching").field(&self.watcher).finish()
     }
 }
-impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static> PageBuilder for Watching<W, F> {
+impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone + 'static>
+    PageBuilder for Watching<W, F> {
     fn next(&mut self) -> Pin<Box<dyn Future<Output = Option<()>> + '_>> {
         Box::pin(async {
             let update = self.pending.as_mut()?.await;
@@ -151,8 +150,10 @@ impl<W: Watcher, F: FnMut(&mut Context, &Theme, W::Output) -> PageType + Clone +
         self.watcher.get(ctx);
         let mut watcher = self.watcher.clone();
         // Prime deferred subscriptions before the final snapshot and retain them while hidden.
-        let mut pending: Pin<Box<dyn Future<Output = Option<()>>>> = Box::pin(async move {watcher.next().await});
-        if let Poll::Ready(update) = pending.as_mut().poll(&mut TaskContext::from_waker(Waker::noop())) {
+        let mut pending: Pin<Box<dyn Future<Output = Option<()>>>> =
+            Box::pin(async move {watcher.next().await});
+        if let Poll::Ready(update) =
+            pending.as_mut().poll(&mut TaskContext::from_waker(Waker::noop())) {
             pending = Box::pin(ready(update));
         }
         self.pending = Some(pending);

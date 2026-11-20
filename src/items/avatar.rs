@@ -1,18 +1,32 @@
-use super::*;
+use prism::air::Id;
+use prism::drawable::Component;
+use prism::events::{ChildEvent, DynEvent, Event, OnChange, OnEvent, on_change, on_event};
+use prism::hardware::{Image, Picked};
+use ptsd::layout::Stack;
+use uuid::Uuid;
+
+use std::fmt;
+
+use crate::design_system::{
+    AvatarContent, AvatarIconStyle, AvatarView, Callback, Context, FormEvent, Icons, Theme,
+};
+use crate::items::Action;
+use crate::{InputControl, State};
 
 #[derive(Debug, Clone)]
-pub enum AvatarPurpose { None, Custom { icon: Icons, style: AvatarIconStyle } }
+pub enum AvatarPurpose {
+    None,
+    Custom { icon: Icons, style: AvatarIconStyle },
+}
 
 impl AvatarPurpose {
-    pub fn new(icon: Icons, style: AvatarIconStyle) -> Self {
-        AvatarPurpose::Custom { icon, style }
-    }
+    pub fn new(icon: Icons, style: AvatarIconStyle) -> Self {AvatarPurpose::Custom { icon, style }}
 }
 
 #[derive(Clone, Component)]
 pub struct AvatarInput {
     layout: Stack,
-    avatar: crate::design_system::AvatarView,
+    avatar: AvatarView,
     #[skip]
     id: Id,
     #[skip]
@@ -22,7 +36,7 @@ pub struct AvatarInput {
 }
 
 impl AvatarInput {
-    pub fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> Self {
+    pub fn new(theme: &Theme, content: AvatarContent, flair: Option<(Icons, AvatarIconStyle)>, action: Option<Action>) -> AvatarInput {
         let id = Id::random();
         let on_click = action.map(|action| match action {
             Action::PickPhoto => {
@@ -31,19 +45,16 @@ impl AvatarInput {
             }
             action => action.get(),
         });
-        Self {
-            layout: Stack::default(),
-            avatar: theme.avatar_input(content, flair, on_click),
-            id,
-            picked: None,
-            form: None,
+        AvatarInput {
+            layout: Stack::default(), avatar: theme.avatar_input(content, flair, on_click), id,
+            picked: None, form: None,
         }
     }
-    pub fn content(&self) -> &AvatarContent { self.avatar.content() }
+    pub fn content(&self) -> &AvatarContent {self.avatar.content()}
 }
 
-impl std::fmt::Debug for AvatarInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for AvatarInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AvatarInput").field("avatar", &self.avatar).finish()
     }
 }
@@ -51,7 +62,7 @@ impl std::fmt::Debug for AvatarInput {
 #[on_event]
 impl OnEvent<PickPhoto> for AvatarInput {
     fn on(&mut self, ctx: &mut Context, event: PickPhoto) -> Vec<Box<dyn DynEvent>> {
-        if event.0 == self.id { self.picked = Some(ctx.hardware.pick::<Image>()); }
+        if event.0 == self.id {self.picked = Some(ctx.hardware.pick::<Image>());}
         vec![]
     }
 }
@@ -67,7 +78,7 @@ impl OnChange<prism::hardware::PickResult<Image>> for AvatarInput {
         self.picked = None;
         if let Ok(image) = result {
             self.avatar.set_content(AvatarContent::image(image));
-            if let Some(form) = self.form { ctx.emit(FormEvent::Refresh(form)); }
+            if let Some(form) = self.form {ctx.emit(FormEvent::Refresh(form));}
         }
     }
 }
@@ -75,12 +86,22 @@ impl OnChange<prism::hardware::PickResult<Image>> for AvatarInput {
 #[on_event]
 impl OnEvent<FormEvent> for AvatarInput {
     fn on(&mut self, _ctx: &mut Context, event: FormEvent) -> Vec<Box<dyn DynEvent>> {
-        if let FormEvent::Bind(id) = event { self.form = Some(id); }
+        if let FormEvent::Bind(id) = event {self.form = Some(id);}
         prism::events![event]
     }
 }
 
-impl crate::InputControl for AvatarInput {
+impl InputControl for AvatarInput {
     fn state(&self) -> State {State::Avatar(self.content().clone())}
-    fn validation_value(&self) -> Option<String> {Some(self.content().get_image().unwrap_or_default().to_string())}
+    fn validation_value(&self) -> Option<String> {
+        Some(self.content().get_image().unwrap_or_default().to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PickPhoto(Id);
+impl Event for PickPhoto {
+    fn pass(&self, _ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]) {
+        for child in children {*child.event = Some(self.clone());}
+    }
 }

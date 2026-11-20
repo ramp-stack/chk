@@ -1,28 +1,14 @@
 use prism::{Context, air::{Contract, Instance}};
 use ptsd::Validate;
+
 use std::{rc::Rc, cell::RefCell};
+
 use crate::design_system::{Icons, Theme};
 use crate::page::PageType;
 use crate::Display;
 use crate::form::{FormValues, FormValidState, FormComplete};
 
 pub type NavFnInner = Rc<RefCell<dyn FnMut(&mut Context, &Theme)>>;
-
-#[derive(Clone)]
-pub struct NavFn(pub NavFnInner);
-
-impl PartialEq for NavFn {
-    fn eq(&self, other: &Self) -> bool {Rc::ptr_eq(&self.0, &other.0)}
-}
-
-impl std::ops::Deref for NavFn {
-    type Target = NavFnInner;
-    fn deref(&self) -> &Self::Target { &self.0 }
-}
-
-impl std::fmt::Debug for NavFn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "NavFN")}
-}
 
 pub trait ValidityFn: Validate<String, FormValidState> {}
 impl<V: Validate<String, FormValidState>> ValidityFn for V {}
@@ -31,9 +17,7 @@ dyn_clone::clone_trait_object!(ValidityFn);
 impl PartialEq for dyn ValidityFn {fn eq(&self, _: &Self) -> bool {true}}
 
 impl std::fmt::Debug for dyn ValidityFn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Valitidy check...")
-    }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "Validity check...")}
 }
 
 pub trait ReviewItemGetter: FnMut(&FormValues) -> Vec<Display> + 'static {
@@ -90,11 +74,14 @@ impl std::fmt::Debug for dyn FormSubmit {
     }
 }
 
-pub trait PageBuilderContractFn<C: Contract>: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + 'static {
+pub trait PageBuilderContractFn<C: Contract>:
+    FnMut(&mut Context, &Theme, Instance<C>) -> PageType + 'static {
     fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>>;
 }
 
-impl<C: Contract, F: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + Clone + 'static> PageBuilderContractFn<C> for F {
+impl<
+    C: Contract, F: FnMut(&mut Context, &Theme, Instance<C>) -> PageType + Clone + 'static,
+> PageBuilderContractFn<C> for F {
     fn clone_box(&self) -> Box<dyn PageBuilderContractFn<C>> {Box::new(self.clone())}
 }
 
@@ -108,11 +95,14 @@ impl<C: Contract> std::fmt::Debug for dyn PageBuilderContractFn<C> {
     }
 }
 
-pub trait PageBuilderContractMultiplesFn<C: Contract>: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + 'static {
+pub trait PageBuilderContractMultiplesFn<C: Contract>:
+    FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + 'static {
     fn clone_box(&self) -> Box<dyn PageBuilderContractMultiplesFn<C>>;
 }
 
-impl<C: Contract, F: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + Clone + 'static> PageBuilderContractMultiplesFn<C> for F {
+impl<
+    C: Contract, F: FnMut(&mut Context, &Theme, Vec<Instance<C>>) -> PageType + Clone + 'static,
+> PageBuilderContractMultiplesFn<C> for F {
     fn clone_box(&self) -> Box<dyn PageBuilderContractMultiplesFn<C>> {Box::new(self.clone())}
 }
 
@@ -124,4 +114,20 @@ impl<C: Contract> std::fmt::Debug for dyn PageBuilderContractMultiplesFn<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PageBuilderContractMultiplesFn")
     }
+}
+
+#[derive(Clone)]
+pub struct NavFn(pub NavFnInner);
+
+impl PartialEq for NavFn {
+    fn eq(&self, other: &Self) -> bool {Rc::ptr_eq(&self.0, &other.0)}
+}
+
+impl std::ops::Deref for NavFn {
+    type Target = NavFnInner;
+    fn deref(&self) -> &NavFnInner {&self.0}
+}
+
+impl std::fmt::Debug for NavFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {write!(f, "NavFN")}
 }

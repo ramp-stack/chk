@@ -1,8 +1,17 @@
 use prism::{Context, air::{Air, Id, Name, Metadata, Contract, Instance}};
+use prism::hardware::Data;
+use ptsd::navigation::NavigationEvent;
+use ptsd::utils::Timestamp;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
-use crate::design_system::{Theme, AvatarContent, AvatarIconStyle, Icons};
+use uuid::Uuid;
+
+use std::{collections::{BTreeMap, BTreeSet}, io::Write, sync::Arc};
+
+use crate::design_system::{Theme, AvatarContent, AvatarIconStyle, Icons, MessageView, Task};
 use crate::profiles::Profile;
+use crate::blocking::Block;
+use crate::items::{Action, Display, Item};
+use crate::{ActionItem, Flow, Page, ValueItem};
 pub use crate::design_system::{MessageContent, SystemMessage, Sticker, StickerPack, Gif};
 pub use crate::design_system::{Photo, Video, VideoClip};
 
@@ -15,6 +24,20 @@ pub enum ChatRoomAction {
     AddMember(Name), LeaveGroup,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GroupDetails {
+    pub name: String,
+    pub photo: AvatarContent,
+}
+impl Default for GroupDetails {
+    fn default() -> Self {
+        Self {
+            name: "Group message".into(),
+            photo: AvatarContent::icon(Icons::Group, AvatarIconStyle::Secondary),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct Message {
     pub body: MessageContent,
@@ -25,14 +48,15 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn to_view(&self, ctx: &mut Context, on_click: impl FnMut(&mut Context, &Theme) + Clone + 'static) -> crate::design_system::MessageView {
+    pub fn to_view(&self, ctx: &mut Context, on_click: impl FnMut(&mut Context, &Theme) + Clone + 'static) -> MessageView {
         let display_author = match &self.body {
             MessageContent::System(notice) => notice.member(),
             _ => self.author,
         };
-        crate::design_system::MessageView {
-            body: self.body.clone(), timestamp: ptsd::utils::Timestamp::from_u64(self.timestamp),
-            author: Profile::from_name(ctx, display_author).pending().to_view(), on_click: Box::new(on_click),
+        MessageView {
+            body: self.body.clone(), timestamp: Timestamp::from_u64(self.timestamp),
+            author: Profile::from_name(ctx, display_author).pending().to_view(),
+            on_click: Box::new(on_click),
         }
     }
 
@@ -42,7 +66,7 @@ impl Message {
         })
     }
 
-    pub(crate) fn preview_with(&self, me: Name, group: bool, mut username: impl FnMut(Name) -> String) -> String {
+    pub fn preview_with(&self, me: Name, group: bool, mut username: impl FnMut(Name) -> String) -> String {
         let text = match &self.body {
             MessageContent::System(notice) => {
                 return notice.text_for(me, &username(notice.member()));
@@ -57,6 +81,59 @@ impl Message {
         else if group {format!("{}: {text}", username(self.author))}
         else {text.to_string()}
     }
+
+    pub fn details(&self, ctx: &mut Context, mut room: Instance<ChatRoom>, pops: usize, share: Option<ActionItem>) -> Vec<Item> {
+        let is_mine = self.author == ctx.air.me();
+        let author = self.author;
+        let sender_name = if is_mine {"You".to_string()}
+            else {Profile::from_name(ctx, author).pending().username.clone()};
+        let bubble = self.to_view(ctx, |_: &mut Context, _: &Theme| {});
+
+        let message = self.clone();
+        let delete = ActionItem::new(Action::custom(move |ctx: &mut Context, _: &Theme| {
+            room.send(ChatRoomAction::DeleteMessage(message.clone()));
+            (0..pops).for_each(|_| ctx.emit(NavigationEvent::Pop));
+        }), "Delete", Icons::Delete);
+        let timestamp = Timestamp::from_u64(self.timestamp);
+        let mut actions = vec![delete];
+        if let Some(copy) = ActionItem::copy_message(ctx, &self.body) {actions.push(copy);}
+        if let Some(share) = share {actions.push(share);}
+        actions.push(ActionItem::new(Action::deferred_flow(move |ctx: &mut Context, _: &Theme| {
+            let mut profile = Profile::from_name(ctx, author);
+            Flow::new(vec![Page::profile(ctx, &mut profile)])
+        }), "View profile", Icons::Profile));
+
+        vec![
+            Display::messages(vec![bubble], false),
+            Display::table("Info", vec![
+                ValueItem::new("Sender", &sender_name),
+                ValueItem::new("Time sent", &timestamp.time()),
+                ValueItem::new("Date sent", &timestamp.date()),
+            ], Some(actions)),
+        ].into_iter().map(Item::Display).collect()
+    }
+
+    pub fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+        if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {Some("gif")}
+        else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {Some("png")}
+        else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {Some("jpg")}
+        else {None}
+    }
+
+    pub async fn export(bytes: Arc<[u8]>, extension: &'static str) -> Result<Data, String> {
+        Task::spawn(move || {
+            // Keep the original encoding, including GIF animation and video audio.
+            // The system owns temporary-directory cleanup; the share sheet may
+            // still be reading the file after the detail page has been closed.
+            let path = std::env::temp_dir()
+                .join(format!("message-{}.{}", Uuid::new_v4(), extension));
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)
+                .map_err(|_| "Could not prepare this media for saving.".to_string())?;
+            file.write_all(&bytes)
+                .map_err(|_| "Could not prepare this media for saving.".to_string())?;
+            Ok(Data::File(path))
+        }).next().await.ok_or_else(|| "Could not prepare this media for saving.".to_string())?
+    }
 }
 
 /// Private, per-reader flags kept outside the shared message's binary schema.
@@ -69,8 +146,8 @@ pub struct RoomReadState {
 }
 
 impl Contract for RoomReadState {
-    type Init = Id;
     type Message = Vec<Id>;
+    type Init = Id;
     type Result = ();
 
     fn id() -> Id {Id::hash("Orange.RoomReadState.v1")}
@@ -111,8 +188,8 @@ pub struct ContactNotificationState {
 }
 
 impl Contract for ContactNotificationState {
-    type Init = Name;
     type Message = bool;
+    type Init = Name;
     type Result = ();
 
     fn id() -> Id {Id::hash("CHK.ContactNotificationState.v1")}
@@ -134,7 +211,9 @@ impl ContactNotificationState {
     }
 
     pub fn is_muted_for(air: &Air, contact: Name) -> bool {
-        if let Some(preferences) = ContactNotificationState::find(air, contact) {return preferences.pending().muted;}
+        if let Some(preferences) = ContactNotificationState::find(air, contact) {
+            return preferences.pending().muted;
+        }
         // Preserve old DM mutes until the owner explicitly sets a person preference.
         let owner = air.me();
         let muted_rooms: BTreeSet<_> = air.instances::<RoomNotificationState>().list().into_values()
@@ -170,8 +249,8 @@ pub struct RoomNotificationState {
 }
 
 impl Contract for RoomNotificationState {
-    type Init = Id;
     type Message = bool;
+    type Init = Id;
     type Result = ();
 
     fn id() -> Id {Id::hash("CHK.RoomNotificationState.v1")}
@@ -195,7 +274,8 @@ impl RoomNotificationState {
     pub fn open(ctx: &Context, room: Id) -> Instance<Self> {
         // Creating an existing instance still notifies list watchers. Keep reads
         // quiet so rebuilding chat info cannot trigger another rebuild itself.
-        RoomNotificationState::find(&ctx.air, room).unwrap_or_else(|| ctx.air.instances::<Self>().create(room))
+        RoomNotificationState::find(&ctx.air, room)
+            .unwrap_or_else(|| ctx.air.instances::<RoomNotificationState>().create(room))
     }
 
     pub fn is_muted(&self) -> bool {self.muted}
@@ -203,7 +283,8 @@ impl RoomNotificationState {
     pub fn is_muted_for(air: &Air, room: &Instance<ChatRoom>) -> bool {
         match room.pending().direct_contact(air.me()) {
             Some(contact) => ContactNotificationState::is_muted_for(air, contact),
-            None => RoomNotificationState::find(air, room.id()).is_some_and(|preferences| preferences.pending().muted),
+            None => RoomNotificationState::find(air, room.id())
+                .is_some_and(|preferences| preferences.pending().muted),
         }
     }
 
@@ -223,17 +304,6 @@ impl RoomNotificationState {
 
     pub fn apply_to(ctx: &Context, room: &Instance<ChatRoom>) {
         room.notify(RoomNotificationState::enabled(&ctx.air, room));
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GroupDetails {
-    pub name: String,
-    pub photo: AvatarContent,
-}
-impl Default for GroupDetails {
-    fn default() -> Self {
-        Self {name: "Group message".into(), photo: AvatarContent::icon(Icons::Group, AvatarIconStyle::Secondary)}
     }
 }
 
@@ -257,43 +327,26 @@ impl Serialize for ChatRoom {
 }
 impl<'de> Deserialize<'de> for ChatRoom {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct RoomVisitor;
-        impl<'de> serde::de::Visitor<'de> for RoomVisitor {
-            type Value = ChatRoom;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {f.write_str("a chat room")}
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<ChatRoom, A::Error> {
-                let members: Vec<Name> = seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let (members, messages, group) = if members.is_empty() {
-                    let GroupStorage::V1 {members, messages, details}: GroupStorage<Vec<Name>, Vec<Message>, GroupDetails> = seq.next_element()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-                    (members, messages, Some(details))
-                } else {
-                    (members, seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(1, &self))?, None)
-                };
-                let id = seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
-                Ok(ChatRoom {members, messages, id, group})
-            }
-        }
         deserializer.deserialize_tuple(3, RoomVisitor)
     }
 }
 
 impl Contract for ChatRoom {
-    type Init = Id;
     type Message = ChatRoomAction;
+    type Init = Id;
     type Result = usize;
 
-    fn id() -> Id { Id::hash("ChatRoom") }
+    fn id() -> Id {Id::hash("ChatRoom")}
 
-    fn init(init: Self::Init, metadata: Metadata) -> Self {
-        ChatRoom { members: vec![metadata.signer], messages: Vec::new(), id: init, group: None }
+    fn init(init: Id, metadata: Metadata) -> Self {
+        ChatRoom {members: vec![metadata.signer], messages: Vec::new(), id: init, group: None}
     }
 
-    fn apply(&mut self, message: Self::Message, metadata: Metadata) -> Self::Result {
+    fn apply(&mut self, message: ChatRoomAction, metadata: Metadata) -> usize {
         if !self.members.contains(&metadata.signer) {return self.messages.len();}
         match message {
             ChatRoomAction::Share(recipient) => {
-                if !self.members.contains(&recipient) { self.members.push(recipient); }
+                if !self.members.contains(&recipient) {self.members.push(recipient);}
             }
             ChatRoomAction::SendMessage(message) => {
                 self.append(MessageContent::Text(message), metadata);
@@ -301,7 +354,7 @@ impl Contract for ChatRoom {
             ChatRoomAction::SendSticker(sticker) => {
                 self.append(MessageContent::Sticker(sticker), metadata);
             }
-            ChatRoomAction::SendGif(gif) => { self.append(MessageContent::Gif(gif), metadata); }
+            ChatRoomAction::SendGif(gif) => {self.append(MessageContent::Gif(gif), metadata);}
             ChatRoomAction::SendPhoto(photo) => {
                 self.append(MessageContent::Photo(photo), metadata);
             }
@@ -331,7 +384,9 @@ impl Contract for ChatRoom {
                 }
             }
             ChatRoomAction::SetGroupPhoto(photo) => {
-                if self.is_group() {self.group.get_or_insert_with(GroupDetails::default).photo = photo;}
+                if self.is_group() {
+                    self.group.get_or_insert_with(GroupDetails::default).photo = photo;
+                }
             }
             ChatRoomAction::Leave => {
                 if self.is_group() {
@@ -361,6 +416,12 @@ impl Contract for ChatRoom {
 }
 
 impl ChatRoom {
+    pub fn can_message(&self, ctx: &mut Context) -> bool {
+        let me = ctx.air.me();
+        self.members.contains(&me) && self.direct_contact(me).filter(|name| *name != me)
+            .is_none_or(|name| !Block::did_i_block(ctx, name) && !Block::am_i_blocked(ctx, name))
+    }
+
     pub fn direct_contact(&self, me: Name) -> Option<Name> {
         if self.is_group() || !self.members.contains(&me) {return None;}
         let contact = self.members.iter().copied().find(|name| *name != me).unwrap_or(me);
@@ -405,7 +466,8 @@ impl ChatRoom {
 
         for recipient in recipients {
             room.share(recipient);
-            room.send(if group {ChatRoomAction::AddMember(recipient)} else {ChatRoomAction::Share(recipient)});
+            room.send(if group {ChatRoomAction::AddMember(recipient)}
+                else {ChatRoomAction::Share(recipient)});
         }
 
         room
@@ -438,7 +500,8 @@ impl ChatRoom {
     pub fn add_members(ctx: &mut Context, room: &mut Instance<Self>, recipients: Vec<Name>) {
         let current = room.pending();
         if !current.is_group() || !current.members.contains(&ctx.air.me()) {return;}
-        let mut recipients: Vec<_> = recipients.into_iter().filter(|name| !current.members.contains(name)).collect();
+        let mut recipients: Vec<_> = recipients.into_iter()
+            .filter(|name| !current.members.contains(name)).collect();
         recipients.sort_unstable();
         recipients.dedup();
         // Video attachments use separate AIR instances; invitees need those too.
@@ -467,7 +530,10 @@ impl ChatRoom {
     }
 
     pub fn append_system(&mut self, notice: SystemMessage, metadata: Metadata) {
-        let id = Id::hash(&("GroupNotice.v1", self.id, metadata.signer, metadata.timestamp, &notice, self.messages.len()));
+        let id = Id::hash(&(
+            "GroupNotice.v1", self.id, metadata.signer, metadata.timestamp,
+            &notice, self.messages.len(),
+        ));
         self.messages.push(Message {
             author: metadata.signer, timestamp: metadata.timestamp,
             body: MessageContent::System(notice), id, hidden_from: Vec::new(),
@@ -482,4 +548,26 @@ impl ChatRoom {
 #[derive(Serialize, Deserialize)]
 enum GroupStorage<M, T, D> {
     V1 {members: M, messages: T, details: D},
+}
+
+struct RoomVisitor;
+impl<'de> serde::de::Visitor<'de> for RoomVisitor {
+    type Value = ChatRoom;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {f.write_str("a chat room")}
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<ChatRoom, A::Error> {
+        let members: Vec<Name> = seq.next_element()?
+            .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+        let (members, messages, group) = if members.is_empty() {
+            let GroupStorage::V1 {members, messages, details} = seq
+                .next_element::<GroupStorage<Vec<Name>, Vec<Message>, GroupDetails>>()?
+                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+            (members, messages, Some(details))
+        } else {
+            let messages = seq.next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+            (members, messages, None)
+        };
+        let id = seq.next_element()?.ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+        Ok(ChatRoom {members, messages, id, group})
+    }
 }

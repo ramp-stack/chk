@@ -11,6 +11,9 @@ pub struct Pending<T: Clone> {
     wake: Arc<PendingWake>,
     waiter: Option<usize>,
 }
+impl<T: Clone> std::fmt::Debug for Pending<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {f.write_str("Pending")}
+}
 impl<T: Clone> Pending<T> {
     pub fn new(future: impl Future<Output = T> + 'static) -> Self {
         Self {
@@ -27,14 +30,16 @@ impl<T: Clone> Clone for Pending<T> {
 }
 impl<T: Clone> Drop for Pending<T> {
     fn drop(&mut self) {
-        let waker = self.waiter.and_then(|waiter| self.wake.0.lock().unwrap().get_mut(waiter).and_then(Option::take));
+        let waker = self.waiter.and_then(|waiter| {
+            self.wake.0.lock().unwrap().get_mut(waiter).and_then(Option::take)
+        });
         drop(waker);
     }
 }
 impl<T: Clone> Future for Pending<T> {
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<T> {
         let this = self.get_mut();
         let mut state = this.state.borrow_mut();
         if let Some(result) = &state.result {return Poll::Ready(result.clone());}

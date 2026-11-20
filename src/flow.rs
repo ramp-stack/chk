@@ -1,14 +1,19 @@
 use prism::drawable::Component;
-use prism::events::{on_event, OnEvent, DynEvent, on_change, OnChange};
+use prism::events::{DynEvent, OnChange, OnEvent, on_change, on_event};
 use ptsd::layout::Stack;
-use ptsd::navigation::{NavigationEvent, NavigationChanged, Flow as NavigationFlow, FlowContainer, AppPage};
-use std::{rc::Rc, cell::RefCell, fmt::Debug};
-use crate::ContentSurface;
-use crate::design_system::{Callback, Context, FormEvent, Theme};
+use ptsd::navigation::{
+    AppPage, Flow as NavigationFlow, FlowContainer, NavigationChanged, NavigationEvent,
+};
+
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
+
+use crate::design_system::{Callback, Context, FormEvent, PageView, Theme};
 use crate::form::{Form, FormValues};
-use crate::page::{Page, EditPage, PageType, FormPage, ReviewPage, SuccessPage};
-use crate::closure::{NavFn};
-use crate::{Listener, PageChanged, Action, Bumper, Offset, Display, AvatarContent, AvatarPurpose};
+use crate::page::{Page, PageType, StackPage};
+use crate::closure::NavFn;
+use crate::{
+    Action, AvatarContent, AvatarPurpose, Bumper, ContentSurface, Display, Listener, Offset, PageChanged,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct Flow(pub Vec<Page>);
@@ -20,13 +25,19 @@ impl Flow {
         target: &str, avatar: AvatarContent, purpose: AvatarPurpose,
     ) -> Self {
         let (action_str, action) = action;
-        let action_caps = action_str.chars().next().map(|c| c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]).unwrap_or_default();
-        let target_caps = target_kind.chars().next().map(|c| c.to_uppercase().collect::<String>() + &target_kind[c.len_utf8()..]).unwrap_or_default();
+        let action_caps = action_str.chars().next().map(|c| {
+            c.to_uppercase().collect::<String>() + &action_str[c.len_utf8()..]
+        }).unwrap_or_default();
+        let target_caps = target_kind.chars().next().map(|c| {
+            c.to_uppercase().collect::<String>() + &target_kind[c.len_utf8()..]
+        }).unwrap_or_default();
 
         let prompt = PageType::display(&format!("{} {}", action_caps, target_kind),
             vec![
                 Display::avatar(avatar.clone(), purpose.clone()),
-                Display::confirmation_message(&format!("Are you sure you want to {} {}", action_str, target)),
+                Display::confirmation_message(&format!(
+                    "Are you sure you want to {} {}", action_str, target,
+                )),
             ],
             None,
             Bumper::double(&action_caps, action, "Cancel", Action::None),
@@ -122,19 +133,21 @@ impl FlowWrapper {
         let mut inputs = FormValues::default();
         for page in self.1.stored.iter().take(self.1.index).chain(self.1.current.iter()) {
             let mut page = page.as_ref();
-            while let Some(listener) = page.downcast_ref::<Listener>() {page = listener.page.as_ref();}
-            if let Some(page) = page.downcast_ref::<FormPage>() {inputs.extend(page.values());}
-            else if let Some(page) = page.downcast_ref::<EditPage>() {inputs.extend(page.values());}
+            while let Some(listener) = page.downcast_ref::<Listener>() {
+                page = listener.page.as_ref();
+            }
+            if let Some(page) = page.downcast_ref::<StackPage<PageView>>() {
+                inputs.extend(page.values());
+            }
         }
         if let Some(current) = &mut self.1.current {
             let mut page = current.as_mut();
             while page.downcast_ref::<Listener>().is_some() {
                 page = page.downcast_mut::<Listener>().unwrap().page.as_mut();
             }
-            if let Some(page) = page.downcast_mut::<ReviewPage>() {page.on_change(inputs);}
-            else if let Some(page) = page.downcast_mut::<SuccessPage>() {page.on_change(ctx, inputs);}
-            else if let Some(page) = page.downcast_mut::<FormPage>() {page.on_change(inputs);}
-            else if let Some(page) = page.downcast_mut::<EditPage>() {page.on_change(inputs);}
+            if let Some(page) = page.downcast_mut::<StackPage<PageView>>() {
+                page.handle_event(ctx, &inputs);
+            }
         }
     }
 }
@@ -152,11 +165,10 @@ impl OnEvent<FormEvent> for FlowWrapper {
     fn on(&mut self, ctx: &mut Context, event: FormEvent) -> Vec<Box<dyn DynEvent>> {
         if let FormEvent::Changed(id) = event && let Some(page) = &self.1.current {
             let mut page = page.as_ref();
-            while let Some(listener) = page.downcast_ref::<Listener>() {page = listener.page.as_ref();}
-            let content = if let Some(page) = page.downcast_ref::<FormPage>() {Some(page.1.content())}
-                else if let Some(page) = page.downcast_ref::<EditPage>() {Some(page.1.content())}
-                else if let Some(page) = page.downcast_ref::<ReviewPage>() {Some(page.1.content())}
-                else {page.downcast_ref::<SuccessPage>().map(|page| page.1.content())};
+            while let Some(listener) = page.downcast_ref::<Listener>() {
+                page = listener.page.as_ref();
+            }
+            let content = page.downcast_ref::<StackPage<PageView>>().map(|page| page.content());
             if content.is_some_and(|content| content.id() == id) {self.refresh(ctx);}
         }
         prism::events![event]

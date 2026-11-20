@@ -1,22 +1,39 @@
-use super::*;
-use crate::{Form, PageType};
+use prism::air::Instance;
+use prism::drawable::{Drawable, text::Align};
+use ptsd::layout::Offset;
+
+use crate::blocking::Block;
+use crate::design_system::{
+    AvatarContent, Context, Icons, MessageView, Number, TextSize, TextStyle, Theme,
+};
+use crate::items::{Action, ActionItem, AvatarPurpose, ListItem, ValueItem};
+use crate::messages::ChatRoom;
+use crate::profiles::Profile;
+use crate::typing_ui::TypingPanel;
+use crate::{Flow, Form, Page, PageType};
 
 #[derive(Debug, Clone)]
 pub enum Display {
-    Text { text: String, size: TextSize, style: TextStyle, align: Align },
-    Alert { text: String },
-    Icon { icon: Icons },
-    Image { image: String, size: (f32, f32) },
-    Cta { label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem> },
-    Table { label: String, items: Vec<ValueItem>, actions: Option<Vec<ActionItem>> },
-    DataList { label: String, instructions: Option<String>, items: Vec<ListItem>, actions: Option<Vec<ActionItem>> },
-    Currency { amount: Number, instructions: String },
-    Number { number: Number, instructions: String },
-    List { label: Option<String>, items: Vec<ListItem>, instructions: Option<String> },
-    QRCode { data: String, instructions: String },
-    Avatar { content: AvatarContent, purpose: AvatarPurpose },
-    Actions { actions: Vec<ActionItem>, as_icons: bool },
-    Messages { messages: MessageGroups },
+    Text {text: String, size: TextSize, style: TextStyle, align: Align},
+    Alert {text: String},
+    Icon {icon: Icons},
+    Image {image: String, size: (f32, f32)},
+    Cta {label: String, data: Option<String>, instructions: String, actions: Vec<ActionItem>},
+    Table {label: String, items: Vec<ValueItem>, actions: Option<Vec<ActionItem>>},
+    DataList {
+        label: String,
+        instructions: Option<String>,
+        items: Vec<ListItem>,
+        actions: Option<Vec<ActionItem>>,
+    },
+    Currency {amount: Number, instructions: String},
+    Number {number: Number, instructions: String},
+    List {label: Option<String>, items: Vec<ListItem>, instructions: Option<String>},
+    QRCode {data: String, instructions: String},
+    Avatar {content: AvatarContent, purpose: AvatarPurpose},
+    Actions {actions: Vec<ActionItem>, as_icons: bool},
+    Messages {messages: Vec<MessageView>, group: bool},
+    Typing {room: Instance<ChatRoom>},
 }
 
 impl Display {
@@ -24,41 +41,33 @@ impl Display {
 
     pub fn text(text: &str) -> Self {
         Display::Text {
-            text: text.to_string(),
-            size: TextSize::Md,
-            style: TextStyle::Primary,
+            text: text.to_string(), size: TextSize::Md, style: TextStyle::Primary,
             align: Align::Left,
         }
     }
 
     pub fn instructions(text: &str) -> Self {
         Display::Text {
-            text: text.to_string(),
-            size: TextSize::Md,
-            style: TextStyle::Secondary,
+            text: text.to_string(), size: TextSize::Md, style: TextStyle::Secondary,
             align: Align::Center,
         }
     }
 
     pub fn label(text: &str) -> Self {
         Display::Text {
-            text: text.to_string(),
-            size: TextSize::H5,
-            style: TextStyle::Heading,
+            text: text.to_string(), size: TextSize::H5, style: TextStyle::Heading,
             align: Align::Center,
         }
     }
 
     pub fn confirmation_message(text: &str) -> Self {
         Display::Text {
-            text: text.to_string(),
-            size: TextSize::H4,
-            style: TextStyle::Heading,
+            text: text.to_string(), size: TextSize::H4, style: TextStyle::Heading,
             align: Align::Center,
         }
     }
 
-    pub fn icon(icon: Icons) -> Self { Display::Icon { icon } }
+    pub fn icon(icon: Icons) -> Self {Display::Icon { icon }}
 
     pub fn image(image: &str, size: (f32, f32)) -> Self {
         Display::Image { image: image.to_string(), size }
@@ -66,10 +75,8 @@ impl Display {
 
     pub fn cta(label: &str, data: Option<&str>, instructions: &str, actions: Vec<ActionItem>) -> Self {
         Display::Cta {
-            label: label.to_string(),
-            data: data.map(|s| s.to_string()),
-            instructions: instructions.to_string(),
-            actions,
+            label: label.to_string(), data: data.map(|s| s.to_string()),
+            instructions: instructions.to_string(), actions,
         }
     }
 
@@ -80,7 +87,8 @@ impl Display {
     /// List rows inside a data item, with optional instructions and quick actions.
     pub fn data_list(label: &str, instructions: Option<&str>, items: Vec<ListItem>, actions: Option<Vec<ActionItem>>) -> Self {
         Display::DataList {
-            label: label.to_string(), instructions: instructions.map(str::to_string), items, actions,
+            label: label.to_string(), instructions: instructions.map(str::to_string), items,
+            actions,
         }
     }
 
@@ -90,8 +98,7 @@ impl Display {
 
     pub fn list(label: Option<&str>, items: Vec<ListItem>, instructions: Option<&str>) -> Self {
         Display::List {
-            label: label.map(|i| i.to_string()),
-            items,
+            label: label.map(|i| i.to_string()), items,
             instructions: instructions.map(|i| i.to_string()),
         }
     }
@@ -112,8 +119,8 @@ impl Display {
         Display::Actions { actions, as_icons }
     }
 
-    pub fn messages(ctx: &mut Context, theme: &Theme, messages: Vec<MessageView>) -> Self {
-        Display::Messages { messages: theme.message_group(ctx, messages, false) }
+    pub fn messages(messages: Vec<MessageView>, group: bool) -> Self {
+        Display::Messages { messages, group }
     }
 
     pub fn group_info(ctx: &mut Context, room: Instance<ChatRoom>) -> Vec<Self> {
@@ -122,16 +129,18 @@ impl Display {
         let me = ctx.air.me();
         let active = data.is_group() && data.members.contains(&me);
         let items = data.members.iter().map(|name| {
-            let mut profile = Profile::from_name(ctx, *name);
-            let data = profile.pending().clone();
-            let title = if *name == me {format!("{} (You)", data.username)}
-                else {data.username.clone()};
-            let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
-            ListItem::avatar(data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)))
-        }).collect();
-        let mut display = vec![Display::Avatar {
-            content: details.photo.clone(), purpose: AvatarPurpose::None,
-        }];
+                let mut profile = Profile::from_name(ctx, *name);
+                let data = profile.pending().clone();
+                let title = if *name == me {
+                    format!("{} (You)", data.username)
+                } else {data.username.clone()};
+                let flow = Flow::new(vec![Page::profile(ctx, &mut profile)]);
+                ListItem::avatar(
+                    data.avatar.clone(), &title, &data.name(), None, Some(Action::flow(flow)),
+                )
+            }).collect();
+        let mut display =
+            vec![Display::Avatar { content: details.photo.clone(), purpose: AvatarPurpose::None }];
         if active {
             let add_room = room.clone();
             let leave_room = room.clone();
@@ -141,23 +150,32 @@ impl Display {
                 instructions: Some(format!("This group has {} members.", data.members.len())),
                 items,
                 actions: Some(vec![
-                    ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                        let form = Form::add_members(ctx, theme, add_room.clone());
-                        (Flow::from_form(form).build(ctx, theme))(ctx, theme);
-                    }), "Add Members", Icons::Add),
+                    ActionItem::new(
+                        Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                            let form = Form::add_members(ctx, theme, add_room.clone());
+                            (Flow::from_form(form).build(ctx, theme))(ctx, theme);
+                        }),
+                        "Add Members", Icons::Add,
+                    ),
                     ActionItem::mute(ctx, room.clone()),
-                    ActionItem::new(Action::custom(move |ctx: &mut Context, theme: &Theme| {
-                        (Flow::new(vec![Page::Static(Box::new(PageType::leave(leave_room.clone())))])
-                            .build(ctx, theme))(ctx, theme);
-                    }), "Leave Group", Icons::Leave)
+                    ActionItem::new(
+                        Action::custom(move |ctx: &mut Context, theme: &Theme| {
+                            (Flow::new(vec![Page::Static(Box::new(PageType::leave(
+                                leave_room.clone(),
+                            )))]).build(ctx, theme))(ctx, theme);
+                        }),
+                        "Leave Group", Icons::Leave,
+                    ),
                 ]),
             });
         } else {
             display.push(Display::Text {
-                text: "You are no longer a member of this group.".into(),
-                size: TextSize::Md, style: TextStyle::Secondary, align: Align::Center,
+                text: "You are no longer a member of this group.".into(), size: TextSize::Md,
+                style: TextStyle::Secondary, align: Align::Center,
             });
-            display.push(Display::DataList {label: "Members".into(), instructions: None, items, actions: None});
+            display.push(Display::DataList {
+                label: "Members".into(), instructions: None, items, actions: None,
+            });
         }
         display
     }
@@ -166,76 +184,124 @@ impl Display {
         let instance = profile.clone();
         let profile = profile.pending().clone();
         let name = profile.name.unwrap();
-        let is_me = name == ctx.air.me();
-        let about = if profile.notes.is_empty() {"No bio yet."} else {&profile.notes};
-        let blocked = !is_me && Block::did_i_block(ctx, name);
-        let blocked_by_them = !is_me && Block::am_i_blocked(ctx, name);
-        let mute = ActionItem::mute_profile(ctx, &instance);
-        let block = if blocked {
-            ActionItem::new(Action::unblock(instance), "Unblock", Icons::Unblock)
-        } else {
-            ActionItem::new(Action::block(instance), "Block", Icons::Block)
-        };
-        let actions = vec![ActionItem::new(Action::message(name), "Message", Icons::Messages), block, mute];
-        let mut display = Vec::new();
 
-        let notice = if blocked_by_them {Some("This user blocked you.")}
-            else if blocked {Some("You blocked this user.")}
-            else {None};
+        let mut display =
+            vec![Display::Avatar { content: profile.avatar.clone(), purpose: AvatarPurpose::None }];
+
+        if let Some(alert) = Display::alert_blocked(ctx, &instance) {display.push(alert);}
 
         display.extend([
-            Display::Avatar {content: profile.avatar.clone(), purpose: AvatarPurpose::None},
-            
-        ]);
-        if let Some(text) = notice {display.push(Display::Alert {text: text.into()});}
-        display.extend([
-            Display::Actions {actions, as_icons: true},
-            Display::Cta {label: "About me".into(), data: None, instructions: about.into(), actions: vec![]},
+            Display::Actions {
+                actions: vec![
+                    ActionItem::new(Action::message(name), "Message", Icons::Messages),
+                    ActionItem::block_profile(ctx, &instance),
+                    ActionItem::mute_profile(ctx, &instance),
+                ],
+                as_icons: true,
+            },
+            Display::Cta {
+                label: "About me".into(), data: None,
+                instructions: match profile.notes.is_empty() {
+                    true => "No bio yet.".to_string(),
+                    false => profile.notes.to_string(),
+                },
+                actions: vec![],
+            },
             Display::Cta {
                 label: "AirName".into(), data: None, instructions: name.to_string(),
                 actions: vec![
-                    ActionItem::new_with_active(Action::copy(&name.to_string()), "Copy", "Copied", Icons::Copy),
-                    ActionItem::new(Action::flow(Flow::new(vec![Page::Static(Box::new(
-                        PageType::display_qr_code(
-                            "Share AirName", &name.to_string(), "Scan to share AirName.", ctx.window.is_mobile,
-                        ),
-                    ))])), "Display QR Code", Icons::QrCode),
+                    ActionItem::new_with_active(
+                        Action::copy(&name.to_string()), "Copy", "Copied", Icons::Copy,
+                    ),
+                    ActionItem::new(
+                        Action::flow(Flow::new(vec![Page::Static(Box::new(
+                            PageType::display_qr_code(
+                                "Share AirName", &name.to_string(), "Scan to share AirName.",
+                                ctx.window.is_mobile,
+                            ),
+                        ))])),
+                        "Display QR Code", Icons::QrCode,
+                    ),
                 ],
             },
         ]);
         display
     }
 
-    pub fn build(&mut self, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
+    pub fn alert_blocked(ctx: &mut Context, profile: &Instance<Profile>) -> Option<Self> {
+        let name = profile.pending().name.unwrap();
+        match (name == ctx.air.me(), Block::did_i_block(ctx, name), Block::am_i_blocked(ctx, name))
+        {
+            (false, true, _) => Some(Display::Alert { text: "This user blocked you.".into() }),
+            (false, _, true) => Some(Display::Alert { text: "You blocked this user.".into() }),
+            _ => None,
+        }
+    }
+
+    pub fn build(&mut self, ctx: &mut Context, theme: &Theme) -> Option<Vec<Box<dyn Drawable>>> {
         Some(match self {
-            Display::Alert {text} => vec![theme.alert_view(text)],
-            Display::Icon {icon} => vec![theme.icon_view(*icon, 128.0)],
-            Display::Image {image, size} => vec![theme.image_view(image, size.0)],
-            Display::Text {text, size, style, align} if !text.is_empty() => vec![theme.text_view(text, *size, *style, *align)],
-            Display::Cta {label, data, instructions, actions} => vec![theme.data_text(label, data.as_deref(), instructions,
-                Some(actions.iter().map(ActionItem::presentation).collect()))],
-            Display::Table {label, items, actions} => vec![theme.data_table(label,
-                items.iter().map(|item| (item.title.clone(), item.data.clone())).collect(),
-                actions.as_ref().map(|actions| actions.iter().map(ActionItem::presentation).collect()))],
-            Display::DataList {label, instructions, items, actions} => vec![theme.data_list(label, instructions.as_deref(),
-                items.clone(),
-                actions.as_ref().map(|actions| actions.iter().map(ActionItem::presentation).collect()))],
-            Display::Currency {amount, instructions} => vec![theme.currency_view(amount.clone(), instructions)],
-            Display::Number {number, instructions} => vec![theme.number_view(number.clone(), instructions)],
-            Display::List {label, items, instructions} => vec![theme.list_section(label.clone(), instructions.clone(),
-                items.clone())],
-            Display::QRCode {data, instructions} => vec![theme.qr_code(data),
-                theme.text_view(instructions, TextSize::Md, TextStyle::Secondary, Align::Center)],
-            Display::Avatar {content, purpose} => {
-                let flair = match purpose {AvatarPurpose::None => None, AvatarPurpose::Custom {icon, style} => Some((*icon, *style))};
+            Display::Alert { text } => vec![theme.alert_view(text)],
+            Display::Icon { icon } => vec![theme.icon_view(*icon, 128.0)],
+            Display::Image { image, size } => vec![theme.image_view(image, size.0)],
+            Display::Text { text, size, style, align } if !text.is_empty() => {
+                vec![theme.text_view(text, *size, *style, *align)]
+            }
+            Display::Cta { label, data, instructions, actions } => vec![theme.data_text(
+                label, data.as_deref(), instructions,
+                Some(actions.iter().map(ActionItem::presentation).collect()),
+            )],
+            Display::Table { label, items, actions } => vec![
+                theme.data_table(
+                    label,
+                    items.iter().map(|item| (item.title.clone(), item.data.clone())).collect(),
+                    actions.as_ref()
+                        .map(|actions| actions.iter().map(ActionItem::presentation).collect()),
+                ),
+            ],
+            Display::DataList { label, instructions, items, actions } => vec![
+                theme.data_list(
+                    label, instructions.as_deref(), items.clone(),
+                    actions.as_ref()
+                        .map(|actions| actions.iter().map(ActionItem::presentation).collect()),
+                ),
+            ],
+            Display::Currency { amount, instructions } => {
+                vec![theme.currency_view(amount.clone(), instructions)]
+            }
+            Display::Number { number, instructions } => {
+                vec![theme.number_view(number.clone(), instructions)]
+            }
+            Display::List { label, items, instructions } => {
+                vec![theme.list_section(label.clone(), instructions.clone(), items.clone())]
+            }
+            Display::QRCode { data, instructions } => vec![
+                theme.qr_code(data),
+                theme.text_view(instructions, TextSize::Md, TextStyle::Secondary, Align::Center),
+            ],
+            Display::Avatar { content, purpose } => {
+                let flair = match purpose {
+                    AvatarPurpose::None => None,
+                    AvatarPurpose::Custom { icon, style } => Some((*icon, *style)),
+                };
                 vec![theme.avatar_display(content.clone(), flair)]
             }
-            Display::Actions {actions, as_icons} if *as_icons => {
+            Display::Actions { actions, as_icons } if *as_icons => {
                 vec![theme.icon_actions(actions.iter().map(ActionItem::icon_action).collect())]
             }
-            Display::Actions {actions, ..} => vec![theme.quick_actions(Offset::Start,
-                actions.iter().map(|action| {let mut item = action.presentation(); item.active = None; item}).collect())],
-            Display::Messages {messages} => vec![messages.clone()],
+            Display::Actions { actions, .. } => vec![
+                theme.quick_actions(
+                    Offset::Start,
+                    actions.iter().map(|action| {
+                            let mut item = action.presentation();
+                            item.active = None;
+                            item
+                        }).collect(),
+                ),
+            ],
+            Display::Messages { messages, group } => {
+                vec![theme.message_group(ctx, messages.clone(), *group)]
+            }
+            Display::Typing { room } => vec![Box::new(TypingPanel::new(ctx, theme, room.clone()))],
             _ => return None,
         })
     }

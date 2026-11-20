@@ -1,11 +1,9 @@
 use prism::Context;
-use crate::design_system::AvatarContent;
-
 use prism::air::{Metadata, Contract, Id, Name, Instance};
-
 use rand::{seq::SliceRandom, Rng};
-
 use serde::{Deserialize, Serialize};
+
+use crate::design_system::{AvatarContent, ProfileView};
 
 #[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum ProfileAction {
@@ -23,20 +21,20 @@ pub struct Profile {
 }
 
 impl Contract for Profile {
-    type Init = Name;
     type Message = ProfileAction;
+    type Init = Name;
     type Result = ();
 
-    fn id() -> Id { Id::hash("Profile") }
+    fn id() -> Id {Id::hash("Profile")}
 
-    fn init(init: Self::Init, _metadata: Metadata) -> Self {
+    fn init(init: Name, _metadata: Metadata) -> Self {
         Profile {
             name: Some(init), username: "Orange Profile".to_string(), notes: String::new(),
             avatar: AvatarContent::default(), init: false,
         }
     }
 
-    fn apply(&mut self, message: Self::Message, _metadata: Metadata) -> Self::Result {
+    fn apply(&mut self, message: ProfileAction, _metadata: Metadata) {
         match message {
             ProfileAction::ChangeUsername(content) => self.username = content.to_string(),
             ProfileAction::ChangeNotes(content) => self.notes = content.to_string(),
@@ -54,7 +52,7 @@ impl Contract for Profile {
 impl Profile {
     pub fn create(ctx: &mut Context, name: Name) -> Instance<Profile> {
         let mut profile = ctx.air.instances::<Profile>().create(name);
-        profile.send(ProfileAction::SetUsernameInit(Username::new()));
+        profile.send(ProfileAction::SetUsernameInit(Username::generate()));
         profile
     }
 
@@ -69,12 +67,14 @@ impl Profile {
 
     pub fn try_from_name(ctx: &mut Context, name: Name) -> Option<Instance<Profile>> {
         ctx.air.instances::<Profile>().list().iter_mut().find_map(|profile| {
-            if profile.1.pending().name == Some(name) { Some(profile.1.clone()) } else { None }
+            if profile.1.pending().name == Some(name) {Some(profile.1.clone())} else {None}
         })
     }
 
-    pub fn to_view(&self) -> crate::design_system::ProfileView {
-        crate::design_system::ProfileView {name: self.name.unwrap(), username: self.username.clone(), pfp: self.avatar.clone()}
+    pub fn to_view(&self) -> ProfileView {
+        ProfileView {
+            name: self.name.unwrap(), username: self.username.clone(), pfp: self.avatar.clone(),
+        }
     }
 
     pub fn name(&self) -> String {
@@ -88,8 +88,7 @@ impl Profile {
 
 pub struct Username;
 impl Username {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new() -> String {
+    pub fn generate() -> String {
         let parse = |s: &str| {
             s.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| l.to_string())
                 .collect::<Vec<_>>()
@@ -99,7 +98,7 @@ impl Username {
         let animals = parse(include_str!("../../usernames/animals.txt"));
         let adjectives = parse(include_str!("../../usernames/adjectives.txt"));
         let foods = parse(include_str!("../../usernames/foods.txt"));
-        let noun = if rng.gen_bool(0.5) { &animals } else { &foods };
+        let noun = if rng.gen_bool(0.5) {&animals} else {&foods};
 
         let f = |s: &str| {
             let mut o = String::with_capacity(s.len());
@@ -110,9 +109,9 @@ impl Username {
                     continue;
                 }
                 if cap {
-                    for u in c.to_uppercase() { o.push(u); }
+                    for u in c.to_uppercase() {o.push(u);}
                     cap = false;
-                } else { o.push(c); }
+                } else {o.push(c);}
             }
             o
         };
